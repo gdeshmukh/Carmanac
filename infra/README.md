@@ -1,4 +1,4 @@
-# Local database (`db/`)
+# Local database (`infra/`)
 
 Local Postgres + pgvector for development, via Docker. This is a disposable,
 reproducible database — not production. Everyone who runs it gets an identical
@@ -17,12 +17,12 @@ docker compose version
 ## Start it
 
 ```bash
-cd db
+cd infra
 docker compose up -d
 ```
 
 First run downloads the image (~once) and initializes the database: it creates
-the `gvd` user and database, and runs `initdb/00_extensions.sql` to enable
+the `carmanac` user and database, and runs `initdb/00_extensions.sql` to enable
 `vector` and `pg_trgm` and create the `raw_scrape` schema.
 
 Check it's healthy:
@@ -40,26 +40,26 @@ Credentials (local dev only):
 |---|---|
 | host | `localhost` |
 | port | `5432` |
-| user | `gvd` |
-| password | `gvd_dev_password` |
-| database | `gvd` |
+| user | `carmanac` |
+| password | `carmanac_dev_password` |
+| database | `carmanac` |
 
 Connection URL:
 
 ```
-postgresql://gvd:gvd_dev_password@localhost:5432/gvd
+postgresql://carmanac:carmanac_dev_password@localhost:5432/carmanac
 ```
 
 If you have `psql` installed locally:
 
 ```bash
-psql postgresql://gvd:gvd_dev_password@localhost:5432/gvd
+psql postgresql://carmanac:carmanac_dev_password@localhost:5432/carmanac
 ```
 
 No local `psql`? Use the one inside the container:
 
 ```bash
-docker compose exec db psql -U gvd -d gvd
+docker compose exec db psql -U carmanac -d carmanac
 ```
 
 Quick sanity check once connected — confirm the extensions loaded:
@@ -76,7 +76,7 @@ docker compose down       # stops the container, KEEPS your data
 docker compose down -v     # stops AND deletes all data (full reset)
 ```
 
-Your data lives in a named Docker volume (`gvd_pgdata`), so a plain `down` and
+Your data lives in a named Docker volume (`carmanac_pgdata`), so a plain `down` and
 later `up` picks up exactly where you left off.
 
 ## Troubleshooting

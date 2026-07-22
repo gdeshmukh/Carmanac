@@ -9,7 +9,7 @@
 #   docker compose down -v    # stop it AND delete all data (fresh start)
 #
 # Connect from your machine once it's up:
-#   psql postgresql://gvd:gvd_dev_password@localhost:5432/gvd
+#   psql postgresql://carmanac:carmanac_dev_password@localhost:5432/carmanac
 # or with any GUI client using those same credentials on localhost:5432.
 #
 # Versions are PINNED on purpose. Floating tags like ":latest" would mean a
@@ -20,15 +20,15 @@ services:
   db:
     # pgvector 0.8.2 built on Postgres 17. Bump deliberately, never by accident.
     image: pgvector/pgvector:0.8.2-pg17
-    container_name: gvd_postgres
+    container_name: carmanac_postgres
     restart: unless-stopped
     environment:
       # These create the initial superuser + database on FIRST run only.
       # For local dev the password is fine in plain text; production secrets
       # will come from elsewhere (not committed). See .env note below.
-      POSTGRES_USER: gvd
-      POSTGRES_PASSWORD: gvd_dev_password
-      POSTGRES_DB: gvd
+      POSTGRES_USER: carmanac
+      POSTGRES_PASSWORD: carmanac_dev_password
+      POSTGRES_DB: carmanac
       # Keep container logs/timestamps in UTC for consistency across machines.
       TZ: UTC
       PGTZ: UTC
@@ -40,7 +40,7 @@ services:
     volumes:
       # Named volume = your data survives "docker compose down" and restarts.
       # It is deleted only by "docker compose down -v".
-      - gvd_pgdata:/var/lib/postgresql/data
+      - carmanac_pgdata:/var/lib/postgresql/data
       # Anything in this folder runs ONCE, the first time the volume is created.
       # We use it only to enable extensions on a brand-new database. All real
       # schema work happens through Alembic, not here.
@@ -48,10 +48,10 @@ services:
     healthcheck:
       # Lets "docker compose ps" report healthy, and lets other services (later)
       # wait until the DB is actually accepting connections, not just started.
-      test: ["CMD-SHELL", "pg_isready -U gvd -d gvd"]
+      test: ["CMD-SHELL", "pg_isready -U carmanac -d carmanac"]
       interval: 5s
       timeout: 5s
       retries: 10
 
 volumes:
-  gvd_pgdata:
+  carmanac_pgdata:
