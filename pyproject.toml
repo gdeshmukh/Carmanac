@@ -1,0 +1,46 @@
+[project]
+name = "carmanac"
+version = "0.1.0"
+description = "Global Vehicle Database - every production passenger vehicle ever made, globally."
+requires-python = ">=3.11"
+
+dependencies = [
+    "SQLAlchemy>=2.0.36",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["carmanac*"]
+
+# ---------------------------------------------------------------------------
+# ruff - lint + format, per CLAUDE.md conventions
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # import sorting
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic migrations are generated; they don't need our import hygiene rules.
+"alembic/versions/*" = ["E501", "I001"]
