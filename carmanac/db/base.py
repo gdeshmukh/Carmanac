@@ -1,13 +1,21 @@
 """SQLAlchemy declarative base and the mixins shared across the schema.
 
-Per the Architecture Invariants in CLAUDE.md, every fact-bearing table carries
-provenance (`source_id`, `scraped_at`, `confidence_score`) plus a
-`superseded_by` self-reference. A fact is never destructively overwritten: a
-better fact supersedes the old one and the old row stays for audit.
+Provenance attaches to *facts*, not to *identity*. See ADR 0002: a row in an
+entity table (a make, a model, a configuration) is identity - it exists or it
+does not - and carries no provenance. Facts about those entities (a source's
+assertion about a field, a sparse EAV value, a configuration<->engine link)
+carry provenance and supersession, at field/row granularity.
 
-These are declared as mixins rather than repeated per model so the invariant is
-enforced by construction - you get provenance by inheriting it, and a table
-that lacks it is visibly missing a base class.
+So the mixins split by role:
+
+- `TimestampMixin`  - row lifecycle timestamps. Every table.
+- `ProvenanceMixin` - `source_id` / `scraped_at` / `confidence_score` /
+  `raw_record_id`. Only fact-bearing rows (the EAV table and the association
+  tables). NOT entity tables.
+
+`field_provenance` (see models/provenance.py) is the field-level provenance
+store for the entity tables' columns; it defines its columns explicitly rather
+than via `ProvenanceMixin` because its `source_id` is NOT NULL.
 """
 
 from __future__ import annotations
@@ -41,7 +49,11 @@ class Base(DeclarativeBase):
 
 class TimestampMixin:
     """Row lifecycle timestamps. Distinct from `scraped_at`, which is when the
-    *source* was read; these are when *our* row was written."""
+    *source* was read; these are when *our* row was written.
+
+    NOTE: `updated_at`'s `onupdate` fires on ORM updates only. Bulk ingestion
+    paths (COPY, INSERT ... ON CONFLICT) bypass the ORM, so a DB trigger will be
+    added before those land (review item #7). Kept ORM-side for now."""
 
     @declared_attr
     @classmethod
@@ -60,8 +72,8 @@ class TimestampMixin:
 
 
 class ProvenanceMixin:
-    """`source_id` / `scraped_at` / `confidence_score` - required on every
-    fact-bearing row.
+    """`source_id` / `scraped_at` / `confidence_score` / `raw_record_id` for
+    fact-bearing rows: the EAV table and the association tables.
 
     Each column is built inside `declared_attr` so every subclass gets its own
     Column and CheckConstraint objects rather than sharing one instance.
@@ -74,6 +86,15 @@ class ProvenanceMixin:
         # because "show me everything this source told us" is a core query for
         # the reconciliation and review workflows.
         return mapped_column(ForeignKey("sources.id"), index=True)
+
+    @declared_attr
+    @classmethod
+    def raw_record_id(cls) -> Mapped[int | None]:
+        # Links a fact back to the exact scrape that produced it (ADR 0003), so
+        # facts can be re-derived when matching logic improves.
+        from sqlalchemy import BigInteger
+
+        return mapped_column(BigInteger, ForeignKey("raw_scrape.raw_records.id"), index=True)
 
     @declared_attr
     @classmethod
@@ -102,16 +123,3 @@ def provenance_table_args() -> tuple[CheckConstraint, ...]:
         __table_args__ = (*provenance_table_args(), UniqueConstraint(...))
     """
     return (CheckConstraint("confidence_score BETWEEN 0 AND 1", name="confidence_score_range"),)
-
-
-class SupersededByMixin:
-    """Self-referencing `superseded_by` pointer.
-
-    The FK target is derived from the subclass's own `__tablename__`, so each
-    table points at itself without restating the table name.
-    """
-
-    @declared_attr
-    @classmethod
-    def superseded_by(cls) -> Mapped[int | None]:
-        return mapped_column(ForeignKey(f"{cls.__tablename__}.id"), index=True)

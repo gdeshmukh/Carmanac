@@ -2,10 +2,17 @@
 
     makes -> models -> generations -> model_years -> configurations
 
-Every spec-bearing row foreign-keys back toward `configurations`, because a
-configuration (model year x trim x market x drivetrain) is the only level at
-which a single spec value is unambiguous. That is why all ~20 core spec columns
-live on `configurations` and not higher up.
+These are IDENTITY tables (ADR 0002). They hold identity plus their descriptive
+and spec columns as the *current best value*. They carry no row-level
+provenance and no `superseded_by`: a make either exists or it does not, and
+"which source told us BMW was founded in 1916" is a field-level fact recorded in
+`field_provenance`, not a property of the identity row. Entities are upserted by
+natural key. External identifiers (Wikidata QID, NHTSA id, ...) live in
+`external_ids` (ADR 0003), not as columns here.
+
+Every spec-bearing row still foreign-keys back toward `configurations`, because
+a configuration (model year x trim x market x drivetrain) is the only level at
+which a single spec value is unambiguous.
 """
 
 from __future__ import annotations
@@ -14,16 +21,10 @@ from sqlalchemy import ForeignKey, Index, Integer, Numeric, SmallInteger, Text, 
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from carmanac.db.base import (
-    Base,
-    ProvenanceMixin,
-    SupersededByMixin,
-    TimestampMixin,
-    provenance_table_args,
-)
+from carmanac.db.base import Base, TimestampMixin
 
 
-class Make(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
+class Make(Base, TimestampMixin):
     """Manufacturer / brand. Top-level entity, has its own page.
 
     Defunct marques (Pontiac, Saab, Plymouth) stay top-level and simply carry a
@@ -36,8 +37,6 @@ class Make(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    # The universal join key wherever the entity has one.
-    wikidata_qid: Mapped[str | None] = mapped_column(Text, unique=True)
     country_code: Mapped[str | None] = mapped_column(Text)  # ISO 3166-1 alpha-2 of HQ
     founded_year: Mapped[int | None] = mapped_column(SmallInteger)
     defunct_year: Mapped[int | None] = mapped_column(SmallInteger)  # null = still active
@@ -47,7 +46,6 @@ class Make(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     # Trigram index: entity resolution matches incoming source names against
     # these fuzzily ("BMW AG" -> "BMW"), so a plain btree is not enough.
     __table_args__ = (
-        *provenance_table_args(),
         Index(
             "idx_makes_name_trgm",
             "name",
@@ -57,7 +55,7 @@ class Make(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     )
 
 
-class Model(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
+class Model(Base, TimestampMixin):
     """A nameplate under a make, e.g. '3 Series', 'Corolla'."""
 
     __tablename__ = "models"
@@ -66,13 +64,11 @@ class Model(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     make_id: Mapped[int] = mapped_column(ForeignKey("makes.id"), nullable=False, index=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    wikidata_qid: Mapped[str | None] = mapped_column(Text, unique=True)
 
     make: Mapped[Make] = relationship(back_populates="models")
     generations: Mapped[list[Generation]] = relationship(back_populates="model")
 
     __table_args__ = (
-        *provenance_table_args(),
         # Slug is unique *within* a make, so two makes may both have a
         # '3-series' without colliding.
         UniqueConstraint("make_id", "slug", name="uq_models_make_id_slug"),
@@ -85,7 +81,7 @@ class Model(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     )
 
 
-class Generation(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
+class Generation(Base, TimestampMixin):
     """A generation of a model - E46, G80, XV70.
 
     This is the level enthusiasts actually search by, which is why it carries
@@ -103,18 +99,14 @@ class Generation(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     chassis_codes: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
     start_year: Mapped[int | None] = mapped_column(SmallInteger)
     end_year: Mapped[int | None] = mapped_column(SmallInteger)  # null = still in production
-    wikidata_qid: Mapped[str | None] = mapped_column(Text, unique=True)
 
     model: Mapped[Model] = relationship(back_populates="generations")
     model_years: Mapped[list[ModelYear]] = relationship(back_populates="generation")
 
-    __table_args__ = (
-        *provenance_table_args(),
-        UniqueConstraint("model_id", "slug", name="uq_generations_model_id_slug"),
-    )
+    __table_args__ = (UniqueConstraint("model_id", "slug", name="uq_generations_model_id_slug"),)
 
 
-class ModelYear(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
+class ModelYear(Base, TimestampMixin):
     """A single year inside a generation. Thin by design."""
 
     __tablename__ = "model_years"
@@ -129,17 +121,18 @@ class ModelYear(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     configurations: Mapped[list[Configuration]] = relationship(back_populates="model_year")
 
     __table_args__ = (
-        *provenance_table_args(),
         UniqueConstraint("generation_id", "year", name="uq_model_years_generation_id_year"),
     )
 
 
-class Configuration(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
+class Configuration(Base, TimestampMixin):
     """The atomic unit: model_year x trim x market x drivetrain.
 
-    Core spec columns live here. A spec earns a column only if >=80% of
-    configurations would plausibly have a value (CLAUDE.md); everything sparser
-    goes to EAV via `configuration_attributes`.
+    Core spec columns live here as the current best value. A spec earns a column
+    only if >=80% of configurations would plausibly have a value (CLAUDE.md);
+    everything sparser goes to EAV via `configuration_attributes`. Which source
+    each column's value came from is recorded per field in `field_provenance`
+    (ADR 0002); the column itself is the reconciled winner.
 
     Units are metric and explicit in the column name (_cc, _kg, _mm, _nm, _km)
     to remove ambiguity at ingest time. mpg/mpge stay imperial because they are
@@ -156,7 +149,6 @@ class Configuration(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
         ForeignKey("market_regions.id"), index=True
     )
     slug: Mapped[str] = mapped_column(Text, nullable=False)
-    wikidata_qid: Mapped[str | None] = mapped_column(Text, unique=True)
 
     # --- identity / classification (mostly NHTSA vPIC) ---
     trim_name: Mapped[str | None] = mapped_column(Text)  # 'M340i', 'LE', 'GTI Autobahn'
@@ -199,6 +191,5 @@ class Configuration(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     model_year: Mapped[ModelYear] = relationship(back_populates="configurations")
 
     __table_args__ = (
-        *provenance_table_args(),
         UniqueConstraint("model_year_id", "slug", name="uq_configurations_model_year_id_slug"),
     )

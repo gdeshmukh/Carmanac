@@ -41,6 +41,10 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         compare_server_default=True,
+        # Reflect non-default schemas too (we use `raw_scrape`). Without this,
+        # autogenerate cannot see raw_scrape.* and would wrongly try to
+        # re-create those tables on every run.
+        include_schemas=True,
     )
 
     with context.begin_transaction():
@@ -63,6 +67,10 @@ def run_migrations_online() -> None:
             # added/dropped tables and columns. Off by default in Alembic.
             compare_type=True,
             compare_server_default=True,
+            # Reflect non-default schemas too (we use `raw_scrape`). Without
+            # this, autogenerate cannot see raw_scrape.* and would wrongly try
+            # to re-create those tables on every run.
+            include_schemas=True,
         )
 
         with context.begin_transaction():

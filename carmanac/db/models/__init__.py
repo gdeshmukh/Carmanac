@@ -27,6 +27,7 @@ from carmanac.db.models.powertrain import (
     Engine,
     Transmission,
 )
+from carmanac.db.models.provenance import ExternalId, FieldProvenance, RawRecord
 
 __all__ = [
     "ATTRIBUTE_DATA_TYPES",
@@ -39,12 +40,15 @@ __all__ = [
     "ConfigurationTransmission",
     "Drivetrain",
     "Engine",
+    "ExternalId",
+    "FieldProvenance",
     "FuelType",
     "Generation",
     "Make",
     "MarketRegion",
     "Model",
     "ModelYear",
+    "RawRecord",
     "Source",
     "Transmission",
     "TransmissionType",

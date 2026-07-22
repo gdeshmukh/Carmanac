@@ -5,6 +5,11 @@ modeling non-negotiable (CLAUDE.md): the BMW B58 appears in the Toyota Supra,
 GM LS engines end up in everything, the ZF 8HP is fitted by half the industry.
 `manufacturer_make_id` therefore points at the *engine's* maker, which
 deliberately may differ from the car's make.
+
+`engines` and `transmissions` are IDENTITY tables (ADR 0002) - no row-level
+provenance. The join tables `configuration_engines` / `configuration_transmissions`
+DO carry provenance, because the association itself is a scraped claim ("this
+source says this car came with this engine") that sources contradict.
 """
 
 from __future__ import annotations
@@ -12,16 +17,10 @@ from __future__ import annotations
 from sqlalchemy import ForeignKey, Integer, SmallInteger, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from carmanac.db.base import (
-    Base,
-    ProvenanceMixin,
-    SupersededByMixin,
-    TimestampMixin,
-    provenance_table_args,
-)
+from carmanac.db.base import Base, ProvenanceMixin, TimestampMixin, provenance_table_args
 
 
-class Engine(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
+class Engine(Base, TimestampMixin):
     """An engine entity, e.g. 'B58', 'LS3', '2JZ-GTE'."""
 
     __tablename__ = "engines"
@@ -38,12 +37,9 @@ class Engine(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
     configuration: Mapped[str | None] = mapped_column(Text)  # 'inline', 'v', 'flat'
     aspiration: Mapped[str | None] = mapped_column(Text)  # 'na', 'turbo', 'twin-turbo', ...
     fuel_type_id: Mapped[int | None] = mapped_column(ForeignKey("fuel_types.id"), index=True)
-    wikidata_qid: Mapped[str | None] = mapped_column(Text, unique=True)
-
-    __table_args__ = provenance_table_args()
 
 
-class Transmission(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
+class Transmission(Base, TimestampMixin):
     """A transmission entity, e.g. 'ZF 8HP', 'Getrag 420G'."""
 
     __tablename__ = "transmissions"
@@ -56,9 +52,6 @@ class Transmission(Base, ProvenanceMixin, SupersededByMixin, TimestampMixin):
         ForeignKey("transmission_types.id"), index=True
     )
     gear_count: Mapped[int | None] = mapped_column(SmallInteger)
-    wikidata_qid: Mapped[str | None] = mapped_column(Text, unique=True)
-
-    __table_args__ = provenance_table_args()
 
 
 class ConfigurationEngine(Base, ProvenanceMixin):
