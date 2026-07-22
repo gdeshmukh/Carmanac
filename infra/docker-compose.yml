@@ -21,7 +21,11 @@ services:
     # pgvector 0.8.2 built on Postgres 17. Bump deliberately, never by accident.
     image: pgvector/pgvector:0.8.2-pg17
     container_name: carmanac_postgres
-    restart: unless-stopped
+    # "no" = never auto-start. You bring the database up when you sit down to
+    # work and stop it when you're done; it will not come back after a reboot.
+    # Quoted because bare `no` is parsed as boolean false in YAML.
+    # Change to "unless-stopped" if you'd rather it always be available.
+    restart: "no"
     environment:
       # These create the initial superuser + database on FIRST run only.
       # For local dev the password is fine in plain text; production secrets
