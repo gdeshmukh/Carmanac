@@ -74,7 +74,7 @@ CREATE TABLE sources (
 );
 
 -- ============================================================================
--- CORE ENTITY HIERARCHY: makes -> models -> generations -> model_years -> variants
+-- CORE ENTITY HIERARCHY: makes -> models -> generations -> model_years -> configurations
 -- ============================================================================
 
 CREATE TABLE makes (
@@ -157,18 +157,18 @@ CREATE INDEX idx_model_years_source_id ON model_years(source_id);
 CREATE INDEX idx_model_years_superseded_by ON model_years(superseded_by);
 
 -- ----------------------------------------------------------------------------
--- variants — the atomic unit. (model_year + trim + market + drivetrain combo)
--- ~20 universal core spec columns live here; long-tail lives in variant_attributes.
+-- configurations — the atomic unit. (model_year + trim + market + drivetrain combo)
+-- ~20 universal core spec columns live here; long-tail lives in configuration_attributes.
 --
 -- Core column selection (2026-06-15) is grounded in what the three Tier 1
 -- sources reliably populate:
 --   - NHTSA vPIC:        trim/series, body style, doors, drive type, engine basics
 --   - EPA fueleconomy:   fuel type, displacement, cylinders, transmission, mpg/mpge, range
 --   - Wikidata:          curb weight, seating, dimensions (sparser but present)
--- Anything below ~80% expected fill across variants stays in EAV, per CLAUDE.md.
+-- Anything below ~80% expected fill across configurations stays in EAV, per CLAUDE.md.
 -- ----------------------------------------------------------------------------
 
-CREATE TABLE variants (
+CREATE TABLE configurations (
     id              SERIAL PRIMARY KEY,
     model_year_id   INTEGER NOT NULL REFERENCES model_years(id),
     market_region_id INTEGER REFERENCES market_regions(id),
@@ -213,19 +213,19 @@ CREATE TABLE variants (
     source_id           INTEGER REFERENCES sources(id),
     scraped_at          TIMESTAMPTZ,
     confidence_score    NUMERIC(3,2) CHECK (confidence_score BETWEEN 0 AND 1),
-    superseded_by       INTEGER REFERENCES variants(id),
+    superseded_by       INTEGER REFERENCES configurations(id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (model_year_id, slug)
 );
-CREATE INDEX idx_variants_model_year_id ON variants(model_year_id);
-CREATE INDEX idx_variants_market_region_id ON variants(market_region_id);
-CREATE INDEX idx_variants_body_style_id ON variants(body_style_id);
-CREATE INDEX idx_variants_drivetrain_id ON variants(drivetrain_id);
-CREATE INDEX idx_variants_fuel_type_id ON variants(fuel_type_id);
-CREATE INDEX idx_variants_transmission_type_id ON variants(transmission_type_id);
-CREATE INDEX idx_variants_source_id ON variants(source_id);
-CREATE INDEX idx_variants_superseded_by ON variants(superseded_by);
+CREATE INDEX idx_configurations_model_year_id ON configurations(model_year_id);
+CREATE INDEX idx_configurations_market_region_id ON configurations(market_region_id);
+CREATE INDEX idx_configurations_body_style_id ON configurations(body_style_id);
+CREATE INDEX idx_configurations_drivetrain_id ON configurations(drivetrain_id);
+CREATE INDEX idx_configurations_fuel_type_id ON configurations(fuel_type_id);
+CREATE INDEX idx_configurations_transmission_type_id ON configurations(transmission_type_id);
+CREATE INDEX idx_configurations_source_id ON configurations(source_id);
+CREATE INDEX idx_configurations_superseded_by ON configurations(superseded_by);
 
 -- ============================================================================
 -- EAV — long-tail / sparse attributes
@@ -242,9 +242,9 @@ CREATE TABLE attribute_definitions (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE variant_attributes (
+CREATE TABLE configuration_attributes (
     id              BIGSERIAL PRIMARY KEY,
-    variant_id      INTEGER NOT NULL REFERENCES variants(id),
+    configuration_id      INTEGER NOT NULL REFERENCES configurations(id),
     attribute_id    INTEGER NOT NULL REFERENCES attribute_definitions(id),
     -- one typed column populated per row, matching attribute_definitions.data_type
     value_text      TEXT,
@@ -255,16 +255,16 @@ CREATE TABLE variant_attributes (
     source_id           INTEGER REFERENCES sources(id),
     scraped_at          TIMESTAMPTZ,
     confidence_score    NUMERIC(3,2) CHECK (confidence_score BETWEEN 0 AND 1),
-    superseded_by       BIGINT REFERENCES variant_attributes(id),
+    superseded_by       BIGINT REFERENCES configuration_attributes(id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_variant_attributes_variant_id ON variant_attributes(variant_id);
-CREATE INDEX idx_variant_attributes_attribute_id ON variant_attributes(attribute_id);
-CREATE INDEX idx_variant_attributes_source_id ON variant_attributes(source_id);
-CREATE INDEX idx_variant_attributes_superseded_by ON variant_attributes(superseded_by);
--- one live (non-superseded) value per (variant, attribute)
-CREATE UNIQUE INDEX uq_variant_attribute_live
-    ON variant_attributes(variant_id, attribute_id)
+CREATE INDEX idx_configuration_attributes_configuration_id ON configuration_attributes(configuration_id);
+CREATE INDEX idx_configuration_attributes_attribute_id ON configuration_attributes(attribute_id);
+CREATE INDEX idx_configuration_attributes_source_id ON configuration_attributes(source_id);
+CREATE INDEX idx_configuration_attributes_superseded_by ON configuration_attributes(superseded_by);
+-- one live (non-superseded) value per (configuration, attribute)
+CREATE UNIQUE INDEX uq_configuration_attribute_live
+    ON configuration_attributes(configuration_id, attribute_id)
     WHERE superseded_by IS NULL;
 
 -- ============================================================================
@@ -317,25 +317,25 @@ CREATE INDEX idx_transmissions_transmission_type_id ON transmissions(transmissio
 CREATE INDEX idx_transmissions_source_id ON transmissions(source_id);
 CREATE INDEX idx_transmissions_superseded_by ON transmissions(superseded_by);
 
--- many-to-many: a variant can offer multiple engines/transmissions
-CREATE TABLE variant_engines (
-    variant_id      INTEGER NOT NULL REFERENCES variants(id),
+-- many-to-many: a configuration can offer multiple engines/transmissions
+CREATE TABLE configuration_engines (
+    configuration_id      INTEGER NOT NULL REFERENCES configurations(id),
     engine_id       INTEGER NOT NULL REFERENCES engines(id),
     source_id           INTEGER REFERENCES sources(id),
     scraped_at          TIMESTAMPTZ,
     confidence_score    NUMERIC(3,2) CHECK (confidence_score BETWEEN 0 AND 1),
-    PRIMARY KEY (variant_id, engine_id)
+    PRIMARY KEY (configuration_id, engine_id)
 );
-CREATE INDEX idx_variant_engines_engine_id ON variant_engines(engine_id);
-CREATE INDEX idx_variant_engines_source_id ON variant_engines(source_id);
+CREATE INDEX idx_configuration_engines_engine_id ON configuration_engines(engine_id);
+CREATE INDEX idx_configuration_engines_source_id ON configuration_engines(source_id);
 
-CREATE TABLE variant_transmissions (
-    variant_id      INTEGER NOT NULL REFERENCES variants(id),
+CREATE TABLE configuration_transmissions (
+    configuration_id      INTEGER NOT NULL REFERENCES configurations(id),
     transmission_id INTEGER NOT NULL REFERENCES transmissions(id),
     source_id           INTEGER REFERENCES sources(id),
     scraped_at          TIMESTAMPTZ,
     confidence_score    NUMERIC(3,2) CHECK (confidence_score BETWEEN 0 AND 1),
-    PRIMARY KEY (variant_id, transmission_id)
+    PRIMARY KEY (configuration_id, transmission_id)
 );
-CREATE INDEX idx_variant_transmissions_transmission_id ON variant_transmissions(transmission_id);
-CREATE INDEX idx_variant_transmissions_source_id ON variant_transmissions(source_id);
+CREATE INDEX idx_configuration_transmissions_transmission_id ON configuration_transmissions(transmission_id);
+CREATE INDEX idx_configuration_transmissions_source_id ON configuration_transmissions(source_id);
