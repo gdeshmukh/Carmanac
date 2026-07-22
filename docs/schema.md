@@ -1,5 +1,13 @@
 # Schema — Phase 1
 
+> **⚠ Partially superseded (2026-07-22).** ADR 0002 and ADR 0003 changed the
+> provenance model after this was written: provenance moved from row-level
+> columns on every table to `field_provenance` (field-level) + fact tables;
+> `wikidata_qid` columns were replaced by `external_ids`; `raw_scrape.raw_records`
+> was added. The **SQLAlchemy models in `carmanac/db/models/` are now the source
+> of truth.** Sections below describing per-table `source_id`/`superseded_by`
+> and `wikidata_qid` columns are historical. Full rewrite is a tracked follow-up.
+
 Status: **Phase 1 (lean).** This document is the rationale companion to
 `docs/schema_phase1.sql` (the reference DDL). The DDL is the source of intent;
 the actual database is built and migrated **via Alembic only** — the reference

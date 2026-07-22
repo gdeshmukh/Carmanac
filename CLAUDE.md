@@ -20,9 +20,9 @@ These are settled decisions. Do not propose changes without flagging them explic
 - **Five-level entity hierarchy**: `makes` → `models` → `generations` → `model_years` → `configurations`. Every spec-bearing row ultimately foreign-keys back to `configurations`.
 - **Engines and transmissions are first-class entities** with their own tables. Cross-make reuse (BMW B58 in Toyota Supra, GM LS swaps, etc.) makes this non-negotiable.
 - **Hybrid storage model**: ~20 universal core specs live as columns on `configurations`. Long-tail/sparse attributes live in an EAV table (`configuration_attributes`). New attributes are registered in `attribute_definitions` before any data lands.
-- **Provenance on every fact**: `source_id`, `scraped_at`, `confidence_score`, `superseded_by` columns on every fact-bearing row.
-- **Raw scrape data is never discarded.** Separate `raw_scrape` schema holds untransformed source records permanently for re-reconciliation when matching logic improves.
-- **Wikidata QID is the universal join key** wherever a vehicle entity has one.
+- **Provenance attaches to facts, not identity** (ADR 0002). Fact-bearing rows carry `source_id` / `scraped_at` / `confidence_score` (EAV `configuration_attributes`, the association tables) or field-level provenance in `field_provenance`. Entity/identity tables (`makes` … `configurations`, `engines`, `transmissions`) carry no provenance — they hold the reconciled current value and are upserted by natural key. Supersession lives with the facts, never on identity rows.
+- **Raw scrape data is never discarded.** Separate `raw_scrape` schema holds untransformed source records permanently (`raw_scrape.raw_records`); every fact carries a `raw_record_id` back to the exact scrape, for re-reconciliation when matching logic improves.
+- **Wikidata QID is the universal join key** wherever a vehicle entity has one — stored in `external_ids` alongside every other source's identifiers (ADR 0003), not as a per-table column.
 
 ## Schema Overview
 
@@ -40,8 +40,11 @@ Core tables (Phase 1 target):
 - `sources` — every data source (URL, tier, scraped_at). Referenced by every fact.
 - `configuration_attributes` — EAV for long-tail specs.
 - `attribute_definitions` — registry of legal EAV keys with units, types, validation.
+- `field_provenance` — field-level provenance for entity/spec columns (ADR 0002).
+- `external_ids` — `(source, external_id)` → entity mapping, incl. Wikidata QIDs (ADR 0003).
+- `raw_scrape.raw_records` — permanent untransformed scrape landing zone (ADR 0003).
 
-Reference DDL lives in `docs/schema_phase1.sql`; rationale in `docs/schema.md`. (Leaf entity renamed `variants` → `configurations`, see `docs/decisions/0001-leaf-entity-naming.md`.)
+Reference DDL lives in `docs/schema_phase1.sql`; rationale in `docs/schema.md`. **Note:** the SQLAlchemy models in `carmanac/db/models/` are now the source of schema truth (the applied Alembic baseline + revision `00531f09d08f`); `docs/schema_phase1.sql` predates ADR 0002/0003 and is stale pending reconciliation (see PROGRESS.md Open Questions). Leaf entity renamed `variants` → `configurations` (ADR 0001).
 
 ## Source Tiering
 
@@ -88,7 +91,7 @@ The frontend route map mirrors the entity hierarchy (public slug for the leaf is
 - Write an ADR in `docs/decisions/` for any significant new decision before implementation.
 - Respect rate limits and identify the scraper bot honestly in user-agent strings.
 - Index foreign key columns. Always.
-- Include `source_id`, `scraped_at`, `confidence_score` columns on any new fact-bearing table.
+- Include `source_id`, `scraped_at`, `confidence_score` columns on any new *fact-bearing* table (not identity/entity tables — see the provenance invariant and ADR 0002).
 
 ## What Claude Should Never Do
 
