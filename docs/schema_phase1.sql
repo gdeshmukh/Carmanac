@@ -1,6 +1,12 @@
 -- ============================================================================
 -- Global Vehicle Database — Phase 1 Schema (reference DDL)
 -- ============================================================================
+-- !! PARTIALLY SUPERSEDED (2026-07-22) by ADR 0002 / ADR 0003. This file
+-- predates the entity/fact provenance split, external_ids, and
+-- raw_scrape.raw_records. The SQLAlchemy models in carmanac/db/models/ (applied
+-- via Alembic revision 00531f09d08f) are now the source of schema truth. This
+-- DDL is retained for history; a full rewrite is a tracked follow-up.
+-- ============================================================================
 -- This file is the human-readable reference for the Phase 1 schema. It is NOT
 -- the migration. Per CLAUDE.md, all schema changes land via Alembic
 -- (auto-generated, hand-reviewed) — never raw ALTER TABLE in production.
