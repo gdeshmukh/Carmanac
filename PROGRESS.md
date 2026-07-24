@@ -39,6 +39,7 @@ Phase 1: schema is live and reconciliation-ready. A pre-ingestion review fixed f
 - [2026-07-22] Migration `00531f09d08f` generated, hand-reviewed (CHECK constraints, partial indexes, cross-schema FK, and drop-ordering all verified), and applied. DB now has 19 public tables + `raw_scrape.raw_records`.
 - [2026-07-22] **`alembic check` caught a latent env.py bug**: without `include_schemas=True`, autogenerate could not see the `raw_scrape` schema and would have tried to re-create `raw_records` on every run. Fixed in `alembic/env.py`.
 - [2026-07-22] Seed rewritten to the new shape — 63 rows, idempotent. Demonstrates three sources (Wikidata + NHTSA + EPA) contributing different fields to one configuration, each field tracing to its raw scrape.
+- [2026-07-24] `updated_at` DB trigger added (review #7, migration `a1c4e7b93f20`) — hand-written, since Alembic cannot see triggers (same blind spot that dropped the inline CHECK constraints). `onupdate` is SQLAlchemy-side and never fires on `INSERT ... ON CONFLICT` or COPY, which is exactly how ingestion writes; the wrong value could not have been backfilled afterwards, hence doing it before the first scraper. Verified against the live DB: a raw non-ORM upsert now bumps the timestamp, an idempotent no-op re-scrape does not (`NEW IS DISTINCT FROM OLD`), and downgrade drops all 7 triggers plus the function. `alembic check` clean.
 
 ## In Flight
 
@@ -46,11 +47,11 @@ Nothing blocking. Schema is live, reconciliation-ready, and verified end-to-end 
 
 ## Next (immediate)
 
-1. Commit this session's work — split as `fix:` (initdb mount, ADR 0001 rename) and `feat:` (schema implementation), per Conventional Commits.
-2. Connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
-3. Decide whether the reference DDL stays a hand-maintained doc or becomes generated from the models — two sources of schema intent already caused one drift (the missed rename).
-4. Begin Wikidata SPARQL ingestion into `makes` / `models`, the first real Tier 1 source.
-5. Add `raw_scrape` tables before that ingestion lands — raw records are never discarded, so the landing zone must exist first.
+1. Write the reconciler ADR before any pipeline code — it settles tier precedence, tie-breaking, when a conflict is auto-resolved vs. flagged for review, and how `confidence_score` is computed (currently undefined, review #6).
+2. Wikidata SPARQL client → land raw payloads in `raw_scrape.raw_records`. Fetch and store only; no entity parsing yet.
+3. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
+4. Reconcile `makes` only for the first pass — a few hundred rows, small enough to verify by eye before scaling to models.
+5. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
 
@@ -96,6 +97,11 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-24
+- Added the `updated_at` DB trigger (see Done), clearing the last ordering constraint before ingestion.
+- **Settled how `source` is allowed to be used** (worth an explicit note, since it is easy to violate silently). Source is recorded so every fact traces to where it came from — it is *not* a query dimension, and nothing user-facing filters by it. Two deliberate exceptions where it is genuinely load-bearing: (1) `external_ids` namespacing, since an identifier is only meaningful scoped to its source (`Q26678` means BMW in Wikidata's namespace; NHTSA and EPA both use bare integers that would otherwise collide) — and the `(source_id, external_id)` lookup is the idempotency key that stops re-scrapes creating duplicate entities; (2) tier-based conflict resolution in the reconciler. In `field_provenance`, source stays pure audit trail: display it, debug with it, never branch on it beyond tier.
+- Next: reconciler ADR, then Wikidata fetch-and-land.
 
 ### 2026-07-22 (part 2 — pre-ingestion schema review)
 - Reviewed the schema as an experienced data engineer would, before scraping. Found and fixed four critical modeling gaps that would have compounded under multi-source ingestion (ADR 0002/0003): entity/fact split with field-level `field_provenance`; `raw_scrape.raw_records` landing zone + `raw_record_id` traceability; `external_ids` replacing `wikidata_qid` columns. Migration `00531f09d08f` applied; seed rewritten to demonstrate three sources on one configuration; `alembic check` clean after fixing an `include_schemas` gap in env.py. CLAUDE.md invariants updated to match. Next: Wikidata ingestion + the reconciler that writes `field_provenance` and projects winners onto columns.

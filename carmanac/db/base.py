@@ -52,8 +52,12 @@ class TimestampMixin:
     *source* was read; these are when *our* row was written.
 
     NOTE: `updated_at`'s `onupdate` fires on ORM updates only. Bulk ingestion
-    paths (COPY, INSERT ... ON CONFLICT) bypass the ORM, so a DB trigger will be
-    added before those land (review item #7). Kept ORM-side for now."""
+    paths (COPY, INSERT ... ON CONFLICT) bypass the ORM, so the rule also lives
+    in the database as a BEFORE UPDATE trigger (migration `a1c4e7b93f20`), which
+    is what actually holds during ingestion. The trigger skips no-op updates
+    (`NEW IS DISTINCT FROM OLD`) so an idempotent re-scrape that changes nothing
+    does not bump the timestamp. `onupdate` is kept as a harmless duplicate so
+    ORM objects see a fresh value within the same session."""
 
     @declared_attr
     @classmethod
