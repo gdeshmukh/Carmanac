@@ -73,6 +73,18 @@ class RawRecord(Base):
     __table_args__ = (
         Index("idx_raw_records_source_id_external_id", "source_id", "external_id"),
         Index("idx_raw_records_content_hash", "content_hash"),
+        # Re-scraping is idempotent *structurally*, not by convention: an
+        # unchanged payload hashes the same and is rejected here, so a re-run
+        # cannot duplicate it even if the application-side check is skipped or
+        # two ingests race. A payload that genuinely CHANGED hashes differently
+        # and is inserted as a new row - which is the point, since raw records
+        # are never discarded and the history is the change log.
+        #
+        # `source_id` is part of the key so two sources may legitimately hold
+        # byte-identical payloads. `external_id` is deliberately NOT: the
+        # payload already contains the entity's identifier, so an equal hash
+        # means an equal record.
+        UniqueConstraint("source_id", "content_hash", name="uq_raw_records_source_id_content_hash"),
         {"schema": "raw_scrape"},
     )
 

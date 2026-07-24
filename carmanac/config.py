@@ -19,5 +19,26 @@ class Settings(BaseSettings):
         "postgresql+psycopg://carmanac:carmanac_dev_password@localhost:5432/carmanac"
     )
 
+    # --- ingestion -----------------------------------------------------------
+    # Settings, not hard-coded literals: CLAUDE.md forbids source URLs in
+    # business logic. The `sources` table holds what a source *is*
+    # (wikidata.org, tier 1); these hold how we *reach* it, which is an
+    # operational detail and overridable per environment.
+    wikidata_sparql_endpoint: str = "https://query.wikidata.org/sparql"
+
+    # Wikimedia's user-agent policy requires a descriptive agent with a way to
+    # contact the operator, so they can reach us instead of silently blocking.
+    # CLAUDE.md: "identify the scraper bot honestly in user-agent strings".
+    user_agent: str = (
+        "CarmanacBot/0.1 (https://github.com/gdeshmukh/Carmanac; "
+        "deshmukhgaurav523@gmail.com)"
+    )
+
+    # Seconds between requests to one endpoint. The makes ingest is a single
+    # query so this barely bites, but models/generations will paginate and the
+    # limiter is what keeps that polite by default rather than by remembering.
+    request_min_interval_seconds: float = 1.0
+    request_timeout_seconds: float = 120.0
+
 
 settings = Settings()

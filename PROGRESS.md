@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: schema is live and reconciliation-ready. A pre-ingestion review fixed four critical modeling gaps (ADR 0002/0003). Next is landing the first real data via Wikidata ingestion.
+Phase 1: schema is live and reconciliation-ready, and the first real source is landing. Wikidata fetch-and-land runs end to end — 7,223 manufacturers/brands in `raw_scrape.raw_records`. Next is the reconciler, which turns those raw records into `makes` + `field_provenance`.
 
 ## Done
 
@@ -39,19 +39,21 @@ Phase 1: schema is live and reconciliation-ready. A pre-ingestion review fixed f
 - [2026-07-22] Migration `00531f09d08f` generated, hand-reviewed (CHECK constraints, partial indexes, cross-schema FK, and drop-ordering all verified), and applied. DB now has 19 public tables + `raw_scrape.raw_records`.
 - [2026-07-22] **`alembic check` caught a latent env.py bug**: without `include_schemas=True`, autogenerate could not see the `raw_scrape` schema and would have tried to re-create `raw_records` on every run. Fixed in `alembic/env.py`.
 - [2026-07-22] Seed rewritten to the new shape — 63 rows, idempotent. Demonstrates three sources (Wikidata + NHTSA + EPA) contributing different fields to one configuration, each field tracing to its raw scrape.
+- [2026-07-24] **First real data landed.** Wikidata SPARQL ingestion built (`carmanac/ingest/wikidata/`) and run against the live endpoint: 7,223 manufacturers and car brands in `raw_scrape.raw_records`, 7.1 MB JSONB, ~5.5s, verified idempotent on re-run. Migration `24e7d0f5602c` makes that idempotency structural via `UNIQUE (source_id, content_hash)`. Three defects found and fixed by running it for real — SPARQL Cartesian fan-out, unstable `GROUP_CONCAT` ordering, and a company-vs-brand coverage gap that was dropping Pontiac/Plymouth/Datsun. See Session Log.
 - [2026-07-24] `updated_at` DB trigger added (review #7, migration `a1c4e7b93f20`) — hand-written, since Alembic cannot see triggers (same blind spot that dropped the inline CHECK constraints). `onupdate` is SQLAlchemy-side and never fires on `INSERT ... ON CONFLICT` or COPY, which is exactly how ingestion writes; the wrong value could not have been backfilled afterwards, hence doing it before the first scraper. Verified against the live DB: a raw non-ORM upsert now bumps the timestamp, an idempotent no-op re-scrape does not (`NEW IS DISTINCT FROM OLD`), and downgrade drops all 7 triggers plus the function. `alembic check` clean.
 
 ## In Flight
 
-Nothing blocking. Schema is live, reconciliation-ready, and verified end-to-end with multi-source provenance.
+**Decision owed: reset the Wikidata raw records once.** The store holds 7,224 Wikidata rows written *before* the GROUP_CONCAT canonicalization fix, so their hashes reflect unsorted payloads — a re-run would re-land many as false "changes", and two spurious versions of Q127773218 are already there. The data is one day old and re-fetchable in ~6s. Options: (a) truncate the Wikidata rows and re-land clean, (b) leave them and accept the noise. Not done unilaterally because `raw_scrape` is the never-discard store.
 
 ## Next (immediate)
 
-1. Write the reconciler ADR before any pipeline code — it settles tier precedence, tie-breaking, when a conflict is auto-resolved vs. flagged for review, and how `confidence_score` is computed (currently undefined, review #6).
-2. Wikidata SPARQL client → land raw payloads in `raw_scrape.raw_records`. Fetch and store only; no entity parsing yet.
+1. Resolve the raw-record reset above.
+2. Write the reconciler ADR — tier precedence, field affinity, tie-breaking, review-queue triggers, and `confidence` (policy decided 2026-07-24, see Session Log; still needs writing up).
 3. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
-4. Reconcile `makes` only for the first pass — a few hundred rows, small enough to verify by eye before scaling to models.
-5. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
+4. Reconcile `makes` only for the first pass, verifying against a hand-checked sample before scaling to models.
+5. Decide what counts as a `make`. Wikidata's 7,223 include assembly plants, mobility-services subsidiaries, and holding companies alongside real marques — the filter belongs in reconciliation, not in the query (see Known Risks).
+6. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
 
@@ -89,6 +91,7 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 
 - **Scraping ToS exposure**: avoid commercial sites without clearly public data. Lead with Wikidata + government APIs to minimize risk while volume is small.
 - **Wikidata coverage gaps**: strong for mainstream Western and Japanese makes, weaker for Soviet-era, Chinese pre-2010, Indian, and Brazilian domestic-market vehicles. Tier 3 sources will be required earlier than expected for those.
+- **Wikidata class modelling is not a clean taxonomy.** `automobile manufacturer` and `car brand` overlap inconsistently — Pontiac is a brand but not a manufacturer; Saab is both. Assume any single class misses real marques, and re-check coverage against a known list whenever the query changes. The landed 7,223 also include plants and subsidiaries ("KINTO Europe"), so **what counts as a `make` is an unresolved reconciliation question**, not a solved one.
 - **EAV query performance** at scale (>500k configurations × N attributes). Plan to benchmark with synthetic data before declaring schema final.
 - **Entity resolution debt**: every source added without a solid matcher compounds the reconciliation problem. Do not add Tier 2/3 sources until matcher precision is measured on a labeled set.
 - **Schema intent duplicated** between `docs/schema_phase1.sql` and the SQLAlchemy models. Mitigated 2026-07-22: models declared the source of truth, DDL/schema.md flagged stale. Full rewrite still owed.
@@ -98,8 +101,22 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 
 End-of-session notes go here. Newest at top. Be brief.
 
-### 2026-07-24
+### 2026-07-24 (part 2 — first real data)
+- **Wikidata fetch-and-land built and run.** `carmanac/ingest/wikidata/` (client / queries / land) + `scripts/ingest_wikidata_makes.py`. 7,223 distinct QIDs, 7.1 MB of JSONB, ~5.5s end to end. Lands raw records only — no `makes`, no reconciliation.
+- Migration `24e7d0f5602c`: `UNIQUE (source_id, content_hash)` on `raw_scrape.raw_records`, making re-scrape idempotency structural instead of an application convention (same lesson as the `updated_at` trigger — bulk paths bypass Python-side rules). Enables `ON CONFLICT DO NOTHING`, which is also race-safe.
+- **Two real defects found only by running it against the live endpoint**, both fixed:
+  - *SPARQL OPTIONAL clauses form a Cartesian product.* "KINTO Europe" returned **360 rows** — 24 countries × 15 websites. 7,074 rows for 6,514 entities overall. Fixed with server-side `GROUP_CONCAT` + `GROUP BY`: exactly one row per QID, and faster (9.6s vs 14.3s) for less data on the wire.
+  - *`GROUP_CONCAT` order is not stable.* The same 18 countries came back rotated after the query was widened, hashing differently and re-landing as a spurious change. Left alone, every multi-valued entity would re-land whenever the query plan shifted. Fixed by canonicalizing (sorting) the aggregated lists before hashing — verified against the two divergent payloads already stored, which now hash identically.
+- **Coverage gap found: Wikidata separates company from marque.** Querying only `automobile manufacturer` (Q786820) silently missed **Pontiac, Plymouth, and Datsun**, which are recorded as `car brand` (Q10429667). Saab and Oldsmobile survived only because they carry both classes — luck, not a rule. Query now unions both: 6,514 + 777 → 7,222, recovering 709 entities. Since `makes` means the marque, this was a correctness bug, not a scope preference.
+- Scope stays deliberately loose: the result set includes plants and subsidiaries. Filtering at fetch time discards data unrecoverably; filtering at reconcile time is reversible because the raw record persists.
+- `httpx` added as the first ingestion dependency. Ingest code lives in `carmanac/ingest/<source>/` rather than top-level `scrapers/` — the latter is for Scrapy spiders, which run under Scrapy's own runner; API sources are importable Python needing a DB session. Noted so the CLAUDE.md convention reads as refined, not ignored.
+
+### 2026-07-24 (part 1)
 - Added the `updated_at` DB trigger (see Done), clearing the last ordering constraint before ingestion.
+- **Reconciler policy decisions made** (to be formalized in the reconciler ADR before implementation):
+  - **Same-tier conflicts resolve by field affinity** — each field names its authoritative source domain (EPA owns fuel economy, NHTSA owns body/safety, Wikidata owns identity/historical facts). Registered per-field, not hard-coded.
+  - **Flagged conflicts still project a tentative winner** onto the entity column (higher tier / more recent), with the flag kept — pages always show data; review can overturn later.
+  - **`confidence` stays NULL until a real methodology exists** (review #6 stays open) — no tier-restated-as-decimal placeholder numbers that downstream logic might mistake for information.
 - **Settled how `source` is allowed to be used** (worth an explicit note, since it is easy to violate silently). Source is recorded so every fact traces to where it came from — it is *not* a query dimension, and nothing user-facing filters by it. Two deliberate exceptions where it is genuinely load-bearing: (1) `external_ids` namespacing, since an identifier is only meaningful scoped to its source (`Q26678` means BMW in Wikidata's namespace; NHTSA and EPA both use bare integers that would otherwise collide) — and the `(source_id, external_id)` lookup is the idempotency key that stops re-scrapes creating duplicate entities; (2) tier-based conflict resolution in the reconciler. In `field_provenance`, source stays pure audit trail: display it, debug with it, never branch on it beyond tier.
 - Next: reconciler ADR, then Wikidata fetch-and-land.
 
