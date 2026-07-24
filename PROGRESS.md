@@ -44,11 +44,12 @@ Phase 1: schema is live and reconciliation-ready, and the first real source is l
 
 ## In Flight
 
-Nothing blocking. Raw records are clean and idempotent; the make definition is settled in ADR 0005 pending its schema.
+**Pre-reconciler schema review done 2026-07-24** (full pass over all 20 live tables, verified against the running DB, not read off the models). One structural decision is owed before any schema work; three findings block the reconciler. Details below under Review Findings.
 
 ## Next (immediate)
 
-1. Implement ADR 0005's schema — `vehicle_derivations` + `derivation_types` lookup, one migration. ADR is written; the tables do not exist yet.
+0. **Decide: one company table, or makes + builders?** Everything else in ADR 0005's schema depends on it. See Review Findings R1.
+1. Implement ADR 0005's schema — `vehicle_derivations` + `derivation_types` lookup, one migration. ADR is written; the tables do not exist yet. Blocked on R1.
 2. Write the reconciler ADR — tier precedence, field affinity, tie-breaking, review-queue triggers, and `confidence` (policy decided 2026-07-24, see Session Log; still needs writing up).
 3. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
 4. Reconcile `makes` only for the first pass, applying ADR 0005's admission rule and verifying against a hand-checked sample before scaling to models.
@@ -65,6 +66,36 @@ Nothing blocking. Raw records are clean and idempotent; the make definition is s
 - First version of the entity resolution review queue (review #9).
 
 Deferred review items (important, not blocking scraping): confidence-score methodology (#6); natural key on `configurations` for cross-source dedup (#5); `power_hp` rating-standard ambiguity + mpg gallon units; CI running ruff + `alembic check`.
+
+## Review Findings (2026-07-24 pre-reconciler audit)
+
+Verified against the live database. Ordered by what blocks what.
+
+**R1 — DECISION OWED: `makes` and `builders` cannot be two tables.** A coachbuilder page needs everything a make page needs (slug, name, country, founded/defunct, description, trigram search), and a builder catalogue needs to parent models — so `builders` becomes a near-copy of `makes`. **Alpina breaks it**: it holds its own WMI (a make) *and* builds on BMW hardware (a builder), so two tables means two rows and two pages for one company, plus an ambiguous match target for the reconciler. Pininfarina shows the same thing over time. Recommendation: one company table, with manufacturer status *derived* from "has a WMI in `external_ids`" rather than a flag someone must set. This revises ADR 0005's §2, which proposed a separate `builders` table.
+
+**R2 — BLOCKING: `field_provenance` accepts unlimited contradictory live assertions.** Its only constraint is the PK. Proven live: three rows (`makes.name` = 'BMW' / 'Bayerische Motoren Werke' / 'BMW AG'), same source, all `superseded_by IS NULL`, all accepted. `configuration_attributes` already does this correctly via `uq_configuration_attribute_live`. Fix: mirror that partial unique index on `(entity, field_name, source_id) WHERE superseded_by IS NULL`. **This is the table the reconciler writes to** — without it, re-runs append instead of supersede.
+
+**R3 — BLOCKING: no natural key on `configurations`.** Uniqueness is `(model_year_id, slug)` and slug is derived from a name, so two sources wording the same car differently both insert. Fix: unique on real identity — `(model_year_id, trim_name, market_region_id, drivetrain_id, body_style_id)` — with slug demoted to display. Previously deferred as review #5; stops being deferrable at the second source.
+
+**R4 — BLOCKING: `market_region_id` is nullable but defines the atomic unit.** CLAUDE.md and the docstring both define a configuration as year × trim × market × drivetrain. NULLs don't collide in Postgres, so two "unknown market" rows never conflict — which defeats R3's key. Fix: NOT NULL with an explicit `UNKNOWN`/`GLOBAL` lookup row (preferred, matches how the other lookups work), or a coalesced unique index.
+
+**R5 — `chassis_codes` has no index** despite the model docstring calling it the level "enthusiasts actually search by". It is `text[]`, so it needs GIN.
+
+**R6 — the configuration URL and its index disagree.** Route map says `/configurations/<slug-or-id>` (flat lookup); uniqueness is `(model_year_id, slug)`, so a bare slug scans. This is the slug-strategy open question surfacing as a concrete index gap.
+
+**R7 — fuzzy matching stops at `models`.** Trigram indexes exist on `makes.name` and `models.name` but not `generations.name` or `configurations.trim_name` — which is exactly where matching gets hard ("E46 330Ci", "330i Sport"). Needed before the matcher, not after.
+
+**R8 — closed sets stored as free text**, against the schema's own lookup-table principle: `msrp_launch_currency` (ISO 4217), `makes.country_code` (ISO 3166), `engines.aspiration`, `engines.configuration`. Nothing prevents `USD` / `usd` / `$` coexisting.
+
+**R9 — `engines.configuration` collides with the `configurations` entity.** Two meanings of the most load-bearing word in the schema. Rename to `cylinder_layout` while it is cheap.
+
+**R10 — denormalized `configurations.engine_displacement_cc` / `.cylinders`** duplicate `engines` deliberately for fast list queries, but nothing keeps them in sync. Handle as a reconciler consistency check rather than a schema change.
+
+**R11 — no media/image tables.** Every page in the route map is one users expect to have pictures. Licensing is genuinely hard here (most car photography is not freely reusable), which argues for deciding early.
+
+**R12 — no prose fields on `makes`.** A Zagato or Singer homepage is mostly narrative, and there is no column for it — while Wikidata already returns a description we currently discard at reconcile time.
+
+**Confirmed sound:** entity/fact split, engines as first-class entities, EAV gated by `attribute_definitions`, exclusive-arc provenance with partial indexes, and the raw landing zone (proven idempotent over three live runs).
 
 ## Open Questions
 
