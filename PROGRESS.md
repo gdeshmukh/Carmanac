@@ -44,16 +44,15 @@ Phase 1: schema is live and reconciliation-ready, and the first real source is l
 
 ## In Flight
 
-**Decision owed: reset the Wikidata raw records once.** The store holds 7,224 Wikidata rows written *before* the GROUP_CONCAT canonicalization fix, so their hashes reflect unsorted payloads — a re-run would re-land many as false "changes", and two spurious versions of Q127773218 are already there. The data is one day old and re-fetchable in ~6s. Options: (a) truncate the Wikidata rows and re-land clean, (b) leave them and accept the noise. Not done unilaterally because `raw_scrape` is the never-discard store.
+Nothing blocking. Raw records are clean and idempotent; the make definition is settled in ADR 0005 pending its schema.
 
 ## Next (immediate)
 
-1. Resolve the raw-record reset above.
+1. Implement ADR 0005's schema — `vehicle_derivations` + `derivation_types` lookup, one migration. ADR is written; the tables do not exist yet.
 2. Write the reconciler ADR — tier precedence, field affinity, tie-breaking, review-queue triggers, and `confidence` (policy decided 2026-07-24, see Session Log; still needs writing up).
 3. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
-4. Reconcile `makes` only for the first pass, verifying against a hand-checked sample before scaling to models.
-5. Decide what counts as a `make`. Wikidata's 7,223 include assembly plants, mobility-services subsidiaries, and holding companies alongside real marques — the filter belongs in reconciliation, not in the query (see Known Risks).
-6. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
+4. Reconcile `makes` only for the first pass, applying ADR 0005's admission rule and verifying against a hand-checked sample before scaling to models.
+5. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
 
@@ -72,7 +71,7 @@ Deferred review items (important, not blocking scraping): confidence-score metho
 These need decisions before they become blockers. Each should resolve to an ADR in `docs/decisions/` when settled.
 
 - **Defunct/acquired makes**: Pontiac, Plymouth, Saab, etc. Are they top-level `makes` or do we model corporate parent relationships? (Leaning toward: makes stay top-level, add an optional `parent_company_id` self-reference.)
-- **Coachbuilders**: Pininfarina, Zagato, Bertone — are they makes, or attached to base vehicles as a separate `coachbuilder` entity? (Leaning toward: separate entity, many-to-many with configurations.)
+- ~~**Coachbuilders**~~ — RESOLVED by ADR 0005 (proposed). They are `makes` rows, and the relationship lives in a `vehicle_derivations` fact table between *generations* with an optional `coachbuilder_make_id`. Make-level linking is ruled out: Zagato bodied Astons, Ferraris and Lancias, so one coachbuilder must attach to many companies.
 - **Concept cars and prototypes**: in scope or out? (Leaning toward: separate boolean flag on `configurations`, default to production-only in queries.)
 - **Race-only configurations** (GT3, Group B, etc.): in scope? (Leaning toward: yes, with a flag.)
 - **Slug strategy**: stable slugs vs. ID-based URLs. Stable slugs are nicer but historical renames are painful. (Leaning toward: slug + ID, accept slug at any historical value and 301 to canonical.)
@@ -86,6 +85,8 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - [0001](docs/decisions/0001-leaf-entity-naming.md) — Leaf entity named `configurations`, not `variants`. Accepted 2026-06-15.
 - [0002](docs/decisions/0002-entity-fact-split-and-field-provenance.md) — Entity/fact split; field-level provenance in `field_provenance`. Accepted 2026-07-22.
 - [0003](docs/decisions/0003-raw-landing-zone-and-external-ids.md) — `raw_scrape.raw_records` landing zone; `external_ids` mapping replaces `wikidata_qid` columns. Accepted 2026-07-22.
+- [0004](docs/decisions/0004-raw-record-retention.md) — Raw record retention tiered by re-fetchability: Tier 3/4 archival, Tier 1/2 prunable cache, bug artifacts always deletable, distrust never justifies deletion. Amends the CLAUDE.md invariant. Accepted 2026-07-24.
+- [0005](docs/decisions/0005-what-counts-as-a-make.md) — What counts as a make (manufacturer responsibility, with Singer as a recorded exception); coachbuilders are makes; derivation is a `vehicle_derivations` fact table between generations. **Proposed** — schema not yet implemented.
 
 ## Known Risks / Things to Watch
 
@@ -100,6 +101,12 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-24 (part 3 — retention rule + make definition)
+- **ADR 0004 accepted: raw retention is tiered by re-fetchability**, amending the blunt "never discarded" invariant. Tier 3/4 stays archival (may be unrepeatable); Tier 1/2 from stable APIs is a prunable cache; artifacts of our own bugs are always deletable. Distrust explicitly does *not* justify deletion — an unreliable source is demoted in reconciliation, since the retained evidence is what justifies the demotion. `CLAUDE.md` invariant and Never-Do list updated to match.
+- **Acted on it once**: pruned the 7,223 pre-canonicalization Wikidata records and re-landed clean. Verified first that zero facts referenced them (all 13 belonged to the seed record, which was left intact), so nothing was orphaned. Re-land is now fully idempotent — 7,222 landed, immediate re-run inserts 0.
+- **ADR 0005 proposed: what counts as a make.** Test is manufacturer responsibility for the finished vehicle (own VIN/WMI + type approval), chosen because NHTSA vPIC makes it *verifiable from data we already plan to ingest* rather than a per-marque judgment. Alpina and Ruf pass; plants, holding companies and KINTO-style subsidiaries fail. **Singer is a recorded exception** — fails the legal test (cars keep Porsche VINs) but is a catalogued product line sold under its own name.
+- Coachbuilders resolved in the same ADR, and the requirement drove the design: **a coachbuilder must attach to every company it built for**, so make-level derivation is ruled out (Zagato bodied Astons, Ferraris, Lancias). Derivation becomes a `vehicle_derivations` fact table between *generations* with an optional `coachbuilder_make_id`. One mechanism covers coachbuilt, restomod, tuned, and **rebadged** — the last being a large real category (GR86/BRZ, Stellantis) that previously had no home in the schema.
 
 ### 2026-07-24 (part 2 — first real data)
 - **Wikidata fetch-and-land built and run.** `carmanac/ingest/wikidata/` (client / queries / land) + `scripts/ingest_wikidata_makes.py`. 7,223 distinct QIDs, 7.1 MB of JSONB, ~5.5s end to end. Lands raw records only — no `makes`, no reconciliation.
