@@ -112,4 +112,8 @@ Planned: FastAPI (read API), Next.js + Tailwind (frontend), Dagster (orchestrati
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Copyright © 2026 Gaurav Deshmukh. Licensed under the **GNU AGPL-3.0** — see [LICENSE](LICENSE).
+
+The network clause matters here: if you run a modified version of this as a public service, you have to publish your source. Reading the code, learning from it, and self-hosting it unchanged are all fine.
+
+Note that the licence covers the *code*. Ingested data carries whatever terms its own source imposes — Wikidata is CC0, other sources vary.
