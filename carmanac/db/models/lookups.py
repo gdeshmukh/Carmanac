@@ -69,6 +69,45 @@ class TransmissionType(_CodeNameLookup):
     __tablename__ = "transmission_types"
 
 
+class CompanyRole(_CodeNameLookup):
+    """What a company does: 'manufacturer', 'coachbuilder', 'restomodder',
+    'tuner', 'designer', 'engine_manufacturer' (ADR 0006).
+
+    A lookup rather than an enum so a new kind of company - a parts or tuning
+    vendor, say - is an INSERT rather than a migration.
+    """
+
+    __tablename__ = "company_roles"
+
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class Currency(_CodeNameLookup):
+    """ISO 4217. `code` is 'USD', 'EUR', 'JPY'.
+
+    A lookup rather than free text on `configurations.msrp_launch_currency`,
+    which allowed 'USD', 'usd' and '$' to coexist.
+    """
+
+    __tablename__ = "currencies"
+
+
+class Country(_CodeNameLookup):
+    """ISO 3166-1 alpha-2. `code` is 'DE', 'JP', 'US'.
+
+    Replaces the free-text `country_code` on companies for the same reason as
+    `Currency`, and gives country pages somewhere to hang later.
+    """
+
+    __tablename__ = "countries"
+
+
+class Aspiration(_CodeNameLookup):
+    """'na', 'turbo', 'twin-turbo', 'supercharged', 'electric'."""
+
+    __tablename__ = "aspirations"
+
+
 class Source(Base):
     """Every data source. Referenced by every fact-bearing row.
 

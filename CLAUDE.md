@@ -8,19 +8,19 @@ This is a long-horizon project (months to years) intended as a portfolio centerp
 
 ## Current Phase
 
-**Phase 0: Foundation setup** — repo scaffolding, schema design, tooling decisions. See `PROGRESS.md` for live status.
+**Phase 1: schema live, first source landing.** All 27 tables are applied and reviewed; Wikidata fetch-and-land runs end to end into `raw_scrape.raw_records`. See `PROGRESS.md` for live status.
 
-Next planned phase: Phase 1 — schema implementation + Tier 1 source ingestion (Wikidata + NHTSA + EPA).
+Next: the reconciler — turning raw records into `companies` + `field_provenance`. NHTSA vPIC and EPA follow.
 
 ## Architecture Invariants
 
 These are settled decisions. Do not propose changes without flagging them explicitly as a decision to revisit.
 
 - **Postgres is the source of truth.** `pgvector` extension for semantic search.
-- **Five-level entity hierarchy**: `makes` → `models` → `generations` → `model_years` → `configurations`. Every spec-bearing row ultimately foreign-keys back to `configurations`.
+- **Five-level entity hierarchy**: `companies` → `models` → `generations` → `model_years` → `configurations`. Every spec-bearing row ultimately foreign-keys back to `configurations`. `companies` holds every organisation that appears on or behind a vehicle — BMW, Alpina, Singer, Zagato (ADR 0006). **"Make" is a role, not a table**: a company holding manufacturer responsibility (its own WMI) is a make, recorded in `company_role_assignments`. Modelling makes and builders separately was rejected because Alpina is both, and would need two rows and two pages.
 - **Engines and transmissions are first-class entities** with their own tables. Cross-make reuse (BMW B58 in Toyota Supra, GM LS swaps, etc.) makes this non-negotiable.
 - **Hybrid storage model**: ~20 universal core specs live as columns on `configurations`. Long-tail/sparse attributes live in an EAV table (`configuration_attributes`). New attributes are registered in `attribute_definitions` before any data lands.
-- **Provenance attaches to facts, not identity** (ADR 0002). Fact-bearing rows carry `source_id` / `scraped_at` / `confidence_score` (EAV `configuration_attributes`, the association tables) or field-level provenance in `field_provenance`. Entity/identity tables (`makes` … `configurations`, `engines`, `transmissions`) carry no provenance — they hold the reconciled current value and are upserted by natural key. Supersession lives with the facts, never on identity rows.
+- **Provenance attaches to facts, not identity** (ADR 0002). Fact-bearing rows carry `source_id` / `scraped_at` / `confidence_score` (EAV `configuration_attributes`, the association tables) or field-level provenance in `field_provenance`. Entity/identity tables (`companies` … `configurations`, `engines`, `transmissions`) carry no provenance — they hold the reconciled current value and are upserted by natural key. Supersession lives with the facts, never on identity rows.
 - **Raw scrape data is retained by re-fetchability** (ADR 0004). A separate `raw_scrape` schema holds untransformed source records (`raw_scrape.raw_records`); every fact carries a `raw_record_id` back to the exact scrape, for re-reconciliation when matching logic improves. Tier 3/4 records are **archival — never deleted**, because they may be unrepeatable. Tier 1/2 records from stable programmatic sources are a **cache**: prunable when correctness calls for it, then re-landed. Artifacts of our own bugs are deletable at any tier. **Distrust never justifies deletion** — an unreliable source is demoted in reconciliation, not erased, since the evidence is what justifies the demotion.
 - **Wikidata QID is the universal join key** wherever a vehicle entity has one — stored in `external_ids` alongside every other source's identifiers (ADR 0003), not as a per-table column.
 
@@ -28,15 +28,16 @@ These are settled decisions. Do not propose changes without flagging them explic
 
 Core tables (Phase 1 target):
 
-- `makes` — manufacturers/brands. Top-level entity, has its own page.
-- `models` — nameplates under a make. FK → `makes`.
+- `companies` — manufacturers, coachbuilders, restomodders, tuners. Top-level entity, has its own page. Roles via `company_roles` + `company_role_assignments`.
+- `models` — nameplates under a company. FK → `companies`.
 - `generations` — generation of a model (E46, G80, etc.). FK → `models`. Holds chassis codes.
 - `model_years` — specific year within a generation. FK → `generations`.
 - `configurations` — atomic unit (year + trim + market + drivetrain combo). FK → `model_years` + `market_regions`.
-- `engines` — engine entities. FK → `makes` (manufacturer of engine, may differ from car's make).
+- `engines` — engine entities. FK → `companies` (maker of the engine, may differ from the car's company).
 - `transmissions` — transmission entities.
 - `configuration_engines`, `configuration_transmissions` — many-to-many join tables.
-- `market_regions`, `body_styles`, `drivetrains`, `transmission_types`, `fuel_types` — dimension/lookup tables.
+- `market_regions`, `body_styles`, `drivetrains`, `transmission_types`, `fuel_types`, `currencies`, `countries`, `aspirations`, `company_roles` — dimension/lookup tables.
+- `media_assets`, `media_attachments` — images and documents (owner's manuals, brochures), with licence and attribution. Attached to any entity via an exclusive arc.
 - `sources` — every data source (URL, tier, scraped_at). Referenced by every fact.
 - `configuration_attributes` — EAV for long-tail specs.
 - `attribute_definitions` — registry of legal EAV keys with units, types, validation.
@@ -44,7 +45,7 @@ Core tables (Phase 1 target):
 - `external_ids` — `(source, external_id)` → entity mapping, incl. Wikidata QIDs (ADR 0003).
 - `raw_scrape.raw_records` — permanent untransformed scrape landing zone (ADR 0003).
 
-Reference DDL lives in `docs/schema_phase1.sql`; rationale in `docs/schema.md`. **Note:** the SQLAlchemy models in `carmanac/db/models/` are now the source of schema truth (the applied Alembic baseline + revision `00531f09d08f`); `docs/schema_phase1.sql` predates ADR 0002/0003 and is stale pending reconciliation (see PROGRESS.md Open Questions). Leaf entity renamed `variants` → `configurations` (ADR 0001).
+Reference DDL lives in `docs/schema_phase1.sql`; rationale in `docs/schema.md`. **Note:** the SQLAlchemy models in `carmanac/db/models/` are now the source of schema truth (current Alembic head `5cbf6be81036`); `docs/schema_phase1.sql` and `docs/schema.md` predate ADR 0002-0006 and are stale (see PROGRESS.md Open Questions). Leaf entity renamed `variants` → `configurations` (ADR 0001).
 
 ## Source Tiering
 
@@ -77,9 +78,9 @@ Sources are tiered by authority. Conflicts resolve by tier first, then recency, 
 
 The frontend route map mirrors the entity hierarchy (public slug for the leaf is pending the slug-strategy ADR; it need not literally be `configurations`):
 
-- `/makes/<make-slug>` — make page
-- `/makes/<make-slug>/<model-slug>` — model page
-- `/makes/<make-slug>/<model-slug>/<generation-slug>` — generation page
+- `/makes/<company-slug>` — company page (a make is a company holding the `manufacturer` role)
+- `/makes/<company-slug>/<model-slug>` — model page
+- `/makes/<company-slug>/<model-slug>/<generation-slug>` — generation page
 - `/configurations/<configuration-slug-or-id>` — configuration detail
 - `/engines/<engine-slug>` — engine detail + list of configurations using it
 - `/compare?configurations=a,b,c` — comparison view

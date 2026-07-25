@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: schema is live and reconciliation-ready, and the first real source is landing. Wikidata fetch-and-land runs end to end — 7,223 manufacturers/brands in `raw_scrape.raw_records`. Next is the reconciler, which turns those raw records into `makes` + `field_provenance`.
+Phase 1: schema is live, reviewed, and reconciliation-ready; the first real source is landing. Wikidata fetch-and-land runs end to end — 7,223 manufacturers/brands in `raw_scrape.raw_records`. A full pre-reconciler review (R1-R12) is implemented. Next is the reconciler, which turns raw records into `companies` + `field_provenance`.
 
 ## Done
 
@@ -44,15 +44,14 @@ Phase 1: schema is live and reconciliation-ready, and the first real source is l
 
 ## In Flight
 
-**Pre-reconciler schema review done 2026-07-24** (full pass over all 20 live tables, verified against the running DB, not read off the models). One structural decision is owed before any schema work; three findings block the reconciler. Details below under Review Findings.
+Nothing blocking. The pre-reconciler review is done and **R1-R12 are implemented and verified** (migration `5cbf6be81036`). The end targets are now shaped for the reconciler to sort raw records into.
 
 ## Next (immediate)
 
-0. **Decide: one company table, or makes + builders?** Everything else in ADR 0005's schema depends on it. See Review Findings R1.
-1. Implement ADR 0005's schema — `vehicle_derivations` + `derivation_types` lookup, one migration. ADR is written; the tables do not exist yet. Blocked on R1.
+1. Implement ADR 0005's remaining schema — `vehicle_derivations` + `derivation_types` lookup. ADR 0006 settled the entity question it depended on; the derivation tables themselves are still unbuilt.
 2. Write the reconciler ADR — tier precedence, field affinity, tie-breaking, review-queue triggers, and `confidence` (policy decided 2026-07-24, see Session Log; still needs writing up).
 3. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
-4. Reconcile `makes` only for the first pass, applying ADR 0005's admission rule and verifying against a hand-checked sample before scaling to models.
+4. Reconcile `companies` only for the first pass, applying ADR 0005's admission rule and verifying against a hand-checked sample before scaling to models.
 5. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
@@ -71,29 +70,29 @@ Deferred review items (important, not blocking scraping): confidence-score metho
 
 Verified against the live database. Ordered by what blocks what.
 
-**R1 — DECISION OWED: `makes` and `builders` cannot be two tables.** A coachbuilder page needs everything a make page needs (slug, name, country, founded/defunct, description, trigram search), and a builder catalogue needs to parent models — so `builders` becomes a near-copy of `makes`. **Alpina breaks it**: it holds its own WMI (a make) *and* builds on BMW hardware (a builder), so two tables means two rows and two pages for one company, plus an ambiguous match target for the reconciler. Pininfarina shows the same thing over time. Recommendation: one company table, with manufacturer status *derived* from "has a WMI in `external_ids`" rather than a flag someone must set. This revises ADR 0005's §2, which proposed a separate `builders` table.
+**R1 — DONE (ADR 0006, migration `5cbf6be81036`): `makes` and `builders` cannot be two tables.** A coachbuilder page needs everything a make page needs (slug, name, country, founded/defunct, description, trigram search), and a builder catalogue needs to parent models — so `builders` becomes a near-copy of `makes`. **Alpina breaks it**: it holds its own WMI (a make) *and* builds on BMW hardware (a builder), so two tables means two rows and two pages for one company, plus an ambiguous match target for the reconciler. Pininfarina shows the same thing over time. Recommendation: one company table, with manufacturer status *derived* from "has a WMI in `external_ids`" rather than a flag someone must set. This revises ADR 0005's §2, which proposed a separate `builders` table.
 
-**R2 — BLOCKING: `field_provenance` accepts unlimited contradictory live assertions.** Its only constraint is the PK. Proven live: three rows (`makes.name` = 'BMW' / 'Bayerische Motoren Werke' / 'BMW AG'), same source, all `superseded_by IS NULL`, all accepted. `configuration_attributes` already does this correctly via `uq_configuration_attribute_live`. Fix: mirror that partial unique index on `(entity, field_name, source_id) WHERE superseded_by IS NULL`. **This is the table the reconciler writes to** — without it, re-runs append instead of supersede.
+**R2 — DONE: `field_provenance` accepts unlimited contradictory live assertions.** Its only constraint is the PK. Proven live: three rows (`makes.name` = 'BMW' / 'Bayerische Motoren Werke' / 'BMW AG'), same source, all `superseded_by IS NULL`, all accepted. `configuration_attributes` already does this correctly via `uq_configuration_attribute_live`. Fix: mirror that partial unique index on `(entity, field_name, source_id) WHERE superseded_by IS NULL`. **This is the table the reconciler writes to** — without it, re-runs append instead of supersede.
 
-**R3 — BLOCKING: no natural key on `configurations`.** Uniqueness is `(model_year_id, slug)` and slug is derived from a name, so two sources wording the same car differently both insert. Fix: unique on real identity — `(model_year_id, trim_name, market_region_id, drivetrain_id, body_style_id)` — with slug demoted to display. Previously deferred as review #5; stops being deferrable at the second source.
+**R3 — DONE: no natural key on `configurations`.** Uniqueness is `(model_year_id, slug)` and slug is derived from a name, so two sources wording the same car differently both insert. Fix: unique on real identity — `(model_year_id, trim_name, market_region_id, drivetrain_id, body_style_id)` — with slug demoted to display. Previously deferred as review #5; stops being deferrable at the second source.
 
-**R4 — BLOCKING: `market_region_id` is nullable but defines the atomic unit.** CLAUDE.md and the docstring both define a configuration as year × trim × market × drivetrain. NULLs don't collide in Postgres, so two "unknown market" rows never conflict — which defeats R3's key. Fix: NOT NULL with an explicit `UNKNOWN`/`GLOBAL` lookup row (preferred, matches how the other lookups work), or a coalesced unique index.
+**R4 — DONE: `market_region_id` is nullable but defines the atomic unit.** CLAUDE.md and the docstring both define a configuration as year × trim × market × drivetrain. NULLs don't collide in Postgres, so two "unknown market" rows never conflict — which defeats R3's key. Fix: NOT NULL with an explicit `UNKNOWN`/`GLOBAL` lookup row (preferred, matches how the other lookups work), or a coalesced unique index.
 
-**R5 — `chassis_codes` has no index** despite the model docstring calling it the level "enthusiasts actually search by". It is `text[]`, so it needs GIN.
+**R5 — DONE: `chassis_codes` had no index** despite the model docstring calling it the level "enthusiasts actually search by". It is `text[]`, so it needs GIN.
 
-**R6 — the configuration URL and its index disagree.** Route map says `/configurations/<slug-or-id>` (flat lookup); uniqueness is `(model_year_id, slug)`, so a bare slug scans. This is the slug-strategy open question surfacing as a concrete index gap.
+**R6 — DONE: the configuration URL and its index disagreed.** Route map says `/configurations/<slug-or-id>` (flat lookup); uniqueness is `(model_year_id, slug)`, so a bare slug scans. This is the slug-strategy open question surfacing as a concrete index gap.
 
-**R7 — fuzzy matching stops at `models`.** Trigram indexes exist on `makes.name` and `models.name` but not `generations.name` or `configurations.trim_name` — which is exactly where matching gets hard ("E46 330Ci", "330i Sport"). Needed before the matcher, not after.
+**R7 — DONE: fuzzy matching stopped at `models`.** Trigram indexes exist on `makes.name` and `models.name` but not `generations.name` or `configurations.trim_name` — which is exactly where matching gets hard ("E46 330Ci", "330i Sport"). Needed before the matcher, not after.
 
-**R8 — closed sets stored as free text**, against the schema's own lookup-table principle: `msrp_launch_currency` (ISO 4217), `makes.country_code` (ISO 3166), `engines.aspiration`, `engines.configuration`. Nothing prevents `USD` / `usd` / `$` coexisting.
+**R8 — DONE: closed sets were stored as free text**, against the schema's own lookup-table principle: `msrp_launch_currency` (ISO 4217), `makes.country_code` (ISO 3166), `engines.aspiration`, `engines.configuration`. Nothing prevents `USD` / `usd` / `$` coexisting.
 
-**R9 — `engines.configuration` collides with the `configurations` entity.** Two meanings of the most load-bearing word in the schema. Rename to `cylinder_layout` while it is cheap.
+**R9 — DONE: `engines.configuration` collided with the `configurations` entity.** Two meanings of the most load-bearing word in the schema. Rename to `cylinder_layout` while it is cheap.
 
 **R10 — denormalized `configurations.engine_displacement_cc` / `.cylinders`** duplicate `engines` deliberately for fast list queries, but nothing keeps them in sync. Handle as a reconciler consistency check rather than a schema change.
 
-**R11 — no media/image tables.** Every page in the route map is one users expect to have pictures. Licensing is genuinely hard here (most car photography is not freely reusable), which argues for deciding early.
+**R11 — DONE: no media/image tables.** Every page in the route map is one users expect to have pictures. Licensing is genuinely hard here (most car photography is not freely reusable), which argues for deciding early.
 
-**R12 — no prose fields on `makes`.** A Zagato or Singer homepage is mostly narrative, and there is no column for it — while Wikidata already returns a description we currently discard at reconcile time.
+**R12 — DONE: no prose fields on `makes`.** A Zagato or Singer homepage is mostly narrative, and there is no column for it — while Wikidata already returns a description we currently discard at reconcile time.
 
 **Confirmed sound:** entity/fact split, engines as first-class entities, EAV gated by `attribute_definitions`, exclusive-arc provenance with partial indexes, and the raw landing zone (proven idempotent over three live runs).
 
@@ -118,7 +117,8 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - [0002](docs/decisions/0002-entity-fact-split-and-field-provenance.md) — Entity/fact split; field-level provenance in `field_provenance`. Accepted 2026-07-22.
 - [0003](docs/decisions/0003-raw-landing-zone-and-external-ids.md) — `raw_scrape.raw_records` landing zone; `external_ids` mapping replaces `wikidata_qid` columns. Accepted 2026-07-22.
 - [0004](docs/decisions/0004-raw-record-retention.md) — Raw record retention tiered by re-fetchability: Tier 3/4 archival, Tier 1/2 prunable cache, bug artifacts always deletable, distrust never justifies deletion. Amends the CLAUDE.md invariant. Accepted 2026-07-24.
-- [0005](docs/decisions/0005-what-counts-as-a-make.md) — What counts as a make: manufacturer responsibility (own WMI), **no exceptions**. Builders (restomodders, coachbuilders) are a separate first-class table; derivation is one `vehicle_derivations` fact table keyed on the base generation, with a nullable derived side. **Proposed** — schema not yet implemented.
+- [0005](docs/decisions/0005-what-counts-as-a-make.md) — What counts as a make: manufacturer responsibility (own WMI), **no exceptions**. Derivation is one `vehicle_derivations` fact table keyed on the base generation, with a nullable derived side. **Proposed** — derivation tables not yet built. Its separate `builders` table is withdrawn by ADR 0006.
+- [0006](docs/decisions/0006-companies-not-makes.md) — One `companies` table; "make" becomes a role. Alpina is both a manufacturer and a builder, so two tables would give one company two rows and two pages. Accepted 2026-07-24, implemented in `5cbf6be81036`.
 
 ## Known Risks / Things to Watch
 
@@ -133,6 +133,14 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-24 (part 4 — pre-reconciler review implemented)
+- **All 12 review findings implemented** in one hand-written migration, `5cbf6be81036`. Hand-written because autogenerate renders a rename as DROP + CREATE, which would discard every row and dependent FK, and because it cannot see triggers (the `updated_at` trigger had to be re-pointed by hand after the table rename).
+- **ADR 0006 accepted: one `companies` table, "make" becomes a role.** The trigger was wanting coachbuilder homepages: a Zagato page needs everything a make page needs, and a builder catalogue needs to parent models, so `builders` would be a near-copy. **Alpina settles it** — own WMI *and* builds on BMWs, so two tables give one company two rows, two pages, and an ambiguous match target for the reconciler. Roles are a fact-bearing M2M (`company_roles` + `company_role_assignments`) since companies hold several and change over time. Withdraws ADR 0005 §2.
+- **R2 verified fixed against the live DB**: the same three contradictory assertions that were accepted before are now rejected by `uq_field_provenance_live`, while supersession still works (history retained, one live row).
+- **R3/R4 use `UNIQUE NULLS NOT DISTINCT`** (Postgres 15+). Without it the natural key would have silently done nothing for sparse records — NULL trim, drivetrain or body style never collide by default, so exactly the rows most needing dedup would both insert. Verified: a duplicate config with all-NULL dimensions is now rejected.
+- Also landed: chassis-code GIN index (R5), flat configuration slug (R6), trigram indexes on generations/trims/engines (R7), `currencies`/`countries`/`aspirations` lookups (R8), `engines.configuration` → `cylinder_layout` (R9), `media_assets` + `media_attachments` with licence and attribution (R11), and `summary`/`description` prose on every entity (R12).
+- Verified end to end: `alembic check` clean, ruff clean, downgrade/upgrade round trip clean, seed rebuilt and idempotent, Wikidata ingest unaffected. 27 tables, 121 indexes.
 
 ### 2026-07-24 (part 3 — retention rule + make definition)
 - **ADR 0004 accepted: raw retention is tiered by re-fetchability**, amending the blunt "never discarded" invariant. Tier 3/4 stays archival (may be unrepeatable); Tier 1/2 from stable APIs is a prunable cache; artifacts of our own bugs are always deletable. Distrust explicitly does *not* justify deletion — an unreliable source is demoted in reconciliation, since the retained evidence is what justifies the demotion. `CLAUDE.md` invariant and Never-Do list updated to match.

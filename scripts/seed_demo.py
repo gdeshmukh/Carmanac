@@ -3,7 +3,7 @@
 Threads a 2002 BMW 330i (E46, US market) through all five levels of the
 hierarchy, then shows the reconciliation-ready model from ADR 0002 / 0003:
 
-    makes        BMW
+    companies    BMW  (role: manufacturer)
       models       3 Series
         generations  E46            <- chassis codes live here
           model_years  2002
@@ -36,19 +36,24 @@ from typing import Any
 from sqlalchemy import select
 
 from carmanac.db.models import (
+    Aspiration,
     AttributeDefinition,
     BodyStyle,
+    Company,
+    CompanyRole,
+    CompanyRoleAssignment,
     Configuration,
     ConfigurationAttribute,
     ConfigurationEngine,
     ConfigurationTransmission,
+    Country,
+    Currency,
     Drivetrain,
     Engine,
     ExternalId,
     FieldProvenance,
     FuelType,
     Generation,
-    Make,
     MarketRegion,
     Model,
     ModelYear,
@@ -64,7 +69,7 @@ SCRAPED_AT = datetime(2026, 7, 22, tzinfo=UTC)
 # Maps an entity instance's type to its exclusive-arc column in field_provenance
 # and external_ids (see models/provenance.py).
 _ARC_COL_FOR: dict[type, str] = {
-    Make: "make_id",
+    Company: "company_id",
     Model: "model_id",
     Generation: "generation_id",
     ModelYear: "model_year_id",
@@ -79,6 +84,30 @@ LOOKUPS: dict[type, list[dict[str, Any]]] = {
         {"code": "EU", "name": "European Union"},
         {"code": "JDM", "name": "Japan (domestic)"},
         {"code": "GLOBAL", "name": "Global"},
+        # Market is NOT NULL on configurations because it is part of the
+        # definition of one (a 2004 M3 differs between US and Europe). UNKNOWN
+        # is the explicit placeholder rather than NULL, which would silently
+        # exempt the row from the natural key.
+        {"code": "UNKNOWN", "name": "Unknown"},
+    ],
+    Currency: [
+        {"code": "USD", "name": "US dollar"},
+        {"code": "EUR", "name": "Euro"},
+        {"code": "GBP", "name": "Pound sterling"},
+        {"code": "JPY", "name": "Japanese yen"},
+    ],
+    Country: [
+        {"code": "DE", "name": "Germany"},
+        {"code": "JP", "name": "Japan"},
+        {"code": "US", "name": "United States"},
+        {"code": "IT", "name": "Italy"},
+        {"code": "GB", "name": "United Kingdom"},
+    ],
+    Aspiration: [
+        {"code": "na", "name": "Naturally aspirated"},
+        {"code": "turbo", "name": "Turbocharged"},
+        {"code": "twin-turbo", "name": "Twin-turbocharged"},
+        {"code": "supercharged", "name": "Supercharged"},
     ],
     BodyStyle: [
         {"code": "sedan", "name": "Sedan"},
@@ -251,17 +280,42 @@ def main() -> None:
         gasoline = s.scalar(select(FuelType).filter_by(code="gasoline"))
         manual = s.scalar(select(TransmissionType).filter_by(code="manual"))
         us = s.scalar(select(MarketRegion).filter_by(code="US"))
+        germany = s.scalar(select(Country).filter_by(code="DE"))
+        usd = s.scalar(select(Currency).filter_by(code="USD"))
+        na = s.scalar(select(Aspiration).filter_by(code="na"))
+        manufacturer = s.scalar(select(CompanyRole).filter_by(code="manufacturer"))
 
         # --- the five-level chain (identity only - no provenance columns) ---
-        make, c = get_or_create(
+        company, c = get_or_create(
             s,
-            Make,
-            defaults={"name": "BMW", "country_code": "DE", "founded_year": 1916},
+            Company,
+            defaults={
+                "name": "BMW",
+                "country_id": germany.id,
+                "founded_year": 1916,
+                "summary": "German manufacturer of luxury vehicles and motorcycles.",
+            },
             slug="bmw",
         )
         created += c
+        # BMW holds the `manufacturer` role - it has its own WMI (ADR 0005/0006).
+        # A company may hold several: Alpina would carry manufacturer AND tuner.
+        if not s.scalar(
+            select(CompanyRoleAssignment).filter_by(
+                company_id=company.id, company_role_id=manufacturer.id
+            )
+        ):
+            s.add(
+                CompanyRoleAssignment(
+                    company_id=company.id,
+                    company_role_id=manufacturer.id,
+                    source_id=wikidata.id,
+                    scraped_at=SCRAPED_AT,
+                )
+            )
+            created += 1
         model, c = get_or_create(
-            s, Model, defaults={"name": "3 Series"}, make_id=make.id, slug="3-series"
+            s, Model, defaults={"name": "3 Series"}, company_id=company.id, slug="3-series"
         )
         created += c
         gen, c = get_or_create(
@@ -304,7 +358,7 @@ def main() -> None:
                 "height_mm": 1415,
                 "wheelbase_mm": 2725,
                 "msrp_launch_amount": Decimal("35400.00"),
-                "msrp_launch_currency": "USD",
+                "msrp_launch_currency_id": usd.id,
             },
             model_year_id=my.id,
             slug="330i-us-sedan",
@@ -312,7 +366,7 @@ def main() -> None:
         created += c
 
         # --- external ids (replaces the old wikidata_qid columns) ----------
-        created += record_external_id(s, make, wikidata, "Q26678")
+        created += record_external_id(s, company, wikidata, "Q26678")
         created += record_external_id(s, model, wikidata, "Q194352")
         created += record_external_id(s, gen, wikidata, "Q1122106")
         created += record_external_id(s, cfg, nhtsa, "vpic-2002-bmw-330i")
@@ -335,22 +389,22 @@ def main() -> None:
             "wheelbase_mm",
         ):
             created += record_field(s, cfg, field, wikidata, raw_wd, 0.90)
-        # And a couple of make-level facts from Wikidata.
-        for field in ("founded_year", "country_code"):
-            created += record_field(s, make, field, wikidata, raw_wd, 0.95)
+        # And a couple of company-level facts from Wikidata.
+        for field in ("founded_year", "country_id", "summary"):
+            created += record_field(s, company, field, wikidata, raw_wd, 0.95)
 
         # --- powertrain entities (identity) + provenanced associations -----
         engine, c = get_or_create(
             s,
             Engine,
             defaults={
-                "manufacturer_make_id": make.id,
+                "manufacturer_company_id": company.id,
                 "name": "M54B30",
                 "family_code": "M54",
                 "displacement_cc": 2979,
                 "cylinders": 6,
-                "configuration": "inline",
-                "aspiration": "na",
+                "cylinder_layout": "inline",
+                "aspiration_id": na.id,
                 "fuel_type_id": gasoline.id,
             },
             slug="bmw-m54b30",

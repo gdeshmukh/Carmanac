@@ -43,7 +43,7 @@ from carmanac.db.base import Base
 # The seven entity tables an assertion or external id can attach to. Used to
 # build the exclusive-arc CHECK and the per-column partial indexes.
 _ARC_COLUMNS = (
-    "make_id",
+    "company_id",
     "model_id",
     "generation_id",
     "model_year_id",
@@ -115,7 +115,7 @@ class FieldProvenance(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
 
     # --- exclusive arc: exactly one of these is set ---
-    make_id: Mapped[int | None] = mapped_column(ForeignKey("makes.id"))
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"))
     model_id: Mapped[int | None] = mapped_column(ForeignKey("models.id"))
     generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id"))
     model_year_id: Mapped[int | None] = mapped_column(ForeignKey("model_years.id"))
@@ -153,6 +153,30 @@ class FieldProvenance(Base):
         ),
         # Common lookup: "everything this source asserted about this field".
         Index("idx_field_provenance_source_id_field_name", "source_id", "field_name"),
+        # AT MOST ONE LIVE ASSERTION per (entity, field, source). Without this
+        # the table accepted unlimited contradictory live rows - verified: three
+        # rows saying companies.name was 'BMW', 'Bayerische Motoren Werke' and
+        # 'BMW AG', same source, none superseded, all accepted. A re-running
+        # reconciler would then append rather than supersede, and "what Wikidata
+        # currently says" would stop having one answer.
+        #
+        # Partial (WHERE superseded_by IS NULL) because superseded history is
+        # retained by design, so only live rows may be unique. This mirrors
+        # `uq_configuration_attribute_live`, which had the pattern right from
+        # the start - `field_provenance` simply never got the equivalent.
+        #
+        # NULLS NOT DISTINCT: exactly one arc column is set per row and the
+        # other six are NULL, so without it every row would look distinct on
+        # those columns and the constraint would never fire.
+        Index(
+            "uq_field_provenance_live",
+            *_ARC_COLUMNS,
+            "field_name",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
     )
 
 
@@ -169,7 +193,7 @@ class ExternalId(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
 
     # --- exclusive arc: exactly one of these is set ---
-    make_id: Mapped[int | None] = mapped_column(ForeignKey("makes.id"), index=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
     model_id: Mapped[int | None] = mapped_column(ForeignKey("models.id"), index=True)
     generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id"), index=True)
     model_year_id: Mapped[int | None] = mapped_column(ForeignKey("model_years.id"), index=True)

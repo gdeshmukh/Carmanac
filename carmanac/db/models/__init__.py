@@ -12,14 +12,31 @@ from carmanac.db.models.attributes import (
     AttributeDefinition,
     ConfigurationAttribute,
 )
-from carmanac.db.models.hierarchy import Configuration, Generation, Make, Model, ModelYear
+from carmanac.db.models.hierarchy import (
+    Company,
+    CompanyRoleAssignment,
+    Configuration,
+    Generation,
+    Model,
+    ModelYear,
+)
 from carmanac.db.models.lookups import (
+    Aspiration,
     BodyStyle,
+    CompanyRole,
+    Country,
+    Currency,
     Drivetrain,
     FuelType,
     MarketRegion,
     Source,
     TransmissionType,
+)
+from carmanac.db.models.media import (
+    MEDIA_KINDS,
+    MEDIA_ROLES,
+    MediaAsset,
+    MediaAttachment,
 )
 from carmanac.db.models.powertrain import (
     ConfigurationEngine,
@@ -31,21 +48,30 @@ from carmanac.db.models.provenance import ExternalId, FieldProvenance, RawRecord
 
 __all__ = [
     "ATTRIBUTE_DATA_TYPES",
+    "MEDIA_KINDS",
+    "MEDIA_ROLES",
+    "Aspiration",
     "AttributeDefinition",
     "Base",
     "BodyStyle",
+    "Company",
+    "CompanyRole",
+    "CompanyRoleAssignment",
     "Configuration",
     "ConfigurationAttribute",
     "ConfigurationEngine",
     "ConfigurationTransmission",
+    "Country",
+    "Currency",
     "Drivetrain",
     "Engine",
     "ExternalId",
     "FieldProvenance",
     "FuelType",
     "Generation",
-    "Make",
     "MarketRegion",
+    "MediaAsset",
+    "MediaAttachment",
     "Model",
     "ModelYear",
     "RawRecord",
