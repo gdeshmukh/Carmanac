@@ -1,6 +1,6 @@
 """The five-level entity hierarchy - the spine of the schema.
 
-    makes -> models -> generations -> model_years -> configurations
+    companies -> models -> generations -> model_years -> configurations
 
 These are IDENTITY tables (ADR 0002). They hold identity plus their descriptive
 and spec columns as the *current best value*. They carry no row-level
@@ -21,38 +21,74 @@ from sqlalchemy import ForeignKey, Index, Integer, Numeric, SmallInteger, Text, 
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from carmanac.db.base import Base, TimestampMixin
+from carmanac.db.base import Base, ProvenanceMixin, TimestampMixin, provenance_table_args
 
 
-class Make(Base, TimestampMixin):
-    """Manufacturer / brand. Top-level entity, has its own page.
+class Company(Base, TimestampMixin):
+    """Any organisation that appears on or behind a vehicle (ADR 0006).
+
+    BMW, Pontiac, Alpina, Singer, Zagato, Murphy - all one table. "Make" is a
+    *role* a company holds (see `CompanyRole`), not a separate kind of entity:
+    Alpina holds its own WMI and also builds on BMW hardware, and modelling that
+    as two tables would give one company two rows and two pages.
 
     Defunct marques (Pontiac, Saab, Plymouth) stay top-level and simply carry a
     `defunct_year`. Modeling corporate parents is deferred to its own ADR - see
     PROGRESS.md Open Questions.
     """
 
-    __tablename__ = "makes"
+    __tablename__ = "companies"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    country_code: Mapped[str | None] = mapped_column(Text)  # ISO 3166-1 alpha-2 of HQ
+    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id"), index=True)
     founded_year: Mapped[int | None] = mapped_column(SmallInteger)
     defunct_year: Mapped[int | None] = mapped_column(SmallInteger)  # null = still active
 
-    models: Mapped[list[Model]] = relationship(back_populates="make")
+    # Prose. `summary` is the one-line blurb every entity carries (Wikidata's
+    # description maps straight onto it); `description` is the longer narrative
+    # a company homepage needs. Both are reconciled facts like any other column,
+    # so which source wrote them is recorded in `field_provenance`.
+    summary: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    models: Mapped[list[Model]] = relationship(back_populates="company")
 
     # Trigram index: entity resolution matches incoming source names against
     # these fuzzily ("BMW AG" -> "BMW"), so a plain btree is not enough.
     __table_args__ = (
         Index(
-            "idx_makes_name_trgm",
+            "idx_companies_name_trgm",
             "name",
             postgresql_using="gin",
             postgresql_ops={"name": "gin_trgm_ops"},
         ),
     )
+
+
+class CompanyRoleAssignment(Base, ProvenanceMixin):
+    """Which roles a company holds. Many-to-many, because companies hold several
+    at once and change over time: Alpina manufactures *and* tunes; Pininfarina
+    was a contract coachbuilder for decades before it sold a car under its own
+    name.
+
+    Fact-bearing: "Zagato is a coachbuilder" is a sourced claim, so it carries
+    provenance like any other association.
+
+    `manufacturer` should agree with the presence of a WMI in `external_ids`
+    (ADR 0005's test). Disagreement is a reconciliation flag, not a silent
+    overwrite.
+    """
+
+    __tablename__ = "company_role_assignments"
+
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), primary_key=True)
+    company_role_id: Mapped[int] = mapped_column(
+        ForeignKey("company_roles.id"), primary_key=True, index=True
+    )
+
+    __table_args__ = provenance_table_args()
 
 
 class Model(Base, TimestampMixin):
@@ -61,17 +97,20 @@ class Model(Base, TimestampMixin):
     __tablename__ = "models"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    make_id: Mapped[int] = mapped_column(ForeignKey("makes.id"), nullable=False, index=True)
+    # Points at `companies` regardless of role (ADR 0006), so Singer's product
+    # lines get the same catalogue depth as BMW's with no exclusive arc.
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
 
-    make: Mapped[Make] = relationship(back_populates="models")
+    company: Mapped[Company] = relationship(back_populates="models")
     generations: Mapped[list[Generation]] = relationship(back_populates="model")
 
     __table_args__ = (
-        # Slug is unique *within* a make, so two makes may both have a
+        # Slug is unique *within* a company, so two companies may both have a
         # '3-series' without colliding.
-        UniqueConstraint("make_id", "slug", name="uq_models_make_id_slug"),
+        UniqueConstraint("company_id", "slug", name="uq_models_company_id_slug"),
         Index(
             "idx_models_name_trgm",
             "name",
@@ -99,11 +138,26 @@ class Generation(Base, TimestampMixin):
     chassis_codes: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
     start_year: Mapped[int | None] = mapped_column(SmallInteger)
     end_year: Mapped[int | None] = mapped_column(SmallInteger)  # null = still in production
+    summary: Mapped[str | None] = mapped_column(Text)
 
     model: Mapped[Model] = relationship(back_populates="generations")
     model_years: Mapped[list[ModelYear]] = relationship(back_populates="generation")
 
-    __table_args__ = (UniqueConstraint("model_id", "slug", name="uq_generations_model_id_slug"),)
+    __table_args__ = (
+        UniqueConstraint("model_id", "slug", name="uq_generations_model_id_slug"),
+        # GIN on the array: "show me every E46" is the search this column exists
+        # for, and `text[] @> ARRAY['E46']` cannot use a btree.
+        Index("idx_generations_chassis_codes", "chassis_codes", postgresql_using="gin"),
+        # Generations and trims are where entity resolution actually gets hard
+        # ("E46 330Ci", "330i Sport"), so they need the same fuzzy matching
+        # `companies` and `models` already have.
+        Index(
+            "idx_generations_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+    )
 
 
 class ModelYear(Base, TimestampMixin):
@@ -145,8 +199,14 @@ class Configuration(Base, TimestampMixin):
     model_year_id: Mapped[int] = mapped_column(
         ForeignKey("model_years.id"), nullable=False, index=True
     )
-    market_region_id: Mapped[int | None] = mapped_column(
-        ForeignKey("market_regions.id"), index=True
+    # NOT NULL, unlike the other lookups. Market is part of the definition of a
+    # configuration ("year x trim x market x drivetrain"), and a 2004 M3 is a
+    # genuinely different car in the US and Europe - different output, its own
+    # page. Nullable would also break the natural key below, because NULLs do
+    # not collide in Postgres: two "unknown market" rows for the same car would
+    # never conflict. Unknown markets use the explicit GLOBAL / UNKNOWN rows.
+    market_region_id: Mapped[int] = mapped_column(
+        ForeignKey("market_regions.id"), nullable=False, index=True
     )
     slug: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -186,10 +246,44 @@ class Configuration(Base, TimestampMixin):
 
     # --- launch pricing (MSRP-at-launch only is in scope) ---
     msrp_launch_amount: Mapped[float | None] = mapped_column(Numeric(12, 2))
-    msrp_launch_currency: Mapped[str | None] = mapped_column(Text)  # ISO 4217
+    msrp_launch_currency_id: Mapped[int | None] = mapped_column(
+        ForeignKey("currencies.id"), index=True
+    )
+
+    summary: Mapped[str | None] = mapped_column(Text)
 
     model_year: Mapped[ModelYear] = relationship(back_populates="configurations")
 
     __table_args__ = (
-        UniqueConstraint("model_year_id", "slug", name="uq_configurations_model_year_id_slug"),
+        # THE NATURAL KEY. Slug is derived from a name, so it cannot carry
+        # identity: two sources wording the same car differently produce
+        # different slugs and both insert. These five columns are what actually
+        # makes a configuration distinct, and are what the reconciler matches on
+        # when deciding whether an incoming record is a car we already have.
+        #
+        # NULLS NOT DISTINCT (Postgres 15+) is load-bearing. By default NULLs
+        # never collide, so two rows with an unknown trim or body style would
+        # both insert and the constraint would quietly do nothing for exactly
+        # the sparse records that need it most. This makes "unknown" compare
+        # equal to "unknown", without forcing a fake UNKNOWN lookup row onto
+        # every dimension.
+        UniqueConstraint(
+            "model_year_id",
+            "trim_name",
+            "market_region_id",
+            "drivetrain_id",
+            "body_style_id",
+            name="uq_configurations_natural_key",
+            postgresql_nulls_not_distinct=True,
+        ),
+        # Slug is now a display artifact, but the public route is a flat
+        # /configurations/<slug> lookup, so it still needs to resolve without
+        # knowing the model year first.
+        UniqueConstraint("slug", name="uq_configurations_slug"),
+        Index(
+            "idx_configurations_trim_name_trgm",
+            "trim_name",
+            postgresql_using="gin",
+            postgresql_ops={"trim_name": "gin_trgm_ops"},
+        ),
     )

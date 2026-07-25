@@ -14,7 +14,7 @@ source says this car came with this engine") that sources contradict.
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, SmallInteger, Text
+from sqlalchemy import ForeignKey, Index, Integer, SmallInteger, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from carmanac.db.base import Base, ProvenanceMixin, TimestampMixin, provenance_table_args
@@ -26,17 +26,33 @@ class Engine(Base, TimestampMixin):
     __tablename__ = "engines"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Maker of the engine - may differ from the car's make. This is the whole
+    # Maker of the engine - may differ from the car's company. This is the whole
     # point of engines being first-class.
-    manufacturer_make_id: Mapped[int | None] = mapped_column(ForeignKey("makes.id"), index=True)
+    manufacturer_company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("companies.id"), index=True
+    )
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str | None] = mapped_column(Text)
     family_code: Mapped[str | None] = mapped_column(Text)
     displacement_cc: Mapped[int | None] = mapped_column(Integer)
     cylinders: Mapped[int | None] = mapped_column(SmallInteger)
-    configuration: Mapped[str | None] = mapped_column(Text)  # 'inline', 'v', 'flat'
-    aspiration: Mapped[str | None] = mapped_column(Text)  # 'na', 'turbo', 'twin-turbo', ...
+    # Was `configuration`, which collided with the `configurations` entity - two
+    # meanings of the most load-bearing word in the schema.
+    cylinder_layout: Mapped[str | None] = mapped_column(Text)  # 'inline', 'v', 'flat'
+    aspiration_id: Mapped[int | None] = mapped_column(ForeignKey("aspirations.id"), index=True)
     fuel_type_id: Mapped[int | None] = mapped_column(ForeignKey("fuel_types.id"), index=True)
+    summary: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        # Engines are searched by name and family code ("B58", "2JZ"), and
+        # matched fuzzily from source text at ingest.
+        Index(
+            "idx_engines_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+    )
 
 
 class Transmission(Base, TimestampMixin):
@@ -45,13 +61,16 @@ class Transmission(Base, TimestampMixin):
     __tablename__ = "transmissions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    manufacturer_make_id: Mapped[int | None] = mapped_column(ForeignKey("makes.id"), index=True)
+    manufacturer_company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("companies.id"), index=True
+    )
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str | None] = mapped_column(Text)
     transmission_type_id: Mapped[int | None] = mapped_column(
         ForeignKey("transmission_types.id"), index=True
     )
     gear_count: Mapped[int | None] = mapped_column(SmallInteger)
+    summary: Mapped[str | None] = mapped_column(Text)
 
 
 class ConfigurationEngine(Base, ProvenanceMixin):
