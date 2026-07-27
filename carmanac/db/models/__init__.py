@@ -12,6 +12,7 @@ from carmanac.db.models.attributes import (
     AttributeDefinition,
     ConfigurationAttribute,
 )
+from carmanac.db.models.derivations import VehicleDerivation
 from carmanac.db.models.hierarchy import (
     Company,
     CompanyRoleAssignment,
@@ -26,6 +27,7 @@ from carmanac.db.models.lookups import (
     CompanyRole,
     Country,
     Currency,
+    DerivationType,
     Drivetrain,
     FuelType,
     MarketRegion,
@@ -63,6 +65,7 @@ __all__ = [
     "ConfigurationTransmission",
     "Country",
     "Currency",
+    "DerivationType",
     "Drivetrain",
     "Engine",
     "ExternalId",
@@ -78,4 +81,5 @@ __all__ = [
     "Source",
     "Transmission",
     "TransmissionType",
+    "VehicleDerivation",
 ]

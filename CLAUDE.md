@@ -8,7 +8,7 @@ This is a long-horizon project (months to years) intended as a portfolio centerp
 
 ## Current Phase
 
-**Phase 1: schema live, first source landing.** All 27 tables are applied and reviewed; Wikidata fetch-and-land runs end to end into `raw_scrape.raw_records`. See `PROGRESS.md` for live status.
+**Phase 1: schema live, first source landing.** All 29 tables are applied and reviewed; Wikidata fetch-and-land runs end to end into `raw_scrape.raw_records`. See `PROGRESS.md` for live status.
 
 Next: the reconciler — turning raw records into `companies` + `field_provenance`. NHTSA vPIC and EPA follow.
 
@@ -36,7 +36,8 @@ Core tables (Phase 1 target):
 - `engines` — engine entities. FK → `companies` (maker of the engine, may differ from the car's company).
 - `transmissions` — transmission entities.
 - `configuration_engines`, `configuration_transmissions` — many-to-many join tables.
-- `market_regions`, `body_styles`, `drivetrains`, `transmission_types`, `fuel_types`, `currencies`, `countries`, `aspirations`, `company_roles` — dimension/lookup tables.
+- `market_regions`, `body_styles`, `drivetrains`, `transmission_types`, `fuel_types`, `currencies`, `countries`, `aspirations`, `company_roles`, `derivation_types` — dimension/lookup tables.
+- `vehicle_derivations` — fact table keyed on the *base* generation: coachbuilt/restomod/tuned/rebadged relationships (ADR 0005). The nullable derived side records catalogue placement (own entry under the builder vs. stays under the base make), never legal status — that lives in `company_role_assignments`.
 - `media_assets`, `media_attachments` — images and documents (owner's manuals, brochures), with licence and attribution. Attached to any entity via an exclusive arc.
 - `sources` — every data source (URL, tier, scraped_at). Referenced by every fact.
 - `configuration_attributes` — EAV for long-tail specs.

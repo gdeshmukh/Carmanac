@@ -44,15 +44,14 @@ Phase 1: schema is live, reviewed, and reconciliation-ready; the first real sour
 
 ## In Flight
 
-Nothing blocking. The pre-reconciler review is done and **R1-R12 are implemented and verified** (migration `5cbf6be81036`). The end targets are now shaped for the reconciler to sort raw records into.
+Nothing blocking. ADR 0005 is accepted and its schema is live (migration `05e766a04a5f`) — every pre-reconciler decision is now made and implemented. The reconciler ADR is the next piece of work.
 
 ## Next (immediate)
 
-1. Implement ADR 0005's remaining schema — `vehicle_derivations` + `derivation_types` lookup. ADR 0006 settled the entity question it depended on; the derivation tables themselves are still unbuilt.
-2. Write the reconciler ADR — tier precedence, field affinity, tie-breaking, review-queue triggers, and `confidence` (policy decided 2026-07-24, see Session Log; still needs writing up).
-3. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
-4. Reconcile `companies` only for the first pass, applying ADR 0005's admission rule and verifying against a hand-checked sample before scaling to models.
-5. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
+1. Write the reconciler ADR — tier precedence, field affinity, tie-breaking, review-queue triggers, and `confidence` (policy decided 2026-07-24, see Session Log; still needs writing up).
+2. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
+3. Reconcile `companies` only for the first pass, applying ADR 0005's classification rule (`manufacturer` role, not admission) and verifying against a hand-checked sample before scaling to models.
+4. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
 
@@ -102,7 +101,8 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 
 - **Defunct/acquired makes**: Pontiac, Plymouth, Saab, etc. Are they top-level `makes` or do we model corporate parent relationships? (Leaning toward: makes stay top-level, add an optional `parent_company_id` self-reference.)
 - ~~**Coachbuilders**~~ — RESOLVED by ADR 0005 (proposed). They are `builders`, not makes, and attach to vehicles via `vehicle_derivations` keyed on the *base generation*. The gray area dissolves under the WMI rule: a body house only raises the "is it a make?" question when it builds its own car, and then it earns a WMI and passes the normal test. Historical coachbuilding (Duesenberg/Murphy) is the common case — `derived_generation_id` NULL, so the car stays a Duesenberg.
-- **Builder product lines** (NEW, from ADR 0005): when `derived_generation_id` is NULL, does a named product like "Singer DLS" need its own catalogue entity, or is a configuration under the base make enough? Deferred until real data shows how often it bites.
+- ~~**Builder product lines**~~ — RESOLVED at ADR 0005 acceptance (2026-07-27): a named product line (Singer DLS) *is* a model/generation under the builder company, linked to its donor via `vehicle_derivations.derived_generation_id`. No new entity kind.
+- **Platforms** (NEW, from ADR 0005 §5): a future `platforms` entity — generations point at a platform, platforms carry `evolved_from` lineage (Urus → MLB Evo → MLB → VW Group; matches industry usage). Replaces the dropped `platform_shared` derivation type. Which platform a generation belongs to is a sourced claim and will conflict ("basically a Q5 underneath" vs. `platform: MLB Evo`) — normal reconciliation machinery applies. Wikidata P4243 is the obvious first source. Needs its own ADR when that ingestion is planned.
 - **Concept cars and prototypes**: in scope or out? (Leaning toward: separate boolean flag on `configurations`, default to production-only in queries.)
 - **Race-only configurations** (GT3, Group B, etc.): in scope? (Leaning toward: yes, with a flag.)
 - **Slug strategy**: stable slugs vs. ID-based URLs. Stable slugs are nicer but historical renames are painful. (Leaning toward: slug + ID, accept slug at any historical value and 301 to canonical.)
@@ -117,7 +117,7 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - [0002](docs/decisions/0002-entity-fact-split-and-field-provenance.md) — Entity/fact split; field-level provenance in `field_provenance`. Accepted 2026-07-22.
 - [0003](docs/decisions/0003-raw-landing-zone-and-external-ids.md) — `raw_scrape.raw_records` landing zone; `external_ids` mapping replaces `wikidata_qid` columns. Accepted 2026-07-22.
 - [0004](docs/decisions/0004-raw-record-retention.md) — Raw record retention tiered by re-fetchability: Tier 3/4 archival, Tier 1/2 prunable cache, bug artifacts always deletable, distrust never justifies deletion. Amends the CLAUDE.md invariant. Accepted 2026-07-24.
-- [0005](docs/decisions/0005-what-counts-as-a-make.md) — What counts as a make: manufacturer responsibility (own WMI), **no exceptions**. Derivation is one `vehicle_derivations` fact table keyed on the base generation, with a nullable derived side. **Proposed** — derivation tables not yet built. Its separate `builders` table is withdrawn by ADR 0006.
+- [0005](docs/decisions/0005-what-counts-as-a-make.md) — What counts as a make: manufacturer responsibility (issues its own VINs), **no exceptions**; under ADR 0006 the test classifies rather than admits. Derivation is one `vehicle_derivations` fact table keyed on the base generation; the nullable derived side records **catalogue placement** (own entry under the builder vs. stays under the base make), decoupled from the VIN test — legal status lives only in `company_role_assignments`. `platform_shared` dropped in favour of a future `platforms` entity. Accepted 2026-07-27 as amended; implemented in `05e766a04a5f`.
 - [0006](docs/decisions/0006-companies-not-makes.md) — One `companies` table; "make" becomes a role. Alpina is both a manufacturer and a builder, so two tables would give one company two rows and two pages. Accepted 2026-07-24, implemented in `5cbf6be81036`.
 
 ## Known Risks / Things to Watch
@@ -133,6 +133,13 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-27 (ADR 0005 accepted as amended; derivation schema live)
+
+- **ADR 0005 accepted, with the derived side redefined.** ADR 0006's merge had quietly broken §3: it moved legal status into `company_role_assignments` while promising builder product lines full catalogue depth — but §3 still coupled `derived_generation_id` to the VIN test, which would have orphaned a Singer DLS generation from its 964 donor. Now decoupled: **the derived side records catalogue placement** (set = own model/generation under the builder; NULL = stays under the base make), and whose name is in the VIN lives *only* in the role table. Proven per-build, not per-company, by Ruf: own VINs on the CTR, yet customer conversions keep their Porsche VIN — so no company-level test can encode it. Role/catalogue disagreement is a reconciler flag, never a constraint.
+- **`platform_shared` dropped; platforms get their own entity later.** Platform siblings (Urus/SQ8/Cayenne on MLB Evo) have no builder, no donor, no direction — forcing them through a directional table means electing a fake "base". Resolved to a future `platforms` entity with `evolved_from` lineage (industry's own term), which also beats pairwise edges on volume: MLB Evo's ~6 generations are 6 FKs, not 15 edges. Both of 0005's open questions thereby closed; decision aid artifact with the 2×2 matrix (VIN × catalogue entry — all four quadrants occupied by real cars) published during the session.
+- **Migration `05e766a04a5f`**: `derivation_types` (seeded: coachbuilt/restomod/tuned/rebadged) + `vehicle_derivations` with natural key `(base, company, type, derived)` **UNIQUE NULLS NOT DISTINCT** — same trap as R3/R4: the common case (derived NULL) would otherwise never collide and reconciler re-runs would append endlessly. CHECK `derived <> base`. Partial index on `derived_generation_id` serves the child→parent read ("what is the DLS built on?"), which is the direction users will actually ask. Verified live: duplicate NULL-derived claim rejected, self-derivation rejected, two product lines from one base+company+type coexist (DLS + Classic Study shape), downgrade/upgrade round trip clean, `alembic check` clean. 29 public tables, 130 indexes.
+- Also: fixed `alembic/script.py.mako` to emit modern annotations (`collections.abc`, PEP 604) and autofixed the old migration headers — ruff now clean over `carmanac/`, `alembic/`, and `scripts/`.
 
 ### 2026-07-24 (part 4 — pre-reconciler review implemented)
 - **All 12 review findings implemented** in one hand-written migration, `5cbf6be81036`. Hand-written because autogenerate renders a rename as DROP + CREATE, which would discard every row and dependent FK, and because it cannot see triggers (the `updated_at` trigger had to be re-pointed by hand after the table rename).
