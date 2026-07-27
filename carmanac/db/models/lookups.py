@@ -82,6 +82,21 @@ class CompanyRole(_CodeNameLookup):
     description: Mapped[str | None] = mapped_column(Text)
 
 
+class DerivationType(_CodeNameLookup):
+    """How a derived vehicle relates to its base (ADR 0005): 'coachbuilt',
+    'restomod', 'tuned', 'rebadged'.
+
+    All deliberately directional - there is a donor and a result.
+    `platform_shared` was considered and dropped: platform siblings have no
+    builder, no donor and no direction, so that relation belongs to a future
+    `platforms` entity (ADR 0005 SS5), not this lookup.
+    """
+
+    __tablename__ = "derivation_types"
+
+    description: Mapped[str | None] = mapped_column(Text)
+
+
 class Currency(_CodeNameLookup):
     """ISO 4217. `code` is 'USD', 'EUR', 'JPY'.
 
