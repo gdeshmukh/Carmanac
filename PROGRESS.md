@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: schema live and twice-reviewed (R1-R12 implemented; foundation review F1-F9 verified 2026-07-27), first source landed (7,222 Wikidata entities), reconciler designed (ADR 0007, accepted). Now working the F1-F9 fix queue — landing determinism, tests+CI, ADR 0007 amendments, lossy-fetch fixes — then building the reconciler on the hardened base.
+Phase 1: schema live and twice-reviewed (R1-R12; foundation review F1-F9), first source landed via the three-axis Wikidata fetch (9,883 entities, 218-marque coverage fixture enforced), reconciler fully designed (ADR 0007 accepted + amended). Fix queue items 1-4 done; next: de-Claude the outward repo (#5), backups (#6), reconciler schema + build (#7-8).
 
 ## Done
 
@@ -44,18 +44,19 @@ Phase 1: schema live and twice-reviewed (R1-R12 implemented; foundation review F
 
 ## In Flight
 
-Nothing blocking. ADR 0005 is accepted and its schema is live (migration `05e766a04a5f`) — every pre-reconciler decision is now made and implemented. The reconciler ADR is the next piece of work.
+Step 4 (three-axis fetch + coverage fixture) built, verified, approved by Gaurav — being committed as PR #7. Every reconciler-blocking decision is made; `carmanac/reconcile/` remains the substance of what's ahead.
 
 ## Next (immediate) — the F1-F9 fix queue, then the reconciler
 
 1. ~~**Landing fixes (F4+F3)**~~ — DONE 2026-07-28 (PR #5): `MIN()` aggregates, derived canonicalization vars, `last_seen_at` + `DO UPDATE`, duplicate deleted.
 2. ~~**pytest + GitHub Actions (F1)**~~ — DONE 2026-07-28 (PR #5): 35 tests, mutation-verified, CI green on the same pinned Postgres image as dev.
 3. ~~**ADR 0007 amendments (F5) + association-provenance decision (F7)**~~ — DONE 2026-07-28: reconciliation unit = current record per (source, external_id) by `max(last_seen_at)`, ascending-QID processing order, tombstone retraction, `source_dropped` flags (QID merges flagged, never auto-merged), the three-step supersede dance; **all four association tables are now per-source assertion stores** (migration `d212a042caa7` — autogenerate produced a broken migration twice over, hand-rewritten; see its docstring).
-4. **Query widening, now covering F6 too**: P31 class lists + country ISO codes (P297) + label fallback chain (en→mul→de/ja/fr/it) + QID-shaped-label quarantine rule + committed ~200-marque coverage fixture (incl. the missed `historical car manufacturer` class — TVR). One prune + re-land (ADR 0004 Tier 1 cache rules; Gaurav approved 2026-07-28) covers all payload-shape changes at once. *Gaurav skims the marque list.*
-5. **`scripts/backup.sh` (F9)** — pg_dump off-machine; first Tier 3/4 ingest is *gated* on backups existing.
-6. Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8).
-7. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
-8. After the companies pass (F2): decide whether a thin read surface (FastAPI companies list/detail) jumps ahead of models ingestion.
+4. **Query widening (F6)** — BUILT, uncommitted pending Gaurav's marque-list skim (see Session Log 2026-07-28 part 2): three-axis fetch (classes + automotive industry + pinned QIDs), full P31 class sets, ISO codes, label fallback chain; 9,883 entities landed idempotently; 218-marque coverage fixture enforced by the ingest script — currently 218/218.
+5. **De-Claude the outward-facing repo** (queued 2026-07-28, before backup work): strip AI-attribution markers so the repo reads as the scaffolding/review discipline it demonstrates — no more commit trailers or PR footers going forward; decide whether to rewrite existing history; decide CLAUDE.md's public shape (likely: project charter doc + thin tool-pointer file). ADRs and PROGRESS stay exactly as they are — they're the decision-making evidence worth showing.
+6. **`scripts/backup.sh` (F9)** — pg_dump off-machine; first Tier 3/4 ingest is *gated* on backups existing.
+7. Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8).
+8. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
+9. After the companies pass (F2): decide whether a thin read surface (FastAPI companies list/detail) jumps ahead of models ingestion.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
 
@@ -162,6 +163,15 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-28 (part 2 — step 4: three-axis fetch + coverage fixture; uncommitted pending review)
+
+- **Blazegraph killed the MIN() fix before it ever ran**: the widened query 500'd with `java.lang.StackOverflowError`, bisected to `MIN()` over the date literals (SAMPLE→200, MIN→500, same query otherwise). Resolution is better than MIN anyway: **GROUP_CONCAT the dates too** — every founding-date claim lands sorted (Rising Auto's both dates now visible to the reconciler's multi_value flag), and "earliest" becomes mapper policy where transformations belong. Query-contract test now bans SAMPLE *and* MIN/MAX.
+- **Class-based fetching hit its ceiling, measured**: the coverage diff exposed that **Tesla Inc, Peugeot, Li Auto, Automobili Pininfarina, Prince, Hispano-Suiza, Praga, Auburn, GMA** carry only generic corporate classes (Peugeot: literally just `organization`). Response: **three fetch axes** — (1) the three marque classes, (2) `P452 = automotive industry` (catches all but two), (3) **pinned QIDs** for entities both axes miss (Peugeot, Singer Vehicle Design), maintained by fixture triage. Suppliers pulled in by axis 2 land-and-quarantine, per the strict-admission polarity.
+- **Coverage fixture built and enforced**: 218 marques across all risk-register axes, each QID resolved via the Wikidata API and hand-reviewed; 8 resolver picks corrected to the *marque-side* entity where Wikidata splits company from brand (Tesla, Eagle — the first resolver hit was literally the bird, Venturi, Tatra, Cord, DeLorean, Fisker, Willys); Gunther Werks (no entity) and Trabant (model-series-only) documented in `NOT_IN_WIKIDATA`. The ingest script now exits nonzero on any fixture miss. Currently **218/218**.
+- Pruned (ADR 0004 Tier 1 cache, approved) and re-landed twice during iteration; final state **9,883 entities, idempotent re-run, bare-QID labels 3,305 → 67** (the survivors have no label in any of six languages — quarantine's job). 41 tests green.
+- **Marque list approved by Gaurav**; his review added two decisions: (1) **Bugatti is ONE company** — Wikidata's three corporate-era entities (Molsheim / EB110-era / VW-era) reconcile to a single `companies` row via a curated identity-merge registry in the reconciler's `policy.py` (ADR 0007 §5 amended; fixture now lists all three era entities, since each must land); (2) the coverage fixture is understood as Wikidata-fetch-specific — future sources bring their own verification.
+- Also queued at Gaurav's direction: **de-Claude the outward-facing repo** (Next #5) — no AI-attribution commit trailers/PR footers from here on; CLAUDE.md's public shape and history rewrite to be decided. ADRs/PROGRESS stay — they're the evidence of decision discipline worth showing.
 
 ### 2026-07-28 (fix queue steps 1-3: landing determinism, tests+CI, ADR amendments)
 

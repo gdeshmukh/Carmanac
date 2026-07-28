@@ -14,6 +14,7 @@ import sys
 
 from carmanac.db.session import SessionLocal
 from carmanac.ingest.wikidata import SparqlError, land_makes
+from carmanac.ingest.wikidata.coverage import KNOWN_MARQUES, missing_marques
 
 
 def main() -> int:
@@ -26,6 +27,7 @@ def main() -> int:
     try:
         with SessionLocal() as session:
             result = land_makes(session)
+            missing = missing_marques(session)
     except SparqlError as exc:
         print(f"\nFetch failed: {exc}", file=sys.stderr)
         return 1
@@ -38,6 +40,25 @@ def main() -> int:
         f"  {result.inserted} new raw record(s) landed\n"
         f"  {result.unchanged} unchanged (already stored with an identical payload)"
     )
+
+    if missing:
+        # Coverage losses are silent by nature - the rows simply are not
+        # there - so a miss must be a loud, failing exit (coverage.py).
+        print(
+            f"\nCOVERAGE CHECK FAILED: {len(missing)} known marque(s) missing "
+            f"from the landing zone:",
+            file=sys.stderr,
+        )
+        for qid, name in missing:
+            print(f"  {name} ({qid})", file=sys.stderr)
+        print(
+            "Triage: fix a fetch axis, pin the QID in queries.py, or move the "
+            "entry to NOT_IN_WIKIDATA with a note.",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"  coverage check: all {len(KNOWN_MARQUES)} known marques present")
     return 0
 
 

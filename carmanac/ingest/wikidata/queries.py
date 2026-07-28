@@ -12,8 +12,53 @@ A short glossary, since SPARQL is its own language:
 - `OPTIONAL {}`  include the value if present, keep the row if absent (a LEFT
                  JOIN). Without it, a manufacturer missing a founding date
                  would vanish from the results entirely.
+- `UNION {}`     rows matching either block. Used for the fetch axes below.
 - `SERVICE wikibase:label`  Wikidata stores QIDs, not names; this resolves
                  `Q246` into "Volkswagen" in a chosen language.
+
+### Three fetch axes, because no single one covers the marques
+
+Wikidata's classification of carmakers is entropy, not taxonomy, and each axis
+below exists because a real marque was silently invisible without it:
+
+1. **By class** (`wdt:P31`): `automobile manufacturer` (Q786820), `car brand`
+   (Q10429667), `historical car manufacturer` (Q112865922). Two lessons paid
+   for this list: Q786820 alone missed Pontiac/Plymouth/Datsun (recorded only
+   as brands), and both together missed **TVR** - classed only "privately held
+   company" + "historical car manufacturer", along with 50 other defunct
+   marques (foundation review F6).
+2. **By industry** (`wdt:P452` = automotive industry, Q190117): catches real
+   manufacturers whose P31 is only generic corporate boilerplate - measured
+   2026-07-28: **Tesla Inc** (corporation/business), **Li Auto** (company),
+   **Automobili Pininfarina** (trademark/enterprise), Auburn, Prince,
+   Hispano-Suiza, Praga, Gordon Murray Automotive. Also pulls suppliers and
+   tuners; that is fine - admission quarantines strictly (ADR 0007 SS3), and
+   landing generously while admitting strictly is the intended polarity.
+3. **Pinned entities**: QIDs we know belong but that BOTH axes miss, fetched
+   unconditionally. Peugeot (P31: organization; P452: "trade in cars and
+   vehicles" - adding that industry would pull car dealers). Singer Vehicle
+   Design (no automotive class, no industry at all). Maintained by the
+   coverage-fixture triage in coverage.py: a fixture miss either fixes an
+   axis or lands here, so the pin list documents Wikidata's modeling holes.
+
+The query also returns each entity's FULL P31 class set (`?classes`,
+OPTIONAL so pinned entities without P31 still land): the reconciler's
+admission rule classifies on everything an entity is - a "mobility service"
+co-class is what excludes KINTO - and the role assertions cite the target
+classes as evidence (ADR 0007 SS3/SS4).
+
+The label service takes a fallback chain, not "en" alone: 46% of the first
+landed set had NO English label and came back as bare QID strings ("Q288696" -
+a French carmaker), which the companies pass would have minted as names.
+"mul" is Wikidata's language-neutral label, the usual home of brand names.
+Measured after the chain: 67 bare-QID labels remain of 7,274 - real
+no-label-anywhere entities, quarantine's job.
+
+Direct `wdt:P31` only, not the transitive `wdt:P31/wdt:P279*`. Measured: the
+transitive form widens 6,514 -> 9,960 on Q786820 alone by walking subclass
+chains into general industrial companies. Widening later is a query change
+and a re-run - and, because raw records are keyed by content hash, a re-run
+adds only what is genuinely new.
 
 ### Why the aggregation is not optional
 
@@ -27,56 +72,67 @@ That fan-out is an artifact of *our query shape*, not a claim Wikidata makes.
 Landing it verbatim would file our own noise in the permanent raw store as
 though it were source data. So the multi-valued properties are aggregated
 server-side with GROUP_CONCAT, giving exactly one row per QID - which is also
-less data on the wire and measurably faster (9.6s vs 14.3s for all 6,514).
+less data on the wire and measurably faster.
 
-### Why the scope is deliberately loose
+### GROUP_CONCAT for the dates too - not SAMPLE, not MIN. Both were tried:
 
-`wdt:P31 wd:Q786820` catches a lot that is not a car marque: assembly plants,
-mobility-services subsidiaries, defunct holding companies. That is intentional.
-Filtering at fetch time discards data we cannot get back without re-scraping;
-filtering at reconcile time is reversible, because the raw record is still
-there. Land generously, decide later.
+- SAMPLE() picks an ARBITRARY value when the property is multi-valued, and
+  the pick can differ between runs. Proven live: Q112162285 ("Rising Auto")
+  carries two truthy P571 claims, and two fetches 49 minutes apart landed
+  two "different" payloads varying only in which inception SAMPLE returned,
+  falsifying idempotency for the ~84 entities with multiple inception dates
+  (foundation review F4).
+- MIN() over these date literals crashes Blazegraph outright - measured
+  2026-07-28: java.lang.StackOverflowError, HTTP 500, reproducible with the
+  otherwise-working query shape and gone the moment MIN reverts to SAMPLE.
+
+Concatenating every claim is also more honest than either: the landing zone
+stores what the source said (both of Rising Auto's founding dates), the
+canonical sort makes it deterministic, and picking "earliest" is reconciler
+policy (ADR 0007 SS7) - a transformation, which never belonged in the fetch.
+Every aggregate in this query must be order-independent or canonicalized;
+GROUP_CONCAT + canonicalize() is the one shape that satisfies that AND the
+endpoint.
 """
 
 from __future__ import annotations
 
 import re
 
-# Two classes, not one. Wikidata separates the *company* from the *marque*:
-#
-#   Q786820   automobile manufacturer  - the company that builds cars
-#   Q10429667 car brand                - the nameplate cars are sold under
-#
-# `makes` in this schema is the marque, so querying only Q786820 silently loses
-# brands whose manufacturing entity is recorded under a parent. Measured: it
-# misses **Pontiac, Plymouth, and Datsun** outright - Pontiac is a "division"
-# and a "car brand" but never an "automobile manufacturer". Saab and Oldsmobile
-# happen to carry both classes and survived; that is luck, not a rule.
-#
-# Counts: 6,514 manufacturers + 777 brands = 7,222 union (708 brands are not
-# also manufacturers). The overlap is handled by GROUP BY, which collapses an
-# entity matching both classes back to one row.
-#
-# Direct `wdt:P31` only, not the transitive `wdt:P31/wdt:P279*`. Measured: the
-# transitive form widens 6,514 -> 9,960 on Q786820 alone by walking subclass
-# chains into general industrial companies. Widening later is a query change
-# and a re-run - and, because raw records are keyed by content hash, a re-run
-# adds only what is genuinely new.
 MAKES_QUERY = """
 SELECT ?item ?itemLabel ?itemDescription
-       (MIN(?inception) AS ?inception)
-       (MIN(?dissolved) AS ?dissolved)
+       (GROUP_CONCAT(DISTINCT ?inception; separator="|") AS ?inceptions)
+       (GROUP_CONCAT(DISTINCT ?dissolved; separator="|") AS ?dissolutions)
+       (GROUP_CONCAT(DISTINCT ?class;        separator="|") AS ?classes)
        (GROUP_CONCAT(DISTINCT ?countryLabel; separator="|") AS ?countries)
+       (GROUP_CONCAT(DISTINCT ?countryCode;  separator="|") AS ?countryCodes)
        (GROUP_CONCAT(DISTINCT ?website;      separator="|") AS ?websites)
 WHERE {
-  VALUES ?class { wd:Q786820 wd:Q10429667 }
-  ?item wdt:P31 ?class .
+  {
+    # Axis 1: by class - manufacturer, brand, historical manufacturer.
+    VALUES ?targetClass { wd:Q786820 wd:Q10429667 wd:Q112865922 }
+    ?item wdt:P31 ?targetClass .
+  } UNION {
+    # Axis 2: by industry - carmakers whose P31 is generic boilerplate
+    # (Tesla Inc, Li Auto, Automobili Pininfarina...).
+    ?item wdt:P452 wd:Q190117 .
+  } UNION {
+    # Axis 3: pinned - known marques both axes miss. Q6742 Peugeot,
+    # Q55633247 Singer Vehicle Design. Grown by coverage-fixture triage.
+    VALUES ?item { wd:Q6742 wd:Q55633247 }
+  }
+  OPTIONAL { ?item wdt:P31 ?class . }       # the FULL class set - admission
+                                            # classifies on everything the
+                                            # entity is (ADR 0007 SS3)
   OPTIONAL { ?item wdt:P571 ?inception. }   # inception (founded)
   OPTIONAL { ?item wdt:P576 ?dissolved. }   # dissolved / abolished
-  OPTIONAL { ?item wdt:P17  ?country. }     # country
+  OPTIONAL {
+    ?item wdt:P17 ?country.                 # country
+    OPTIONAL { ?country wdt:P297 ?countryCode. }   # its ISO 3166-1 alpha-2
+  }
   OPTIONAL { ?item wdt:P856 ?website. }     # official website
   SERVICE wikibase:label {
-    bd:serviceParam wikibase:language "en".
+    bd:serviceParam wikibase:language "en,mul,de,ja,fr,it".
     ?item    rdfs:label         ?itemLabel.
     ?item    schema:description ?itemDescription.
     ?country rdfs:label         ?countryLabel.
@@ -85,22 +141,15 @@ WHERE {
 GROUP BY ?item ?itemLabel ?itemDescription
 """
 
-# MIN, not SAMPLE, for the date aggregates. SAMPLE() picks an ARBITRARY value
-# when the property is multi-valued, and the pick can differ between runs -
-# proven live: Q112162285 ("Rising Auto") carries two truthy P571 claims, and
-# two fetches 49 minutes apart landed two "different" payloads varying only in
-# which inception SAMPLE happened to return, falsifying idempotency for the
-# ~84 landed entities with multiple inception dates (foundation review F4).
-# MIN is deterministic, and "earliest founding" is the conventional reading.
-# The same instability class as the GROUP_CONCAT ordering bug above - every
-# aggregate in this query must be order-independent or canonicalized.
-
 # The GROUP_CONCAT aliases, derived from the query text itself rather than
 # maintained as a parallel list in land.py. The two previously had to agree by
 # hand across files, which is exactly how the SAMPLE gap slipped: land.py
 # canonicalized the vars someone remembered to list, not the vars the query
 # actually aggregates.
-_GROUP_CONCAT_ALIAS = re.compile(r"GROUP_CONCAT\([^)]*\)\s+AS\s+\?(\w+)")
+#
+# Non-greedy `.+?` rather than `[^)]*`: aggregated expressions may nest parens,
+# and the first `) AS` after GROUP_CONCAT( is always the aggregate's own close.
+_GROUP_CONCAT_ALIAS = re.compile(r"GROUP_CONCAT\(.+?\)\s+AS\s+\?(\w+)")
 
 MULTI_VALUE_VARS: frozenset[str] = frozenset(_GROUP_CONCAT_ALIAS.findall(MAKES_QUERY))
 
