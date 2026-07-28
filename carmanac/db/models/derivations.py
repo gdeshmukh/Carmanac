@@ -30,8 +30,11 @@ with `evolved_from` lineage (ADR 0005 SS5).
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint, text
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, ForeignKey, Index, func, text
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TIMESTAMP
 
 from carmanac.db.base import Base, ProvenanceMixin, provenance_table_args
 
@@ -49,10 +52,13 @@ class VehicleDerivation(Base, ProvenanceMixin):
     # key cannot.
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    # The donor / origin vehicle. Everything keys on the base. No separate
-    # index: it leads the natural-key unique index below, so base-side lookups
-    # ("everything built on the 964") are covered.
-    base_generation_id: Mapped[int] = mapped_column(ForeignKey("generations.id"), nullable=False)
+    # The donor / origin vehicle. Everything keys on the base. Explicitly
+    # indexed: the live-unique index below also leads with this column but is
+    # PARTIAL (live rows only), so history reads ("every claim ever made about
+    # the 964") need a full index of their own.
+    base_generation_id: Mapped[int] = mapped_column(
+        ForeignKey("generations.id"), nullable=False, index=True
+    )
 
     # Who did the transforming. Points at `companies` regardless of role
     # (ADR 0006) - Singer, Alpina, Zagato and Murphy are all just companies.
@@ -64,6 +70,13 @@ class VehicleDerivation(Base, ProvenanceMixin):
     derivation_type_id: Mapped[int] = mapped_column(
         ForeignKey("derivation_types.id"), nullable=False, index=True
     )
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("vehicle_derivations.id", name="fk_vehicle_derivations_superseded_by"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
 
     __table_args__ = (
         *provenance_table_args(),
@@ -72,17 +85,23 @@ class VehicleDerivation(Base, ProvenanceMixin):
             "derived_generation_id IS NULL OR derived_generation_id <> base_generation_id",
             name="derived_not_base",
         ),
-        # THE NATURAL KEY. One row per (base, company, type, derived) claim.
-        # NULLS NOT DISTINCT is load-bearing, same as on `configurations`: the
-        # common case (derived side NULL - Ruf conversions, Murphy bodies)
-        # would otherwise never collide, and a re-running reconciler would
-        # insert the same claim endlessly.
-        UniqueConstraint(
+        # One LIVE claim per (base, company, type, derived, source) - the
+        # per-source assertion-store shape (ADR 0007 SS8, F7): two sources may
+        # both assert "Singer restomods the 964", and each may retract
+        # independently via supersession. NULLS NOT DISTINCT is load-bearing
+        # twice over: the common case (derived side NULL - Ruf conversions,
+        # Murphy bodies) and sourceless seed rows would otherwise never
+        # collide, and a re-running reconciler would insert the same claim
+        # endlessly.
+        Index(
+            "uq_vehicle_derivations_live",
             "base_generation_id",
             "company_id",
             "derivation_type_id",
             "derived_generation_id",
-            name="uq_vehicle_derivations_natural_key",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
             postgresql_nulls_not_distinct=True,
         ),
         # The child->parent read ("what is the DLS built on?") - a lookup by

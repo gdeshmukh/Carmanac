@@ -1,7 +1,11 @@
 # ADR 0007 — Reconciliation: policy, mechanics, and the companies first pass
 
 - Status: Accepted (2026-07-27)
-- Date: 2026-07-27
+- Date: 2026-07-27; amended 2026-07-28 after the foundation review (F5, F7)
+  and a test-suite discovery: §1 gains the reconciliation unit, processing
+  order, temporal semantics (tombstones, disappearance, merges) and the
+  supersede operation; §8 turns the association tables into per-source
+  assertion stores
 - Formalizes: the reconciler policy decisions of 2026-07-24 (PROGRESS.md
   Session Log); applies ADR 0005's classification rule and ADR 0006's roles
 - Depends on: ADR 0002 (field provenance), ADR 0003 (raw landing zone,
@@ -56,7 +60,41 @@ row per (entity, field, source).
 Determinism matters because **re-reconciliation is the normal case**, not the
 exception: when the admission lists, the matcher, or a field mapping improves,
 the whole pipeline re-runs over records already on disk and must converge to
-the same state from any starting point.
+the same state from any starting point. That claim is only true with the
+following pinned (amendment, F5):
+
+**The reconciliation unit is the current record** per `(source, external_id)`:
+the raw row with the greatest `last_seen_at` (ties broken by greatest id).
+Historical rows are audit trail and re-derivation inputs, never reconciled
+directly. A full pass processes entities in **ascending external-id order** —
+a stated precondition of determinism, which doubles as the slug-collision
+tiebreak: the lower QID claims the bare slug, so a from-scratch rebuild
+reproduces incremental history exactly (rename semantics stay with the open
+slug-strategy question).
+
+**Retraction is a tombstone assertion.** When a source's current record no
+longer carries a field that source previously asserted (within the mapper's
+coverage), the live assertion is superseded by one with a NULL observed value
+— "this source went quiet here." Projection then treats the source as silent,
+and the tombstone dates the retraction. No schema change: `observed_value` is
+already nullable.
+
+**Disappearance is a flag, never an auto-retirement.** After a completed full
+fetch, any current record whose `last_seen_at` predates the run's start was
+not returned → a `source_dropped` flag opens on the entity. Deliberately not
+automated further: a vanished QID is often a **Wikidata merge/redirect** —
+the remaining open route to the duplicate-identity state ADR 0006 declared
+impossible (0006 closed only the two-table route). Working the flag includes
+checking for a redirect; automatic entity merging is deferred to its own ADR.
+
+**The supersede operation has exactly one order** (discovered by the test
+suite, `test_supersession_allows_history_and_one_live_row`): the naive
+sequence — insert the new live row, then repoint the old — is impossible
+under `uq_field_provenance_live`, which rejects the second live row before
+the old can be repointed, while the old cannot reference an id that does not
+yet exist. The engine's single supersede helper runs, in one transaction:
+(1) retire the old row by pointing `superseded_by` at itself, freeing the
+live slot; (2) insert the successor; (3) repoint the old row at it.
 
 ### 2. One engine, one mapper per source
 
@@ -193,21 +231,39 @@ with the open slug-strategy question; v1 does not retroactively re-slug.
 - **`reconciliation_flags`** — the review queue's storage (review #9, first
   version): exclusive-arc entity FKs (same seven-column idiom as
   `field_provenance`), nullable `field_name`, `kind`
-  (`field_conflict`, `multi_value`, `role_disagreement`, `admission_review`),
-  `detail` JSONB, `status` (`open` / `resolved` / `dismissed`),
-  `created_at` / `resolved_at`, plus `source_id` / `raw_record_id` where a
-  specific assertion triggered the flag. **Entity-scoped kinds set exactly one
-  arc column; `admission_review` is record-scoped** — no entity exists yet, so
-  the arc is all-NULL and `raw_record_id` is required instead (the CHECK
-  encodes both shapes).
+  (`field_conflict`, `multi_value`, `role_disagreement`, `admission_review`,
+  `source_dropped`), `detail` JSONB, `status` (`open` / `resolved` /
+  `dismissed`), `created_at` / `resolved_at`, plus `source_id` /
+  `raw_record_id` where a specific assertion triggered the flag.
+  **Entity-scoped kinds set exactly one arc column; `admission_review` is
+  record-scoped** — no entity exists yet, so the arc is all-NULL and
+  `raw_record_id` is required instead (the CHECK encodes both shapes).
+- **Association facts become per-source assertion stores** (amendment, F7).
+  `company_role_assignments`, `configuration_engines`,
+  `configuration_transmissions` and `vehicle_derivations` reproduced, at row
+  level, the defect ADR 0002 fixed for entity columns: one row per fact with
+  a single `source_id`, so a second source *corroborating* the fact had
+  nowhere to land — structurally blocking §4's vPIC arbitration. Each gains a
+  surrogate id, `superseded_by`, and a partial live-unique index over
+  (fact columns, `source_id`), NULLS NOT DISTINCT, `WHERE superseded_by IS
+  NULL` — `field_provenance`'s exact shape. Presence-shaped facts need no
+  winner projection: the fact holds if ANY live row exists (`EXISTS` /
+  `DISTINCT` at read time), corroboration is simply multiple live rows, and
+  per-source retraction is supersession. All four change together while they
+  hold only seed data. **EAV stays winner-shaped**: a value-shaped fact needs
+  one displayed answer, so `configuration_attributes` keeps its single live
+  row per (configuration, attribute) as the projected winner, and its
+  multi-source assertions land in `field_provenance` (configuration arc,
+  attribute key as `field_name`) — §6's projection machinery, unchanged.
 
 Flags never block projection (§6.4) and resolving one records a human
 decision — which later feeds the matcher's labeled set.
 
 ## Consequences
 
-- **Order of work:** widen the Wikidata query (P31 classes, country ISO
-  codes) and re-land → migration (`reconciled_records`,
+- **Order of work:** per-source association stores (F7 migration, done with
+  this amendment) → widen the Wikidata query (P31 classes, country ISO
+  codes) and prune + re-land → migration (`reconciled_records`,
   `reconciliation_flags`, `companies.website`) → `carmanac/reconcile/`
   (engine + wikidata mapper) → run the companies pass → verify a
   hand-checked sample (~50 marques, mainstream + defunct + edge cases) before

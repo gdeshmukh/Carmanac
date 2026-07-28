@@ -15,6 +15,8 @@ from sqlalchemy.exc import IntegrityError
 
 from carmanac.db.models import (
     Company,
+    CompanyRole,
+    CompanyRoleAssignment,
     Configuration,
     DerivationType,
     FieldProvenance,
@@ -250,6 +252,90 @@ def test_two_product_lines_from_one_base_coexist(db, graph):
                 base_generation_id=graph["gen_a"].id,
                 company_id=graph["company"].id,
                 derivation_type_id=dt,
+            ),
+        ]
+    )
+    db.commit()  # must not raise
+
+
+# --- ADR 0007 §8 (F7): association tables are per-source assertion stores ---
+
+
+def test_two_sources_corroborate_one_role(db, graph):
+    """The vPIC arbitration scenario: Wikidata and vPIC both asserting
+    "manufacturer" must BOTH hold live rows - corroboration is visible, and
+    either source can retract independently. Impossible under the old
+    one-row-per-fact composite PK."""
+    vpic = Source(name="NHTSA vPIC", tier=1)
+    db.add(vpic)
+    db.flush()
+    role_id = db.execute(
+        select(CompanyRole.id).where(CompanyRole.code == "manufacturer")
+    ).scalar_one()
+    db.add_all(
+        [
+            CompanyRoleAssignment(
+                company_id=graph["company"].id,
+                company_role_id=role_id,
+                source_id=graph["source"].id,
+            ),
+            CompanyRoleAssignment(
+                company_id=graph["company"].id,
+                company_role_id=role_id,
+                source_id=vpic.id,
+            ),
+        ]
+    )
+    db.commit()  # must not raise
+
+    live = db.scalars(
+        select(CompanyRoleAssignment).where(
+            CompanyRoleAssignment.company_id == graph["company"].id,
+            CompanyRoleAssignment.superseded_by.is_(None),
+        )
+    ).all()
+    assert len(live) == 2
+
+
+def test_same_source_duplicate_role_assertion_rejected(db, graph):
+    """One live assertion per (fact, source) - a re-running reconciler must
+    supersede, never append."""
+    role_id = db.execute(
+        select(CompanyRole.id).where(CompanyRole.code == "manufacturer")
+    ).scalar_one()
+    claim = dict(
+        company_id=graph["company"].id,
+        company_role_id=role_id,
+        source_id=graph["source"].id,
+    )
+    db.add(CompanyRoleAssignment(**claim))
+    db.commit()
+    db.add(CompanyRoleAssignment(**claim))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_second_source_may_assert_same_derivation(db, graph):
+    """Per-source shape applies to derivations too: two sources claiming
+    "this company tuned this generation" coexist as two live rows."""
+    other = Source(name="NHTSA vPIC", tier=1)
+    db.add(other)
+    db.flush()
+    dt = _derivation_type(db).id
+    db.add_all(
+        [
+            VehicleDerivation(
+                base_generation_id=graph["gen_a"].id,
+                company_id=graph["company"].id,
+                derivation_type_id=dt,
+                source_id=graph["source"].id,
+            ),
+            VehicleDerivation(
+                base_generation_id=graph["gen_a"].id,
+                company_id=graph["company"].id,
+                derivation_type_id=dt,
+                source_id=other.id,
             ),
         ]
     )
