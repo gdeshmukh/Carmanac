@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "ruff>=0.8",
+    "pytest>=8.3",
 ]
 
 [build-system]
@@ -45,3 +46,15 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # Alembic migrations are generated; they don't need our import hygiene rules.
 "alembic/versions/*" = ["E501", "I001"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Integration tests talk to the docker Postgres (they build their own
+# `carmanac_test` database; the dev `carmanac` database is never touched).
+# `-m "not integration"` runs just the pure-function unit tests.
+markers = [
+    "integration: needs the local docker Postgres (creates its own test database)",
+]

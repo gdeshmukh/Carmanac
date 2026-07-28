@@ -1,0 +1,256 @@
+"""Schema-constraint tests: the pre-reconciler review, made permanent.
+
+Each test here re-runs a verification that was done once by hand against the
+live database and recorded in PROGRESS.md prose (R2, R3/R4, ADR 0005). The
+reconciler will WRITE through these constraints; they are what turns its
+re-runs into supersession instead of duplication, so they must hold on every
+future schema change, not just on the day they were reviewed.
+"""
+
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from carmanac.db.models import (
+    Company,
+    Configuration,
+    DerivationType,
+    FieldProvenance,
+    Generation,
+    Model,
+    ModelYear,
+    Source,
+    VehicleDerivation,
+)
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture()
+def graph(db, wikidata_source):
+    """A minimal five-level entity graph plus a second generation, for the
+    derivation tests."""
+    company = Company(slug="bmw", name="BMW")
+    db.add(company)
+    db.flush()
+    model = Model(company_id=company.id, slug="3-series", name="3 Series")
+    db.add(model)
+    db.flush()
+    gen_a = Generation(model_id=model.id, slug="e46", name="E46")
+    gen_b = Generation(model_id=model.id, slug="g20", name="G20")
+    db.add_all([gen_a, gen_b])
+    db.flush()
+    my = ModelYear(generation_id=gen_a.id, year=2002)
+    db.add(my)
+    db.flush()
+    return {
+        "company": company,
+        "model": model,
+        "gen_a": gen_a,
+        "gen_b": gen_b,
+        "model_year": my,
+        "source": wikidata_source,
+    }
+
+
+def _market_region_id(db) -> int:
+    from sqlalchemy import text
+
+    return db.execute(text("SELECT id FROM market_regions ORDER BY id LIMIT 1")).scalar_one()
+
+
+# --- R2: field_provenance accepts exactly one live assertion per source -----
+
+
+def test_second_live_assertion_same_source_rejected(db, graph):
+    """The exact defect proven live pre-R2: three contradictory 'BMW' name
+    assertions, same source, all accepted. uq_field_provenance_live must
+    reject the second while superseded history stays storable."""
+    db.add(
+        FieldProvenance(
+            company_id=graph["company"].id,
+            field_name="name",
+            observed_value="BMW",
+            source_id=graph["source"].id,
+        )
+    )
+    db.commit()
+
+    db.add(
+        FieldProvenance(
+            company_id=graph["company"].id,
+            field_name="name",
+            observed_value="Bayerische Motoren Werke",
+            source_id=graph["source"].id,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_supersession_allows_history_and_one_live_row(db, graph):
+    """Also documents THE SUPERSESSION ORDER, which this test discovered the
+    hard way: the naive sequence (insert new, then point old at it) is
+    impossible - the live-unique index rejects the second live row before the
+    old one can be repointed, and the old one cannot reference an id that does
+    not exist yet. The working dance is: (1) retire old by pointing it at
+    ITSELF, freeing the live slot; (2) insert new; (3) repoint old at new.
+    The reconciler's supersede helper must use this order (or the schema must
+    make it unnecessary - flagged for the ADR 0007 amendment)."""
+    old = FieldProvenance(
+        company_id=graph["company"].id,
+        field_name="name",
+        observed_value="BMW",
+        source_id=graph["source"].id,
+    )
+    db.add(old)
+    db.commit()
+
+    old.superseded_by = old.id  # (1) retire: old is no longer live
+    db.flush()
+    new = FieldProvenance(
+        company_id=graph["company"].id,
+        field_name="name",
+        observed_value="BMW AG",
+        source_id=graph["source"].id,
+    )
+    db.add(new)  # (2) now the live slot is free
+    db.flush()
+    old.superseded_by = new.id  # (3) point history at its successor
+    db.commit()
+
+    live = db.scalars(
+        select(FieldProvenance).where(
+            FieldProvenance.company_id == graph["company"].id,
+            FieldProvenance.superseded_by.is_(None),
+        )
+    ).all()
+    assert len(live) == 1
+    assert live[0].observed_value == "BMW AG"
+
+
+def test_different_sources_may_disagree(db, graph):
+    """Cross-source disagreement is the reconciler's input, not a violation -
+    one live assertion PER SOURCE is the rule."""
+    other = Source(name="NHTSA vPIC", tier=1)
+    db.add(other)
+    db.flush()
+    db.add_all(
+        [
+            FieldProvenance(
+                company_id=graph["company"].id,
+                field_name="name",
+                observed_value="BMW",
+                source_id=graph["source"].id,
+            ),
+            FieldProvenance(
+                company_id=graph["company"].id,
+                field_name="name",
+                observed_value="BMW OF NORTH AMERICA",
+                source_id=other.id,
+            ),
+        ]
+    )
+    db.commit()  # must not raise
+
+
+# --- R3/R4: configurations natural key, NULLS NOT DISTINCT ------------------
+
+
+def test_sparse_duplicate_configuration_rejected(db, graph):
+    """Two all-NULL-dimension configurations for the same year+market are the
+    same configuration. Default UNIQUE semantics would let both insert -
+    NULLS NOT DISTINCT is what makes the key bite for exactly the sparse
+    records that need dedup most."""
+    market = _market_region_id(db)
+    db.add(Configuration(model_year_id=graph["model_year"].id, market_region_id=market, slug="a"))
+    db.commit()
+    db.add(Configuration(model_year_id=graph["model_year"].id, market_region_id=market, slug="b"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_distinct_trims_coexist(db, graph):
+    market = _market_region_id(db)
+    db.add_all(
+        [
+            Configuration(
+                model_year_id=graph["model_year"].id,
+                market_region_id=market,
+                slug="330i",
+                trim_name="330i",
+            ),
+            Configuration(
+                model_year_id=graph["model_year"].id,
+                market_region_id=market,
+                slug="325i",
+                trim_name="325i",
+            ),
+        ]
+    )
+    db.commit()  # must not raise
+
+
+# --- ADR 0005: vehicle_derivations ------------------------------------------
+
+
+def _derivation_type(db) -> DerivationType:
+    dt = db.scalar(select(DerivationType).where(DerivationType.code == "tuned"))
+    assert dt is not None, "derivation_types seed rows missing from migration"
+    return dt
+
+
+def test_self_derivation_rejected(db, graph):
+    db.add(
+        VehicleDerivation(
+            base_generation_id=graph["gen_a"].id,
+            company_id=graph["company"].id,
+            derivation_type_id=_derivation_type(db).id,
+            derived_generation_id=graph["gen_a"].id,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_duplicate_null_derived_claim_rejected(db, graph):
+    """The reconciler re-run trap: the common case (derived side NULL) must
+    collide with itself, which only NULLS NOT DISTINCT provides."""
+    claim = dict(
+        base_generation_id=graph["gen_a"].id,
+        company_id=graph["company"].id,
+        derivation_type_id=_derivation_type(db).id,
+    )
+    db.add(VehicleDerivation(**claim))
+    db.commit()
+    db.add(VehicleDerivation(**claim))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_two_product_lines_from_one_base_coexist(db, graph):
+    """Singer DLS and Classic Study shape: same base, company and type,
+    different derived generations - both are real, both must insert."""
+    dt = _derivation_type(db).id
+    db.add_all(
+        [
+            VehicleDerivation(
+                base_generation_id=graph["gen_a"].id,
+                company_id=graph["company"].id,
+                derivation_type_id=dt,
+                derived_generation_id=graph["gen_b"].id,
+            ),
+            VehicleDerivation(
+                base_generation_id=graph["gen_a"].id,
+                company_id=graph["company"].id,
+                derivation_type_id=dt,
+            ),
+        ]
+    )
+    db.commit()  # must not raise
