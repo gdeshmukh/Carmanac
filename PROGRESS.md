@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: schema is live, reviewed, and reconciliation-ready; the first real source is landing. Wikidata fetch-and-land runs end to end — 7,223 manufacturers/brands in `raw_scrape.raw_records`. A full pre-reconciler review (R1-R12) is implemented. Next is the reconciler, which turns raw records into `companies` + `field_provenance`.
+Phase 1: schema live and twice-reviewed (R1-R12 implemented; foundation review F1-F9 verified 2026-07-27), first source landed (7,222 Wikidata entities), reconciler designed (ADR 0007, accepted). Now working the F1-F9 fix queue — landing determinism, tests+CI, ADR 0007 amendments, lossy-fetch fixes — then building the reconciler on the hardened base.
 
 ## Done
 
@@ -46,12 +46,16 @@ Phase 1: schema is live, reviewed, and reconciliation-ready; the first real sour
 
 Nothing blocking. ADR 0005 is accepted and its schema is live (migration `05e766a04a5f`) — every pre-reconciler decision is now made and implemented. The reconciler ADR is the next piece of work.
 
-## Next (immediate)
+## Next (immediate) — the F1-F9 fix queue, then the reconciler
 
-1. Write the reconciler ADR — tier precedence, field affinity, tie-breaking, review-queue triggers, and `confidence` (policy decided 2026-07-24, see Session Log; still needs writing up).
-2. Build the reconciler: read raw records → write source assertions to `field_provenance` → project the winner onto entity columns. Does not exist yet; it is the substance of ingestion.
-3. Reconcile `companies` only for the first pass, applying ADR 0005's classification rule (`manufacturer` role, not admission) and verifying against a hand-checked sample before scaling to models.
-4. Optional: connect a GUI client (DBeaver) and browse the seeded vehicle through the hierarchy.
+1. **Landing fixes (F4+F3)**: replace `SAMPLE()` with a deterministic aggregate; derive the canonicalized-vars set from the query instead of a parallel frozenset; add `raw_records.last_seen_at` + `ON CONFLICT DO UPDATE` so "current record per (source, external_id)" exists and A-B-A reverts are representable; delete the Q112162285 duplicate (our-own-bug artifact, ADR 0004 permits).
+2. **pytest + GitHub Actions (F1)**: unit fixtures from the two real regressions (rotated GROUP_CONCAT, multi-valued SAMPLE); integration tests against docker Postgres (landing idempotency, A-B-A, `uq_field_provenance_live`); CI runs ruff + `alembic check` + downgrade/upgrade round trip.
+3. **ADR 0007 amendments (F5) + association-provenance decision (F7)** — processing order, retraction, QID merges, slug-collision order; and how `company_role_assignments` (+ the other association facts) hold multi-source assertions before the reconciler writes any roles. *Gaurav input needed on both.*
+4. **Query widening, now covering F6 too**: P31 class lists + country ISO codes (P297) + label fallback chain (en→mul→de/ja/fr/it) + QID-shaped-label quarantine rule + committed ~200-marque coverage fixture (incl. the missed `historical car manufacturer` class — TVR). One prune + re-land (ADR 0004 Tier 1 cache rules) covers all payload-shape changes at once.
+5. **`scripts/backup.sh` (F9)** — pg_dump off-machine; first Tier 3/4 ingest is *gated* on backups existing.
+6. Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8).
+7. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
+8. After the companies pass (F2): decide whether a thin read surface (FastAPI companies list/detail) jumps ahead of models ingestion.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
 
@@ -64,6 +68,28 @@ Nothing blocking. ADR 0005 is accepted and its schema is live (migration `05e766
 - First version of the entity resolution review queue (review #9).
 
 Deferred review items (important, not blocking scraping): confidence-score methodology (#6); natural key on `configurations` for cross-source dedup (#5); `power_hp` rating-standard ambiguity + mpg gallon units; CI running ruff + `alembic check`.
+
+## Foundation Review Findings (2026-07-27, F1-F9)
+
+Multi-lens review (potential user, experienced data engineer, recruiter, structural skeptic — 4 independent reviewers, findings deduped and adversarially verified against the repo and live DB). Verdict: **foundation sound, nothing requires core rework**; all confirmed findings are process gaps, amendable ADR text, or refinements to planned work. Strengths independently confirmed: the derivation/companies modeling, the enforced entity/fact split, ADR discipline, migration hygiene.
+
+**F1 — CONFIRMED: zero tests, zero CI; hand-verification failed twice on the same property.** The "verified idempotent" claim (2026-07-24) was falsified twice — by the GROUP_CONCAT bug (caught) and by F4 (uncaught until this review). Fix queue #2.
+
+**F2 — PARTIAL: nothing user-facing demoable; URL decisions accumulate without contact.** Softened by verification (the seeded 3-source provenance demo is real, DB-level). Standing advice: thin read surface after the companies pass, before models. Queue #8.
+
+**F3 — CONFIRMED: landing zone cannot represent A-B-A reverts.** Global `(source_id, content_hash)` + `DO NOTHING` silently drops a reverted payload; the newest landed row stays the intermediate value. Fix: `last_seen_at` + `DO UPDATE`; also yields the disappearance signal retraction needs. Queue #1.
+
+**F4 — CONFIRMED: `SAMPLE()` nondeterminism produced a live spurious duplicate.** Q112162285 landed twice (inception 2020-05-10 vs 2021-11-05; Wikidata holds both claims, entity unedited between fetches — verified against revision history). 84 landed entities carry ≥2 inception values. Same bug class as the fixed GROUP_CONCAT instability, one aggregation over. Queue #1.
+
+**F5 — CONFIRMED: ADR 0007 determinism holes** — per-entity processing order unspecified; retraction/disappearance undefined (a deleted wrong value projects indefinitely); Wikidata QID merges unhandled (a second, open route to duplicate identity — ADR 0006 closed only the two-table route); slug-collision assignment order-dependent. Amend before implementation. Queue #3.
+
+**F6 — CONFIRMED: the fetch is silently lossy.** Label service is `"en"`-only → **3,305 of 7,225 entities (46%) have a bare QID as their name**; ADR 0007 §7 as written would mint companies slugged `q288696`. TVR absent entirely — `historical car manufacturer` class invisible to the two-class query (51 of 56 entities lost). No coverage fixture exists. Queue #4.
+
+**F7 — CONFIRMED: association fact tables reproduce the row-level provenance defect ADR 0002 fixed for entity columns.** One row per fact, single `source_id`, no supersession — two sources cannot both assert "BMW is a manufacturer," which structurally blocks ADR 0007 §4's vPIC arbitration. Also: `uq_configuration_attribute_live` omits `source_id` (the "mirrors" comment in provenance.py is wrong in exactly that dimension). Decide at queue #3.
+
+**F8 — PARTIAL: US catalog conventions at the leaf.** Mandatory model-year spine (Euro/JDM production-period records must fabricate per-year rows — discussed nowhere) and EPA-only economy columns + standardless `power_hp`. Overstated half: EAV *is* the designed home for WLTP/JC08 figures. Now in Open Questions; ADR before configuration-level ingestion.
+
+**F9 — CONFIRMED: archival-forever retention on a single unbacked-up Docker volume** (`infra/README.md` still recommends `down -v` as safe). Currently harmless — everything landed is re-fetchable Tier 1. Backup script at queue #5; first Tier 3/4 ingest gated on it.
 
 ## Review Findings (2026-07-24 pre-reconciler audit)
 
@@ -103,6 +129,8 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - ~~**Coachbuilders**~~ — RESOLVED by ADR 0005 (proposed). They are `builders`, not makes, and attach to vehicles via `vehicle_derivations` keyed on the *base generation*. The gray area dissolves under the WMI rule: a body house only raises the "is it a make?" question when it builds its own car, and then it earns a WMI and passes the normal test. Historical coachbuilding (Duesenberg/Murphy) is the common case — `derived_generation_id` NULL, so the car stays a Duesenberg.
 - ~~**Builder product lines**~~ — RESOLVED at ADR 0005 acceptance (2026-07-27): a named product line (Singer DLS) *is* a model/generation under the builder company, linked to its donor via `vehicle_derivations.derived_generation_id`. No new entity kind.
 - **Platforms** (NEW, from ADR 0005 §5): a future `platforms` entity — generations point at a platform, platforms carry `evolved_from` lineage (Urus → MLB Evo → MLB → VW Group; matches industry usage). Replaces the dropped `platform_shared` derivation type. Which platform a generation belongs to is a sourced claim and will conflict ("basically a Q5 underneath" vs. `platform: MLB Evo`) — normal reconciliation machinery applies. Wikidata P4243 is the obvious first source. Needs its own ADR when that ingestion is planned.
+- **Model-year spine vs. production periods** (F8): every configuration requires a `model_years` row, but Euro/JDM records are often "built 1998–2005, specs unchanged" — fabricating per-year rows vs. generalizing the spine to catalogue periods (US model year as one kind, facelift/zenki-kouki as another). Needs an ADR before configuration-level ingestion.
+- **Spec rating standards** (F8): `power_hp` is standardless (SAE net / DIN / JIS gross indistinguishable) and only EPA cycles get first-class columns. Rating-standard/test-cycle lookups, with non-EPA figures in EAV per the 80% rule. Same ADR as above, or its sibling.
 - **Concept cars and prototypes**: in scope or out? (Leaning toward: separate boolean flag on `configurations`, default to production-only in queries.)
 - **Race-only configurations** (GT3, Group B, etc.): in scope? (Leaning toward: yes, with a flag.)
 - **Slug strategy**: stable slugs vs. ID-based URLs. Stable slugs are nicer but historical renames are painful. (Leaning toward: slug + ID, accept slug at any historical value and 301 to canonical.)
@@ -119,6 +147,7 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - [0004](docs/decisions/0004-raw-record-retention.md) — Raw record retention tiered by re-fetchability: Tier 3/4 archival, Tier 1/2 prunable cache, bug artifacts always deletable, distrust never justifies deletion. Amends the CLAUDE.md invariant. Accepted 2026-07-24.
 - [0005](docs/decisions/0005-what-counts-as-a-make.md) — What counts as a make: manufacturer responsibility (issues its own VINs), **no exceptions**; under ADR 0006 the test classifies rather than admits. Derivation is one `vehicle_derivations` fact table keyed on the base generation; the nullable derived side records **catalogue placement** (own entry under the builder vs. stays under the base make), decoupled from the VIN test — legal status lives only in `company_role_assignments`. `platform_shared` dropped in favour of a future `platforms` entity. Accepted 2026-07-27 as amended; implemented in `05e766a04a5f`.
 - [0006](docs/decisions/0006-companies-not-makes.md) — One `companies` table; "make" becomes a role. Alpina is both a manufacturer and a builder, so two tables would give one company two rows and two pages. Accepted 2026-07-24, implemented in `5cbf6be81036`.
+- [0007](docs/decisions/0007-reconciler-policy-and-first-pass.md) — Reconciler: deterministic raw→assertions→projection pipeline; **one engine + one thin mapper per source**; QID-exact identity only in v1 (no fuzzy auto-merge until a labeled set exists); **strict admission, branching outwards** — vetted classes admit, deny-listed exclude, unknowns *quarantine* with `admission_review` flags (under-admission is the cheap error); `manufacturer` role asserted from both Wikidata classes (Pontiac counts; vPIC arbitrates later); tier → affinity → recency → flag; new `reconciled_records` + `reconciliation_flags` tables and `companies.website`. Accepted 2026-07-27; implementation pending the foundation review.
 
 ## Known Risks / Things to Watch
 
@@ -133,6 +162,20 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-27 (part 3 — foundation review F1-F9)
+
+- **Full multi-perspective foundation review run before building the reconciler**: 4 independent reviewer lenses (user / data engineer / recruiter / structural skeptic) over the whole repo + live DB, findings deduped, then each surviving finding adversarially verified by an agent instructed to refute it. 9 findings survived (7 confirmed, 2 partial) — recorded above as F1-F9 with a fix queue in Next. Two were live-data discoveries: **F4** (a spurious duplicate raw record from `SAMPLE()` nondeterminism, proven against Wikidata's revision history) and **F6** (46% of landed labels are bare QIDs; TVR's whole class invisible).
+- Verdict: **foundation sound** — no core rework anywhere; the confirmed items are process (tests/CI/backups), amendable ADR text, and refinements to already-planned work. Strengths were independently confirmed across lenses, with the derivation/companies modeling and the enforced entity/fact split called out repeatedly.
+- ADR 0007 accepted earlier in the session (before the review); its F5 amendment lands with fix-queue #3, before implementation.
+- Gaurav input points in the queue: F7 design choice (#3), ADR 0007 amendment review (#3), coverage-fixture skim (#4), read-surface sequencing (#8).
+
+### 2026-07-27 (part 2 — ADR 0007 drafted)
+
+- **ADR 0007 proposed: the reconciler contract.** Formalizes the 2026-07-24 policies and adds the decisions made today with two grounding discoveries from the live payloads: (1) **payloads carry no P31 class** — the query filters on the two classes but never selects them, so class-based admission/roles need a query widening + re-land first; (2) **Singer/Gunther Werks are not in the landed set** — Wikidata doesn't class restomodders as manufacturers or brands, so this pass produces no builders and the builder-class fetch is future work.
+- Decisions: admission = everything except a maintained P31 **class exclusion list** (mechanical, reversible — excluded entities wait in raw); `manufacturer` role asserted from **both** classes (Wikidata's company/marque split is its own artifact — Pontiac is brand-only there yet held WMI `1G2` and is on ADR 0005's own pass list), vPIC arbitrating later; identity resolution is **QID-exact only** in v1, no fuzzy auto-merge until matcher precision is measured on a labeled set; flag resolutions become that labeled set.
+- New schema it mandates: `reconciled_records` (sidecar state — landing zone stays untransformed), `reconciliation_flags` (review queue v1, exclusive-arc idiom), `companies.website` (R12 logic: Wikidata returns it, pages want it).
+- Next: Gaurav reviews/accepts 0007, then implement in the ADR's stated order (widen query → migration → `carmanac/reconcile/` → companies pass → hand-checked ~50-marque verification).
 
 ### 2026-07-27 (ADR 0005 accepted as amended; derivation schema live)
 

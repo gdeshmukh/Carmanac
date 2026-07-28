@@ -1,0 +1,53 @@
+# CI: lint + the full test suite against a real Postgres.
+#
+# The Postgres service uses the SAME pinned image as infra/docker-compose.yml -
+# if the two drift apart, tests pass against a database dev never runs (or
+# vice versa), which is how "works locally" stops meaning anything.
+#
+# The suite creates its own carmanac_test database and runs the whole Alembic
+# chain inside it, so every CI run is also a from-scratch migration test.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev]"
+      - run: ruff check carmanac/ alembic/ scripts/ tests/
+      - run: ruff format --check carmanac/ scripts/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg17
+        env:
+          POSTGRES_USER: carmanac
+          POSTGRES_PASSWORD: carmanac_dev_password
+          POSTGRES_DB: carmanac
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U carmanac"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CARMANAC_DATABASE_URL: postgresql+psycopg://carmanac:carmanac_dev_password@localhost:5432/carmanac
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev]"
+      - run: pytest -v

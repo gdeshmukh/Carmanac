@@ -40,6 +40,8 @@ there. Land generously, decide later.
 
 from __future__ import annotations
 
+import re
+
 # Two classes, not one. Wikidata separates the *company* from the *marque*:
 #
 #   Q786820   automobile manufacturer  - the company that builds cars
@@ -62,8 +64,8 @@ from __future__ import annotations
 # adds only what is genuinely new.
 MAKES_QUERY = """
 SELECT ?item ?itemLabel ?itemDescription
-       (SAMPLE(?inception) AS ?inception)
-       (SAMPLE(?dissolved) AS ?dissolved)
+       (MIN(?inception) AS ?inception)
+       (MIN(?dissolved) AS ?dissolved)
        (GROUP_CONCAT(DISTINCT ?countryLabel; separator="|") AS ?countries)
        (GROUP_CONCAT(DISTINCT ?website;      separator="|") AS ?websites)
 WHERE {
@@ -82,3 +84,28 @@ WHERE {
 }
 GROUP BY ?item ?itemLabel ?itemDescription
 """
+
+# MIN, not SAMPLE, for the date aggregates. SAMPLE() picks an ARBITRARY value
+# when the property is multi-valued, and the pick can differ between runs -
+# proven live: Q112162285 ("Rising Auto") carries two truthy P571 claims, and
+# two fetches 49 minutes apart landed two "different" payloads varying only in
+# which inception SAMPLE happened to return, falsifying idempotency for the
+# ~84 landed entities with multiple inception dates (foundation review F4).
+# MIN is deterministic, and "earliest founding" is the conventional reading.
+# The same instability class as the GROUP_CONCAT ordering bug above - every
+# aggregate in this query must be order-independent or canonicalized.
+
+# The GROUP_CONCAT aliases, derived from the query text itself rather than
+# maintained as a parallel list in land.py. The two previously had to agree by
+# hand across files, which is exactly how the SAMPLE gap slipped: land.py
+# canonicalized the vars someone remembered to list, not the vars the query
+# actually aggregates.
+_GROUP_CONCAT_ALIAS = re.compile(r"GROUP_CONCAT\([^)]*\)\s+AS\s+\?(\w+)")
+
+MULTI_VALUE_VARS: frozenset[str] = frozenset(_GROUP_CONCAT_ALIAS.findall(MAKES_QUERY))
+
+if not MULTI_VALUE_VARS:  # pragma: no cover - guards the regex, not the data
+    raise RuntimeError(
+        "No GROUP_CONCAT aliases found in MAKES_QUERY - the derivation regex is "
+        "broken, and canonicalization would silently stop hashing stably."
+    )
