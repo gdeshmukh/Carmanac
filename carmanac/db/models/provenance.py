@@ -174,9 +174,11 @@ class FieldProvenance(Base):
         # currently says" would stop having one answer.
         #
         # Partial (WHERE superseded_by IS NULL) because superseded history is
-        # retained by design, so only live rows may be unique. This mirrors
-        # `uq_configuration_attribute_live`, which had the pattern right from
-        # the start - `field_provenance` simply never got the equivalent.
+        # retained by design, so only live rows may be unique. Deliberately a
+        # DIFFERENT shape from `uq_configuration_attribute_live`, which omits
+        # source_id: EAV rows are projected winners (one displayed value per
+        # attribute), while these rows are per-source assertions (ADR 0007
+        # SS8) - one live row per source, disagreement included.
         #
         # NULLS NOT DISTINCT: exactly one arc column is set per row and the
         # other six are NULL, so without it every row would look distinct on

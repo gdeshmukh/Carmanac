@@ -17,9 +17,22 @@ which a single spec value is unambiguous.
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Index, Integer, Numeric, SmallInteger, Text, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import (
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    SmallInteger,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TIMESTAMP
 
 from carmanac.db.base import Base, ProvenanceMixin, TimestampMixin, provenance_table_args
 
@@ -68,13 +81,15 @@ class Company(Base, TimestampMixin):
 
 
 class CompanyRoleAssignment(Base, ProvenanceMixin):
-    """Which roles a company holds. Many-to-many, because companies hold several
-    at once and change over time: Alpina manufactures *and* tunes; Pininfarina
-    was a contract coachbuilder for decades before it sold a car under its own
-    name.
+    """One source's assertion that a company holds a role (ADR 0007 §8, F7).
 
-    Fact-bearing: "Zagato is a coachbuilder" is a sourced claim, so it carries
-    provenance like any other association.
+    A PER-SOURCE ASSERTION STORE, not one-row-per-fact: "BMW is a
+    manufacturer" per Wikidata and per vPIC are two live rows. The company
+    holds the role if ANY live row says so (EXISTS at read time);
+    corroboration is visible as multiple live rows; a source withdrawing the
+    claim is supersession, not deletion. One row per fact was the same defect
+    ADR 0002 fixed for entity columns - a second source had nowhere to land,
+    which structurally blocked vPIC arbitration of Wikidata-asserted roles.
 
     `manufacturer` should agree with the presence of a WMI in `external_ids`
     (ADR 0005's test). Disagreement is a reconciliation flag, not a silent
@@ -83,12 +98,34 @@ class CompanyRoleAssignment(Base, ProvenanceMixin):
 
     __tablename__ = "company_role_assignments"
 
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     company_role_id: Mapped[int] = mapped_column(
-        ForeignKey("company_roles.id"), primary_key=True, index=True
+        ForeignKey("company_roles.id"), nullable=False, index=True
+    )
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("company_role_assignments.id", name="fk_company_role_assignments_superseded_by"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
 
-    __table_args__ = provenance_table_args()
+    __table_args__ = (
+        *provenance_table_args(),
+        # One LIVE assertion per (fact, source) - field_provenance's shape.
+        # NULLS NOT DISTINCT so seed rows without a source count as one
+        # anonymous asserter rather than never colliding.
+        Index(
+            "uq_company_role_assignment_live",
+            "company_id",
+            "company_role_id",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
 
 class Model(Base, TimestampMixin):

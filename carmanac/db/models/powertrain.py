@@ -14,8 +14,11 @@ source says this car came with this engine") that sources contradict.
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Index, Integer, SmallInteger, Text
+from datetime import datetime
+
+from sqlalchemy import ForeignKey, Index, Integer, SmallInteger, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TIMESTAMP
 
 from carmanac.db.base import Base, ProvenanceMixin, TimestampMixin, provenance_table_args
 
@@ -74,31 +77,75 @@ class Transmission(Base, TimestampMixin):
 
 
 class ConfigurationEngine(Base, ProvenanceMixin):
-    """Many-to-many: a configuration may offer several engines across trims.
+    """One source's assertion that a configuration came with an engine.
 
-    Carries provenance because the *association itself* is a scraped fact -
-    "this source says this car came with this engine" is exactly the kind of
-    claim that gets contradicted between sources.
+    A PER-SOURCE ASSERTION STORE (ADR 0007 §8, F7), like every association
+    fact table: "this source says this car came with this engine" is exactly
+    the kind of claim sources contradict, so each source's claim is its own
+    row with supersession. The car offers the engine if ANY live row says so.
     """
 
     __tablename__ = "configuration_engines"
 
-    # Composite PK. `configuration_id` needs no separate index: it is the
-    # leading column of the PK index, so lookups by configuration are covered.
-    configuration_id: Mapped[int] = mapped_column(ForeignKey("configurations.id"), primary_key=True)
-    engine_id: Mapped[int] = mapped_column(ForeignKey("engines.id"), primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    configuration_id: Mapped[int] = mapped_column(
+        ForeignKey("configurations.id"), nullable=False, index=True
+    )
+    engine_id: Mapped[int] = mapped_column(ForeignKey("engines.id"), nullable=False, index=True)
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("configuration_engines.id", name="fk_configuration_engines_superseded_by"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
 
-    __table_args__ = provenance_table_args()
+    __table_args__ = (
+        *provenance_table_args(),
+        Index(
+            "uq_configuration_engine_live",
+            "configuration_id",
+            "engine_id",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
 
 class ConfigurationTransmission(Base, ProvenanceMixin):
-    """Many-to-many: configuration <-> transmission."""
+    """Configuration <-> transmission, same per-source assertion shape as
+    `ConfigurationEngine`."""
 
     __tablename__ = "configuration_transmissions"
 
-    configuration_id: Mapped[int] = mapped_column(ForeignKey("configurations.id"), primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    configuration_id: Mapped[int] = mapped_column(
+        ForeignKey("configurations.id"), nullable=False, index=True
+    )
     transmission_id: Mapped[int] = mapped_column(
-        ForeignKey("transmissions.id"), primary_key=True, index=True
+        ForeignKey("transmissions.id"), nullable=False, index=True
+    )
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "configuration_transmissions.id", name="fk_configuration_transmissions_superseded_by"
+        ),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
 
-    __table_args__ = provenance_table_args()
+    __table_args__ = (
+        *provenance_table_args(),
+        Index(
+            "uq_configuration_transmission_live",
+            "configuration_id",
+            "transmission_id",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
+    )

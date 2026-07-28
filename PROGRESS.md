@@ -48,10 +48,10 @@ Nothing blocking. ADR 0005 is accepted and its schema is live (migration `05e766
 
 ## Next (immediate) — the F1-F9 fix queue, then the reconciler
 
-1. **Landing fixes (F4+F3)**: replace `SAMPLE()` with a deterministic aggregate; derive the canonicalized-vars set from the query instead of a parallel frozenset; add `raw_records.last_seen_at` + `ON CONFLICT DO UPDATE` so "current record per (source, external_id)" exists and A-B-A reverts are representable; delete the Q112162285 duplicate (our-own-bug artifact, ADR 0004 permits).
-2. **pytest + GitHub Actions (F1)**: unit fixtures from the two real regressions (rotated GROUP_CONCAT, multi-valued SAMPLE); integration tests against docker Postgres (landing idempotency, A-B-A, `uq_field_provenance_live`); CI runs ruff + `alembic check` + downgrade/upgrade round trip.
-3. **ADR 0007 amendments (F5) + association-provenance decision (F7)** — processing order, retraction, QID merges, slug-collision order; and how `company_role_assignments` (+ the other association facts) hold multi-source assertions before the reconciler writes any roles. *Gaurav input needed on both.*
-4. **Query widening, now covering F6 too**: P31 class lists + country ISO codes (P297) + label fallback chain (en→mul→de/ja/fr/it) + QID-shaped-label quarantine rule + committed ~200-marque coverage fixture (incl. the missed `historical car manufacturer` class — TVR). One prune + re-land (ADR 0004 Tier 1 cache rules) covers all payload-shape changes at once.
+1. ~~**Landing fixes (F4+F3)**~~ — DONE 2026-07-28 (PR #5): `MIN()` aggregates, derived canonicalization vars, `last_seen_at` + `DO UPDATE`, duplicate deleted.
+2. ~~**pytest + GitHub Actions (F1)**~~ — DONE 2026-07-28 (PR #5): 35 tests, mutation-verified, CI green on the same pinned Postgres image as dev.
+3. ~~**ADR 0007 amendments (F5) + association-provenance decision (F7)**~~ — DONE 2026-07-28: reconciliation unit = current record per (source, external_id) by `max(last_seen_at)`, ascending-QID processing order, tombstone retraction, `source_dropped` flags (QID merges flagged, never auto-merged), the three-step supersede dance; **all four association tables are now per-source assertion stores** (migration `d212a042caa7` — autogenerate produced a broken migration twice over, hand-rewritten; see its docstring).
+4. **Query widening, now covering F6 too**: P31 class lists + country ISO codes (P297) + label fallback chain (en→mul→de/ja/fr/it) + QID-shaped-label quarantine rule + committed ~200-marque coverage fixture (incl. the missed `historical car manufacturer` class — TVR). One prune + re-land (ADR 0004 Tier 1 cache rules; Gaurav approved 2026-07-28) covers all payload-shape changes at once. *Gaurav skims the marque list.*
 5. **`scripts/backup.sh` (F9)** — pg_dump off-machine; first Tier 3/4 ingest is *gated* on backups existing.
 6. Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8).
 7. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
@@ -162,6 +162,13 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-28 (fix queue steps 1-3: landing determinism, tests+CI, ADR amendments)
+
+- **Steps 1+2 shipped as PR #5** (merged, CI green): `SAMPLE()`→`MIN()` with canonicalization vars derived from the query text; `last_seen_at` + `ON CONFLICT DO UPDATE` (A-B-A representable; F3); the Q112162285 duplicate deleted after zero-reference verification; **35-test suite** whose fixtures are the real regressions, **mutation-verified** — all four re-introduced bugs caught by their guarding tests, none survived; GitHub Actions running ruff + suite on the dev-pinned Postgres image. CI's first run immediately caught an unformatted file, which is the job description.
+- **The test suite discovered reconciler mechanics before the reconciler exists**: the naive supersession order (insert new → repoint old) is impossible under `uq_field_provenance_live`; the working three-step dance (retire-to-self → insert → repoint) is documented in the test and now specified in ADR 0007 §1.
+- **Step 3: ADR 0007 amended (F5) and F7 decided** (Gaurav: per-source assertion rows). Amendment pins: reconciliation unit = current record per (source, external_id) by `max(last_seen_at)`; ascending-QID processing order (doubles as the slug-collision tiebreak); retraction = tombstone assertion (NULL observed value); disappearance = `source_dropped` flag, never auto-retirement (vanished QIDs are often Wikidata merges — flagged, auto-merge deferred). **All four association tables became per-source assertion stores** (surrogate PK, `superseded_by`, live-unique over fact+source NULLS NOT DISTINCT); EAV stays winner-shaped with assertions in `field_provenance`. Migration `d212a042caa7` — **autogenerate produced a broken migration twice over** (non-serial NOT NULL id on populated tables; PKs never touched, silently defeating the whole change) — hand-rewritten; Alembic does not compare primary keys, same blind-spot class as inline CHECKs and triggers.
+- Prune + re-land approved for step 4 (the data is scaffolding-proof, not treasure).
 
 ### 2026-07-27 (part 3 — foundation review F1-F9)
 
