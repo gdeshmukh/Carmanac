@@ -74,11 +74,12 @@ class RawRecord(Base):
         Index("idx_raw_records_source_id_external_id", "source_id", "external_id"),
         Index("idx_raw_records_content_hash", "content_hash"),
         # Re-scraping is idempotent *structurally*, not by convention: an
-        # unchanged payload hashes the same and is rejected here, so a re-run
+        # unchanged payload hashes the same and matches here, so a re-run
         # cannot duplicate it even if the application-side check is skipped or
-        # two ingests race. A payload that genuinely CHANGED hashes differently
-        # and is inserted as a new row - which is the point, since raw records
-        # are never discarded and the history is the change log.
+        # two ingests race (the landing upsert just bumps `last_seen_at`). A
+        # payload that genuinely CHANGED hashes differently and is inserted as
+        # a new row - which is the point, since raw records are never discarded
+        # and the history is the change log.
         #
         # `source_id` is part of the key so two sources may legitimately hold
         # byte-identical payloads. `external_id` is deliberately NOT: the
@@ -93,6 +94,18 @@ class RawRecord(Base):
     url: Mapped[str | None] = mapped_column(Text)
     external_id: Mapped[str | None] = mapped_column(Text)  # the source's id for this record
     fetched_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    # When this exact payload was most recently returned by the source.
+    # `fetched_at` is the immutable first observation; this is bumped by the
+    # landing upsert on every re-observation. The distinction is load-bearing
+    # for reverts (foundation review F3): a source going A -> B -> A re-touches
+    # the original A row rather than landing a third, so "the source's current
+    # record for an entity" is max(last_seen_at), never max(fetched_at) - by
+    # fetched_at the stale intermediate B looks newest. A last_seen_at that
+    # stops advancing while ingests keep running is also the "source no longer
+    # returns this entity" signal that retraction handling needs.
+    last_seen_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     http_status: Mapped[int | None] = mapped_column(SmallInteger)

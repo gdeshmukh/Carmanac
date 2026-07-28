@@ -21,10 +21,14 @@ and language tags are part of what the source said, and flattening is a
 transformation that belongs downstream.
 
 **Idempotency by hash.** `content_hash` is a SHA-256 over the canonical JSON of
-the payload. Re-running an unchanged fetch inserts nothing (the unique
-constraint on `(source_id, content_hash)` rejects it). A manufacturer whose data
-genuinely changed hashes differently and lands as a new row *alongside* the old
-one - the history is the audit trail, not a problem to be overwritten.
+the payload. Re-running an unchanged fetch inserts nothing - the unique
+constraint on `(source_id, content_hash)` matches, and the only effect is a
+`last_seen_at` bump recording that the source still asserts this exact payload.
+A manufacturer whose data genuinely changed hashes differently and lands as a
+new row *alongside* the old one - the history is the audit trail, not a problem
+to be overwritten. The bump is what makes a reverted payload (A -> B -> A)
+representable: the revert re-touches the original row, so "current record" =
+max(last_seen_at), not max(fetched_at) (foundation review F3).
 """
 
 from __future__ import annotations
@@ -35,32 +39,34 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import RawRecord, Source
 from carmanac.ingest.wikidata.client import SparqlClient
-from carmanac.ingest.wikidata.queries import MAKES_QUERY
+from carmanac.ingest.wikidata.queries import MAKES_QUERY, MULTI_VALUE_VARS
 
 log = logging.getLogger(__name__)
 
 WIKIDATA_SOURCE_NAME = "Wikidata"
 _ENTITY_PREFIX = "http://www.wikidata.org/entity/"
 
-# Variables the query builds with GROUP_CONCAT, and the separator it uses.
-#
-# SPARQL does not promise a stable order within a concatenated group - the order
-# follows the query plan. Observed live: "KINTO Europe" (Q127773218) came back
-# with the same 18 countries in a rotated order after the query was widened,
-# hashing differently and re-landing as a spurious "change".
+# SPARQL does not promise a stable order within a GROUP_CONCAT group - the
+# order follows the query plan. Observed live: "KINTO Europe" (Q127773218) came
+# back with the same 18 countries in a rotated order after the query was
+# widened, hashing differently and re-landing as a spurious "change".
 #
 # Left alone, every multi-valued entity would re-land whenever the plan shifted
 # (a query edit, server load, an index change), inflating the raw store and
 # filling the change history with non-changes. Sorting loses nothing: the order
 # was never meaningful - Wikidata holds an unordered set, and the delimited
 # string is an artifact of our own aggregation.
-_MULTI_VALUE_VARS = frozenset({"countries", "websites"})
+#
+# The variable set comes from queries.py, derived from the query text itself.
+# It used to be a hand-maintained parallel list here, which is how the SAMPLE()
+# nondeterminism (foundation review F4) slipped past: this file canonicalized
+# what was listed, not what the query aggregated.
 _MULTI_VALUE_SEPARATOR = "|"
 
 # Postgres caps a statement at 65535 bind parameters. At ~7 columns per row a
@@ -102,7 +108,7 @@ def canonicalize(binding: dict[str, Any]) -> dict[str, Any]:
     canonical: dict[str, Any] = {}
     for var, cell in binding.items():
         value = cell.get("value")
-        if var in _MULTI_VALUE_VARS and isinstance(value, str):
+        if var in MULTI_VALUE_VARS and isinstance(value, str):
             parts = sorted(value.split(_MULTI_VALUE_SEPARATOR))
             cell = {**cell, "value": _MULTI_VALUE_SEPARATOR.join(parts)}
         canonical[var] = cell
@@ -200,12 +206,25 @@ def land_makes(session: Session, client: SparqlClient | None = None) -> LandResu
         stmt = (
             pg_insert(RawRecord)
             .values(chunk)
-            # The constraint does the deduplication; this just declines to fight
-            # it. Safe under concurrent ingests, unlike a read-then-write check.
-            .on_conflict_do_nothing(index_elements=["source_id", "content_hash"])
-            .returning(RawRecord.id)
+            # DO UPDATE, not DO NOTHING (foundation review F3). An unchanged
+            # payload must still bump `last_seen_at`: it is what makes "the
+            # current record per (source, external_id)" answerable, and it is
+            # the only thing that makes an A-B-A revert representable - the
+            # reverted payload hashes identically to its old row, so without
+            # the bump the newest-looking row would stay the intermediate B
+            # forever. Still constraint-driven and race-safe under concurrent
+            # ingests, unlike a read-then-write check.
+            .on_conflict_do_update(
+                index_elements=["source_id", "content_hash"],
+                set_={"last_seen_at": func.now()},
+            )
+            # DO UPDATE returns every row (hit or new), so distinguish real
+            # inserts via xmax: 0 means the row was created by this statement,
+            # nonzero means it was updated. Postgres system-column arcana, but
+            # the alternative is a second round trip per chunk.
+            .returning(RawRecord.id, literal_column("(xmax = 0)").label("was_inserted"))
         )
-        inserted += len(session.execute(stmt).fetchall())
+        inserted += sum(1 for row in session.execute(stmt) if row.was_inserted)
 
     session.commit()
     result = LandResult(fetched=len(bindings), inserted=inserted)
