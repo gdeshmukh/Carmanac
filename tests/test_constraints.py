@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from carmanac.db.models import (
+    CataloguePeriod,
     Company,
     CompanyRole,
     CompanyRoleAssignment,
@@ -22,7 +23,7 @@ from carmanac.db.models import (
     FieldProvenance,
     Generation,
     Model,
-    ModelYear,
+    PeriodKind,
     RawRecord,
     ReconciliationFlag,
     Source,
@@ -46,15 +47,20 @@ def graph(db, wikidata_source):
     gen_b = Generation(model_id=model.id, slug="g20", name="G20")
     db.add_all([gen_a, gen_b])
     db.flush()
-    my = ModelYear(generation_id=gen_a.id, year=2002)
-    db.add(my)
+    kind = db.scalar(select(PeriodKind).where(PeriodKind.code == "model_year"))
+    assert kind is not None, "period_kinds seed rows missing from migration"
+    period = CataloguePeriod(
+        generation_id=gen_a.id, period_kind_id=kind.id, start_year=2002, end_year=2002
+    )
+    db.add(period)
     db.flush()
     return {
         "company": company,
         "model": model,
         "gen_a": gen_a,
         "gen_b": gen_b,
-        "model_year": my,
+        "period": period,
+        "period_kind": kind,
         "source": wikidata_source,
     }
 
@@ -170,9 +176,9 @@ def test_sparse_duplicate_configuration_rejected(db, graph):
     NULLS NOT DISTINCT is what makes the key bite for exactly the sparse
     records that need dedup most."""
     market = _market_region_id(db)
-    db.add(Configuration(model_year_id=graph["model_year"].id, market_region_id=market, slug="a"))
+    db.add(Configuration(catalogue_period_id=graph["period"].id, market_region_id=market, slug="a"))
     db.commit()
-    db.add(Configuration(model_year_id=graph["model_year"].id, market_region_id=market, slug="b"))
+    db.add(Configuration(catalogue_period_id=graph["period"].id, market_region_id=market, slug="b"))
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
@@ -183,16 +189,81 @@ def test_distinct_trims_coexist(db, graph):
     db.add_all(
         [
             Configuration(
-                model_year_id=graph["model_year"].id,
+                catalogue_period_id=graph["period"].id,
                 market_region_id=market,
                 slug="330i",
                 trim_name="330i",
             ),
             Configuration(
-                model_year_id=graph["model_year"].id,
+                catalogue_period_id=graph["period"].id,
                 market_region_id=market,
                 slug="325i",
                 trim_name="325i",
+            ),
+        ]
+    )
+    db.commit()  # must not raise
+
+
+# --- ADR 0009: catalogue_periods ---------------------------------------------
+
+
+def test_duplicate_open_ended_period_rejected(db, graph):
+    """NULLS NOT DISTINCT on the period natural key: an open-ended period
+    (end_year NULL, still in production) must collide with its duplicate -
+    default UNIQUE semantics would let re-runs append forever."""
+    db.add(
+        CataloguePeriod(
+            generation_id=graph["gen_b"].id,
+            period_kind_id=graph["period_kind"].id,
+            start_year=2019,
+        )
+    )
+    db.commit()
+    db.add(
+        CataloguePeriod(
+            generation_id=graph["gen_b"].id,
+            period_kind_id=graph["period_kind"].id,
+            start_year=2019,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_period_ending_before_it_starts_rejected(db, graph):
+    db.add(
+        CataloguePeriod(
+            generation_id=graph["gen_b"].id,
+            period_kind_id=graph["period_kind"].id,
+            start_year=2005,
+            end_year=1998,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_both_kinds_coexist_on_one_generation(db, graph):
+    """ADR 0009's mixed granularity: US model years and a Euro production
+    period describe the same generation side by side."""
+    pp = db.scalar(select(PeriodKind).where(PeriodKind.code == "production_period"))
+    assert pp is not None, "period_kinds seed rows missing from migration"
+    db.add_all(
+        [
+            CataloguePeriod(
+                generation_id=graph["gen_a"].id,
+                period_kind_id=graph["period_kind"].id,
+                start_year=2003,
+                end_year=2003,
+            ),
+            CataloguePeriod(
+                generation_id=graph["gen_a"].id,
+                period_kind_id=pp.id,
+                start_year=1998,
+                end_year=2005,
             ),
         ]
     )

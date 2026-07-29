@@ -1,6 +1,6 @@
 """The five-level entity hierarchy - the spine of the schema.
 
-    companies -> models -> generations -> model_years -> configurations
+    companies -> models -> generations -> catalogue_periods -> configurations
 
 These are IDENTITY tables (ADR 0002). They hold identity plus their descriptive
 and spec columns as the *current best value*. They carry no row-level
@@ -11,7 +11,7 @@ natural key. External identifiers (Wikidata QID, NHTSA id, ...) live in
 `external_ids` (ADR 0003), not as columns here.
 
 Every spec-bearing row still foreign-keys back toward `configurations`, because
-a configuration (model year x trim x market x drivetrain) is the only level at
+a configuration (period x trim x market x drivetrain) is the only level at
 which a single spec value is unambiguous.
 """
 
@@ -20,6 +20,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
@@ -35,6 +36,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TIMESTAMP
 
 from carmanac.db.base import Base, ProvenanceMixin, TimestampMixin, provenance_table_args
+from carmanac.db.models.lookups import PeriodKind
 
 
 class Company(Base, TimestampMixin):
@@ -183,7 +185,7 @@ class Generation(Base, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text)
 
     model: Mapped[Model] = relationship(back_populates="generations")
-    model_years: Mapped[list[ModelYear]] = relationship(back_populates="generation")
+    catalogue_periods: Mapped[list[CataloguePeriod]] = relationship(back_populates="generation")
 
     __table_args__ = (
         UniqueConstraint("model_id", "slug", name="uq_generations_model_id_slug"),
@@ -202,27 +204,54 @@ class Generation(Base, TimestampMixin):
     )
 
 
-class ModelYear(Base, TimestampMixin):
-    """A single year inside a generation. Thin by design."""
+class CataloguePeriod(Base, TimestampMixin):
+    """The mandatory 4th level (ADR 0009): the span a source catalogues a
+    generation under. Thin by design.
 
-    __tablename__ = "model_years"
+    `kind` says which convention the row follows: `model_year` (US-style,
+    start = end - the shape vPIC/EPA assert), `production_period` (Euro/JDM
+    "built 1998-2005"), or `phase` (zenki/kouki, Phase 1/2). `end_year` NULL
+    means still in production. A row exists only because a current raw record
+    asserted that exact shape - no pass may fabricate per-year rows from a
+    period or vice versa. One generation routinely carries both kinds at once
+    (US years next to a Euro period); queries by year use containment.
+    Same-kind overlap within a generation is a reconciliation flag, never a
+    constraint - two sources bracketing a run differently must both land.
+    """
+
+    __tablename__ = "catalogue_periods"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     generation_id: Mapped[int] = mapped_column(
         ForeignKey("generations.id"), nullable=False, index=True
     )
-    year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    period_kind_id: Mapped[int] = mapped_column(
+        ForeignKey("period_kinds.id"), nullable=False, index=True
+    )
+    start_year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    end_year: Mapped[int | None] = mapped_column(SmallInteger)  # null = still in production
 
-    generation: Mapped[Generation] = relationship(back_populates="model_years")
-    configurations: Mapped[list[Configuration]] = relationship(back_populates="model_year")
+    generation: Mapped[Generation] = relationship(back_populates="catalogue_periods")
+    period_kind: Mapped[PeriodKind] = relationship()
+    configurations: Mapped[list[Configuration]] = relationship(back_populates="catalogue_period")
 
     __table_args__ = (
-        UniqueConstraint("generation_id", "year", name="uq_model_years_generation_id_year"),
+        # NULLS NOT DISTINCT: an open-ended period (end_year NULL) must still
+        # collide with its duplicate - the R3/R4 lesson yet again.
+        UniqueConstraint(
+            "generation_id",
+            "period_kind_id",
+            "start_year",
+            "end_year",
+            name="uq_catalogue_periods_natural_key",
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint("end_year IS NULL OR end_year >= start_year", name="end_not_before_start"),
     )
 
 
 class Configuration(Base, TimestampMixin):
-    """The atomic unit: model_year x trim x market x drivetrain.
+    """The atomic unit: catalogue period x trim x market x drivetrain.
 
     Core spec columns live here as the current best value. A spec earns a column
     only if >=80% of configurations would plausibly have a value (CLAUDE.md);
@@ -238,8 +267,8 @@ class Configuration(Base, TimestampMixin):
     __tablename__ = "configurations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    model_year_id: Mapped[int] = mapped_column(
-        ForeignKey("model_years.id"), nullable=False, index=True
+    catalogue_period_id: Mapped[int] = mapped_column(
+        ForeignKey("catalogue_periods.id"), nullable=False, index=True
     )
     # NOT NULL, unlike the other lookups. Market is part of the definition of a
     # configuration ("year x trim x market x drivetrain"), and a 2004 M3 is a
@@ -294,7 +323,7 @@ class Configuration(Base, TimestampMixin):
 
     summary: Mapped[str | None] = mapped_column(Text)
 
-    model_year: Mapped[ModelYear] = relationship(back_populates="configurations")
+    catalogue_period: Mapped[CataloguePeriod] = relationship(back_populates="configurations")
 
     __table_args__ = (
         # THE NATURAL KEY. Slug is derived from a name, so it cannot carry
@@ -310,7 +339,7 @@ class Configuration(Base, TimestampMixin):
         # equal to "unknown", without forcing a fake UNKNOWN lookup row onto
         # every dimension.
         UniqueConstraint(
-            "model_year_id",
+            "catalogue_period_id",
             "trim_name",
             "market_region_id",
             "drivetrain_id",

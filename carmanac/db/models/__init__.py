@@ -14,12 +14,12 @@ from carmanac.db.models.attributes import (
 )
 from carmanac.db.models.derivations import VehicleDerivation
 from carmanac.db.models.hierarchy import (
+    CataloguePeriod,
     Company,
     CompanyRoleAssignment,
     Configuration,
     Generation,
     Model,
-    ModelYear,
 )
 from carmanac.db.models.lookups import (
     Aspiration,
@@ -31,6 +31,7 @@ from carmanac.db.models.lookups import (
     Drivetrain,
     FuelType,
     MarketRegion,
+    PeriodKind,
     Source,
     TransmissionType,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "AttributeDefinition",
     "Base",
     "BodyStyle",
+    "CataloguePeriod",
     "Company",
     "CompanyRole",
     "CompanyRoleAssignment",
@@ -84,7 +86,7 @@ __all__ = [
     "MediaAsset",
     "MediaAttachment",
     "Model",
-    "ModelYear",
+    "PeriodKind",
     "RawRecord",
     "ReconciledRecord",
     "ReconciliationFlag",
