@@ -73,11 +73,28 @@ Quick sanity check once connected — confirm the extensions loaded:
 
 ```bash
 docker compose down       # stops the container, KEEPS your data
-docker compose down -v     # stops AND deletes all data (full reset)
 ```
 
 Your data lives in a named Docker volume (`carmanac_pgdata`), so a plain `down` and
 later `up` picks up exactly where you left off.
+
+**Deleting the volume (`docker compose down -v`) destroys the entire database
+permanently** — including the `raw_scrape` archive, which for Tier 3/4 sources
+may hold the only copy that still exists anywhere (ADR 0004). Never run it
+without a current backup:
+
+```bash
+../scripts/backup.sh      # dump, verify, rotate, upload off-machine
+docker compose down -v    # only now is this survivable
+```
+
+## Backups
+
+`scripts/backup.sh` (repo root) dumps the database from the running container,
+verifies the dump is restorable, keeps a local rotation, and uploads to Google
+Drive via `rclone`. Run it before anything destructive and before/after big
+ingests. `--verify-restore` additionally restores into a scratch database —
+run that variant occasionally; an unrestorable backup is not a backup.
 
 ## Troubleshooting
 
@@ -86,8 +103,8 @@ that port. In `docker-compose.yml`, change the ports line to `"5433:5432"` and
 connect on `5433` instead. Only change the left number.
 
 **Changed `initdb/` but nothing happened** — that folder only runs on a
-*brand-new* database. To re-run it, reset: `docker compose down -v && docker
-compose up -d`. (Safe right now; there's no real data yet.)
+*brand-new* database. To re-run it, reset with `docker compose down -v` — but
+that deletes all data, so take a backup first (see Backups above).
 
 **`healthy` never appears** — check `docker compose logs db` for an error,
 usually a port conflict or not enough memory allocated to Docker.
