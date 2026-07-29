@@ -141,6 +141,20 @@ def upgrade() -> None:
             f"ALTER INDEX idx_{table}_model_year_id RENAME TO idx_{table}_catalogue_period_id"
         )
 
+    # A table-column rename rewrites index DEFINITIONS but not the attribute
+    # names stored inside existing index relations (found by post-migration
+    # catalog sweep: pg_attribute still said model_year_id inside eight
+    # indexes). Inert - planning and pg_dump use the definitions - but the
+    # catalog should not lie. Index relations accept ALTER TABLE ... RENAME
+    # COLUMN.
+    for index in (
+        "uq_configurations_natural_key",
+        "uq_field_provenance_live",
+        "uq_media_attachments_asset_entity_role",
+        *(f"idx_{table}_catalogue_period_id" for table in _REFERENCING),
+    ):
+        op.execute(f"ALTER TABLE {index} RENAME COLUMN model_year_id TO catalogue_period_id")
+
 
 def downgrade() -> None:
     # Refuse rather than silently flatten real periods into fake years.
@@ -162,6 +176,14 @@ def downgrade() -> None:
             f"{non_model_year} non-model_year period rows exist; downgrading would "
             "flatten them into single years. Resolve them first."
         )
+
+    for index in (
+        "uq_configurations_natural_key",
+        "uq_field_provenance_live",
+        "uq_media_attachments_asset_entity_role",
+        *(f"idx_{table}_catalogue_period_id" for table in _REFERENCING),
+    ):
+        op.execute(f"ALTER TABLE {index} RENAME COLUMN catalogue_period_id TO model_year_id")
 
     for table in _REFERENCING:
         op.execute(
