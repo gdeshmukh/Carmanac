@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: **the match queue worked to the floor; ADR 0009 accepted.** 7,215 companies; policy v6 — 21 identity merges collapsed live, 45 `VPIC_MATCHES` judgments, `PINNED_DENY` + `PINNED_ADMIT` grown, 5 quarantined entities admitted purely by vPIC corroboration this session (Karma, Kandi, Ineos, Solectria, Moke America); **134 of 247 vPIC passenger makes matched**, 113 `match_review` open (the genuine no-match pool — deliberately parked per Gaurav). vPIC external ids re-keyed to `make:<id>` ahead of models. **ADR 0009 accepted**: the 4th level is a catalogue period (model year / production period / phase); charter updated. Charter: **the focal point is the individual car's page.** Next: the `catalogue_periods` migration, then vPIC models — the first actual cars. Admission batch-triage proposals still await Gaurav (his "barely cars" pass).
+Phase 1: **the first cars are landed.** 2,018 vPIC passenger models in the landing zone (`model:<id>`), across all 247 makes; **134/247 makes matched** to 7,215 companies; ADR 0009 implemented (`catalogue_periods` live, migration `76cb287dd71c`, deep-reviewed at Gaurav's request — one real find, fixed); **ADR 0010 (the models pass) proposed, awaiting Gaurav**. 113 `match_review` open (parked no-match pool), admission batch-triage proposals parked for Gaurav's "barely cars" pass. Charter: **the focal point is the individual car's page.** Next: ADR 0010 review → the first `models` rows; year-level vPIC + EPA after PR #17 merges.
 
 ## Done
 
@@ -44,15 +44,16 @@ Phase 1: **the match queue worked to the floor; ADR 0009 accepted.** 7,215 compa
 
 ## In Flight
 
-PR #16 (`feat/match-queue-merges`, policy v5+v6 + ADR 0009) open, awaiting review/merge. Still awaiting Gaurav: the admission batch-triage decisions (deferred to his "barely cars" pass) and the parked no-match pool (113 flags, deliberately untouched).
+PR #17 (`catalogue_periods` migration + review fixes) and PR #18 (models fetch-and-land + ADR 0010, stacked on #17) open. Awaiting Gaurav: ADR 0010 review, the admission batch-triage decisions ("barely cars" pass), the parked no-match pool (113 flags).
 
 ## Next (immediate)
 
 1. ~~Merge PR #16.~~ DONE 2026-07-29 (merged by Gaurav).
 2. ~~`catalogue_periods` migration (ADR 0009)~~ — DONE 2026-07-29 (PR #17, migration `76cb287dd71c`).
-3. vPIC models fetch-and-land (matched makes only — now 134; car+MPV filter; `model:<id>` external ids); models match pass creates the first `models` rows.
-4. Year-level vPIC + EPA unblock after the migration (US rows land as `model_year` periods).
-5. Thin read surface decision (F2): models landing makes /makes + /models pages demoable — revisit sequencing then.
+3. ~~vPIC models fetch-and-land~~ — DONE 2026-07-29 (PR #18): 2,018 models landed across all 247 makes.
+4. Gaurav reviews ADR 0010 (the models pass) → implement → the first `models` rows (~134 makes' nameplates).
+5. Year-level vPIC + EPA unblock after PR #17 merges (US rows land as `model_year` periods).
+6. Thin read surface decision (F2): models rows make /makes + /models pages demoable — revisit sequencing then.
 6. Gaurav's "barely cars" pass: admission batch decisions (moto/truck/bus/racing/subsidiary signatures), the out-of-scope vPIC makes (Blue Bird, Freightliner, Winnebago...), BLUECAR's company question (no company-shaped Wikidata entity; Bolloré is a holding group), and the parked no-match pool.
 
 ## Next (done) — the F1-F9 fix queue, then the reconciler
@@ -179,6 +180,12 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-29 (part 9 — the first cars land: 2,018 vPIC passenger models)
+
+- **vPIC models fetch-and-land built and run** (`carmanac/ingest/vpic/models.py` + script, same plumbing as makes): `GetModelsForMakeIdYear/makeId/<id>/vehicletype/{car,mpv}` per landed make, union per ModelId (the Accord appears under both types), sorted type lists, `model:<ModelId>` external ids (the re-key paying off on day one). **2,192 model/type rows across all 247 makes → 2,018 distinct models landed**; ~9 minutes at the polite 1 req/s. Endpoint shape probed live before building (models arrive mixed-case — "Accord", "FCX Clarity" — unlike the SHOUTING makes). 3 landing tests; 90 total green.
+- **All 247 makes fetched, not just the 134 matched** — landing is generous (Tier 1 re-fetchable cache) and models under unmatched makes are match-queue evidence. Immediate payoff: **BBC's only "model" is literally named "Passenger Car"**, a vPIC placeholder — evidence *against* it being the Italian BBC brand; the flag stays open but better informed. Sanity: BMW 146 models, Ford 140, Ferrari 66; Accord/Viper/Roadster resolve by ModelId.
+- **ADR 0010 proposed** (the models pass): matched-make models only (unmatched makes' models wait — one open make question must not fan out into fifty model-shaped copies); upsert by identity ladder then (company, slug); slug collisions under one company FLAG rather than auto-suffix (two same-slug models under one make are usually the same nameplate — auto-suffixing would mint exactly the duplicate-identity problem the merges just cleaned); `models.name` projects via `field_provenance` so Wikidata can arbitrate later; nameplate level only. Needs Gaurav's review before implementation.
 
 ### 2026-07-29 (part 8 — migration review, Gaurav-requested; one real find)
 
