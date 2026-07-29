@@ -48,8 +48,8 @@ PR #16 (`feat/match-queue-merges`, policy v5+v6 + ADR 0009) open, awaiting revie
 
 ## Next (immediate)
 
-1. Merge PR #16.
-2. `catalogue_periods` migration (ADR 0009): rename + start/end/kind + `period_kinds` seed + trigger re-point + constraint swap. Hand-written, live-probed, like every schema change.
+1. ~~Merge PR #16.~~ DONE 2026-07-29 (merged by Gaurav).
+2. ~~`catalogue_periods` migration (ADR 0009)~~ — DONE 2026-07-29 (PR #17, migration `76cb287dd71c`).
 3. vPIC models fetch-and-land (matched makes only — now 134; car+MPV filter; `model:<id>` external ids); models match pass creates the first `models` rows.
 4. Year-level vPIC + EPA unblock after the migration (US rows land as `model_year` periods).
 5. Thin read surface decision (F2): models landing makes /makes + /models pages demoable — revisit sequencing then.
@@ -179,6 +179,14 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-29 (part 7 — the catalogue_periods migration; ADR 0009 implemented)
+
+- **Migration `76cb287dd71c`** (PR #17), hand-written — a table rename is autogenerate's DROP+CREATE blind spot, and the trigger is invisible to it (both documented since ADR 0006's migration). `model_years` → `catalogue_periods` with every embedded name following (PK, indexes, FK-constraint names, trigger, **and the id sequence** — the ADR 0006 rename left `makes_id_seq` behind on `companies`, noted, not repeated); `year` → (`start_year`, `end_year`, `period_kind_id`) with the seed row backfilled as a model_year period; seeded `period_kinds` lookup; four-column natural key NULLS NOT DISTINCT; CHECK end ≥ start. The five referencing tables' `model_year_id` arc/FK columns renamed to `catalogue_period_id` — column renames rewrite constraint/index *expressions* automatically (verified live on the exclusive-arc CHECKs); only *names* need explicit renames.
+- **Downgrade refuses instead of flattening**: real period/phase rows cannot round-trip into a single `year`, so `downgrade()` counts non-model_year rows and raises (the same refuse-don't-discard posture as f3c645b9cb6f's). Round trip verified on the pre-period dataset.
+- Verified: `alembic check` clean, downgrade/upgrade round trip, pre-migration seed data survived the rename intact, seed script idempotent on the new shape, arc CHECK expressions rewritten, trigger fires on the renamed table. **87 tests green** (3 new: open-ended-period NULLS NOT DISTINCT collision, end-before-start CHECK, both kinds coexisting on one generation — the ADR's mixed-granularity claim as a permanent test).
+- Test-fixture lesson re-learned from conftest's own docstring: migration-seeded lookups (now incl. `period_kinds`) are deliberately NOT truncated between tests — fixtures select them like production code does, never re-insert.
+- **Configuration-level ingestion is now unblocked** (year-level vPIC, EPA). Next: vPIC models fetch-and-land.
 
 ### 2026-07-29 (part 6 — the approved batch applied; ADR 0009 accepted; policy v6)
 

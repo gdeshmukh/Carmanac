@@ -51,6 +51,16 @@ class BodyStyle(_CodeNameLookup):
     description: Mapped[str | None] = mapped_column(Text)
 
 
+class PeriodKind(_CodeNameLookup):
+    """Which convention a catalogue period follows (ADR 0009):
+    'model_year' (US-style, start = end), 'production_period'
+    ("built 1998-2005"), 'phase' (zenki/kouki, Phase 1/2)."""
+
+    __tablename__ = "period_kinds"
+
+    description: Mapped[str | None] = mapped_column(Text)
+
+
 class Drivetrain(_CodeNameLookup):
     """'fwd', 'rwd', 'awd', '4wd'."""
 

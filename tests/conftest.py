@@ -135,7 +135,7 @@ def db(engine: Engine) -> Iterator[Session]:
                          configuration_attributes, configuration_engines,
                          configuration_transmissions, company_role_assignments,
                          vehicle_derivations, media_attachments, media_assets,
-                         configurations, model_years, generations, models,
+                         configurations, catalogue_periods, generations, models,
                          engines, transmissions, companies, sources
                 RESTART IDENTITY CASCADE
                 """

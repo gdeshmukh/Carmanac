@@ -6,7 +6,7 @@ hierarchy, then shows the reconciliation-ready model from ADR 0002 / 0003:
     companies    BMW  (role: manufacturer)
       models       3 Series
         generations  E46            <- chassis codes live here
-          model_years  2002
+          catalogue_periods  2002 (kind: model_year; ADR 0009)
             configurations  330i (US, sedan, RWD)   <- spec columns = best value
                               |- engines         M54B30
                               |- transmissions   Getrag 220 (5MT)
@@ -39,6 +39,7 @@ from carmanac.db.models import (
     Aspiration,
     AttributeDefinition,
     BodyStyle,
+    CataloguePeriod,
     Company,
     CompanyRole,
     CompanyRoleAssignment,
@@ -56,7 +57,7 @@ from carmanac.db.models import (
     Generation,
     MarketRegion,
     Model,
-    ModelYear,
+    PeriodKind,
     RawRecord,
     Source,
     Transmission,
@@ -72,7 +73,7 @@ _ARC_COL_FOR: dict[type, str] = {
     Company: "company_id",
     Model: "model_id",
     Generation: "generation_id",
-    ModelYear: "model_year_id",
+    CataloguePeriod: "catalogue_period_id",
     Configuration: "configuration_id",
     Engine: "engine_id",
     Transmission: "transmission_id",
@@ -331,7 +332,18 @@ def main() -> None:
             slug="e46",
         )
         created += c
-        my, c = get_or_create(s, ModelYear, generation_id=gen.id, year=2002)
+        model_year_kind, c = get_or_create(
+            s, PeriodKind, defaults={"name": "Model year"}, code="model_year"
+        )
+        created += c
+        my, c = get_or_create(
+            s,
+            CataloguePeriod,
+            generation_id=gen.id,
+            period_kind_id=model_year_kind.id,
+            start_year=2002,
+            end_year=2002,
+        )
         created += c
         cfg, c = get_or_create(
             s,
@@ -360,7 +372,7 @@ def main() -> None:
                 "msrp_launch_amount": Decimal("35400.00"),
                 "msrp_launch_currency_id": usd.id,
             },
-            model_year_id=my.id,
+            catalogue_period_id=my.id,
             slug="330i-us-sedan",
         )
         created += c

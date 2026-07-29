@@ -106,7 +106,7 @@ class ReconciliationFlag(Base):
     company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"))
     model_id: Mapped[int | None] = mapped_column(ForeignKey("models.id"))
     generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id"))
-    model_year_id: Mapped[int | None] = mapped_column(ForeignKey("model_years.id"))
+    catalogue_period_id: Mapped[int | None] = mapped_column(ForeignKey("catalogue_periods.id"))
     configuration_id: Mapped[int | None] = mapped_column(ForeignKey("configurations.id"))
     engine_id: Mapped[int | None] = mapped_column(ForeignKey("engines.id"))
     transmission_id: Mapped[int | None] = mapped_column(ForeignKey("transmissions.id"))
