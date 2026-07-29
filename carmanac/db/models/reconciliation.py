@@ -47,7 +47,16 @@ FLAG_KINDS = (
     # better source overturns it or review confirms it (Peugeot really was
     # founded 1810 - as a coffee-mill maker).
     "implausible_value",
+    # A source record that could not be matched to a company (ADR 0008):
+    # zero or several candidates for a vPIC make. Record-scoped like
+    # admission_review - there may be no entity to attach to - with
+    # trigram-generated candidates in `detail` for the reviewer. Resolving
+    # one grows the curated match registry and the matcher's labeled set.
+    "match_review",
 )
+
+# Kinds that attach to a raw record rather than an entity (the arc is empty).
+RECORD_SCOPED_KINDS = ("admission_review", "match_review")
 
 FLAG_STATUSES = ("open", "resolved", "dismissed")
 
@@ -130,11 +139,14 @@ class ReconciliationFlag(Base):
         # is the same device as `exactly_one_entity` on field_provenance,
         # conditioned on kind.
         CheckConstraint(
-            "(kind = 'admission_review'"
-            f" AND num_nonnulls({', '.join(_ARC_COLUMNS)}) = 0"
+            "(kind IN ({kinds})"
+            " AND num_nonnulls({arc}) = 0"
             " AND raw_record_id IS NOT NULL)"
-            " OR (kind <> 'admission_review'"
-            f" AND num_nonnulls({', '.join(_ARC_COLUMNS)}) = 1)",
+            " OR (kind NOT IN ({kinds})"
+            " AND num_nonnulls({arc}) = 1)".format(
+                kinds=", ".join(f"'{k}'" for k in RECORD_SCOPED_KINDS),
+                arc=", ".join(_ARC_COLUMNS),
+            ),
             name="flag_shape_matches_kind",
         ),
         # Partial arc indexes, as on field_provenance: one arc column set per

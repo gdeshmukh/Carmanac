@@ -31,7 +31,9 @@ from __future__ import annotations
 # v3 (2026-07-29): plausibility rules at projection open implausible_value
 # flags (the AMG-founded-1812 lesson: a single wrong claim has no
 # disagreement for multi_value to catch).
-RECONCILER_VERSION = "3"
+# v4 (2026-07-29): the vPIC match pass (ADR 0008) - cross-source identity,
+# corroboration-admission, vPIC-sourced roles.
+RECONCILER_VERSION = "4"
 
 # --- identity --------------------------------------------------------------
 
@@ -47,6 +49,12 @@ IDENTITY_MERGES: dict[str, str] = {
     "Q1002267": "Q27401",  # Bugatti Automobili S.p.A. (EB110 era) -> Bugatti (Molsheim)
     "Q2308012": "Q27401",  # Bugatti Automobiles S.A.S. (VW era)   -> Bugatti (Molsheim)
 }
+
+# Curated vPIC-make matches (ADR 0008 rung 1): vPIC MakeId -> Wikidata QID,
+# for makes the exact-name rung cannot place. Grown exclusively by resolving
+# `match_review` flags - each entry is a recorded human judgment, and
+# collectively they are the matcher's labeled set.
+VPIC_MATCHES: dict[str, str] = {}
 
 # --- admission (ADR 0007 §3) ------------------------------------------------
 
