@@ -66,6 +66,11 @@ class Company(Base, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
 
+    # Reconciled fact like the prose columns (ADR 0007 §8): Wikidata already
+    # returns it, entity pages want it, and discarding it at reconcile time
+    # was the only alternative.
+    website: Mapped[str | None] = mapped_column(Text)
+
     models: Mapped[list[Model]] = relationship(back_populates="company")
 
     # Trigram index: entity resolution matches incoming source names against

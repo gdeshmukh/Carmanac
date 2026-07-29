@@ -47,9 +47,17 @@ from carmanac.db.models.powertrain import (
     Transmission,
 )
 from carmanac.db.models.provenance import ExternalId, FieldProvenance, RawRecord
+from carmanac.db.models.reconciliation import (
+    FLAG_KINDS,
+    FLAG_STATUSES,
+    ReconciledRecord,
+    ReconciliationFlag,
+)
 
 __all__ = [
     "ATTRIBUTE_DATA_TYPES",
+    "FLAG_KINDS",
+    "FLAG_STATUSES",
     "MEDIA_KINDS",
     "MEDIA_ROLES",
     "Aspiration",
@@ -78,6 +86,8 @@ __all__ = [
     "Model",
     "ModelYear",
     "RawRecord",
+    "ReconciledRecord",
+    "ReconciliationFlag",
     "Source",
     "Transmission",
     "TransmissionType",
