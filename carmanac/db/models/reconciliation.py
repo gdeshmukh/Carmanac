@@ -40,6 +40,13 @@ FLAG_KINDS = (
     "role_disagreement",
     "admission_review",
     "source_dropped",
+    # A single confident lie: the projected value fails a plausibility rule
+    # (Mercedes-AMG "founded 1812" - one claim, no disagreement, no
+    # multi_value flag to catch it). The value still projects (§6.4: pages
+    # always show data, tentatively); the flag records the suspicion until a
+    # better source overturns it or review confirms it (Peugeot really was
+    # founded 1810 - as a coffee-mill maker).
+    "implausible_value",
 )
 
 FLAG_STATUSES = ("open", "resolved", "dismissed")

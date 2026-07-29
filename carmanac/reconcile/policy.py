@@ -28,7 +28,10 @@ from __future__ import annotations
 # processed each record, making staleness queryable.
 # v2 (2026-07-29): admission requires affirmative evidence (target class,
 # builder class, or pin); boilerplate-only class sets quarantine.
-RECONCILER_VERSION = "2"
+# v3 (2026-07-29): plausibility rules at projection open implausible_value
+# flags (the AMG-founded-1812 lesson: a single wrong claim has no
+# disagreement for multi_value to catch).
+RECONCILER_VERSION = "3"
 
 # --- identity --------------------------------------------------------------
 
@@ -385,6 +388,39 @@ def classify(classes: frozenset[str] | set[str], external_id: str | None = None)
     if any(c in BUILDER_CLASSES for c in classes):
         return ADMIT
     return QUARANTINE
+
+
+# --- plausibility (2026-07-29, the AMG lesson) --------------------------------
+
+# Benz Patent-Motorwagen. A car company founded earlier is not impossible -
+# Peugeot (1810, coffee mills) and ZAZ (1863) are real - but it is always
+# worth a human look, and vandalized single claims (Mercedes-AMG "1812") are
+# indistinguishable from those without one. Review confirms or corrects;
+# either way the decision feeds the labeled set.
+FIRST_AUTOMOBILE_YEAR = 1886
+
+
+def plausibility_issues(
+    founded_year: int | None, defunct_year: int | None, current_year: int
+) -> list[tuple[str, str]]:
+    """Sanity-check projected values. Returns (field_name, reason) per issue.
+
+    Flags suspicion; never blocks projection (§6.4 - pages always show data,
+    tentatively). Only cross-field and bounds checks that hold regardless of
+    source belong here; single-source value policy stays in the mappers.
+    """
+    issues: list[tuple[str, str]] = []
+    if founded_year is not None:
+        if founded_year < FIRST_AUTOMOBILE_YEAR:
+            issues.append(("founded_year", f"predates the automobile ({founded_year})"))
+        elif founded_year > current_year + 1:
+            issues.append(("founded_year", f"in the future ({founded_year})"))
+    if defunct_year is not None:
+        if founded_year is not None and defunct_year < founded_year:
+            issues.append(("defunct_year", f"defunct {defunct_year} before founded {founded_year}"))
+        elif defunct_year > current_year + 1:
+            issues.append(("defunct_year", f"in the future ({defunct_year})"))
+    return issues
 
 
 # --- conflict resolution (ADR 0007 §6) ---------------------------------------
