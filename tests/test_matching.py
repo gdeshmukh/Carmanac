@@ -164,6 +164,23 @@ def test_registry_match_wins(db, wikidata_source, vpic_source):
     assert ids == {"Q35996", "900"}
 
 
+def test_registry_preempts_wrong_unique_exact_name(db, wikidata_source, vpic_source):
+    """The AUDI shape: after the brand-artifact merges, the only exact-name
+    'AUDI' company is SAIC's Chinese AUDI marque - a real, separate make -
+    while the right target is labeled 'Audi AG'. The curated registry entry
+    (rung 1) must win before the exact-name rung guesses wrong."""
+    _land_wd(db, wikidata_source, "Q23317", label="Audi AG")
+    _land_wd(db, wikidata_source, "Q136087723", label="AUDI", classes=("Q10429667",))
+    run_companies_pass(db, wikidata)
+    _land_vpic(db, vpic_source, 582, "AUDI")
+
+    stats = run_vpic_match_pass(db)
+    assert stats.matched_existing == 1 and stats.flagged == 0
+    audi_ag = db.scalars(select(Company).where(Company.name == "Audi AG")).one()
+    vpic_row = db.scalars(select(ExternalId).where(ExternalId.external_id == "582")).one()
+    assert vpic_row.company_id == audi_ag.id
+
+
 def test_match_pass_idempotent(db, wikidata_source, vpic_source):
     _land_wd(db, wikidata_source, "Q27074", label="Aston Martin")
     run_companies_pass(db, wikidata)

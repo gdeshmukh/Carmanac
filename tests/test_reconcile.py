@@ -173,6 +173,14 @@ def test_pin_admits_boilerplate_marque():
     assert policy.classify({"Q43229"}, "Q999999") == policy.QUARANTINE
 
 
+def test_pin_denies_misclassed_target():
+    """PINNED_DENY outranks a target class: the Peugeot assembly plant is
+    classed `automobile manufacturer` in Wikidata, and no list edit could
+    exclude it - the target class would keep re-admitting it."""
+    assert policy.classify({"Q786820"}, "Q80901498") == policy.DENY
+    assert policy.classify({"Q786820"}, "Q999999") == policy.ADMIT
+
+
 def test_empty_class_set_quarantines():
     """Zero evidence is not vacuous truth (strict-admission polarity)."""
     assert policy.classify(frozenset()) == policy.QUARANTINE
@@ -384,6 +392,32 @@ def test_curated_merge_one_company_many_external_ids(db, wikidata_source):
 
     run_companies_pass(db, wikidata)  # merge handling is idempotent too
     assert db.scalar(select(func.count()).select_from(ExternalId)) == 3
+
+
+def test_merge_admits_quarantine_classed_sides(db, wikidata_source):
+    """Tesla's shape: the canonical (Q478214, Tesla Inc.) carries only
+    corporate boilerplate - QUARANTINE by class - while the member is the
+    admitted brand entity. A curated merge is a human identity decision
+    about both sides, so the canonical must admit, create the company, and
+    write the facts; the member attaches identity only. Ascending-QID order
+    processes the canonical first."""
+    _land(
+        db,
+        wikidata_source,
+        "Q478214",
+        label="Tesla",
+        classes=("Q4830453",),  # boilerplate-only
+        inceptions=("2003-07-01T00:00:00Z",),
+    )
+    _land(db, wikidata_source, "Q124981765", label="Tesla", classes=("Q10429667",))
+    stats = run_companies_pass(db, wikidata)
+
+    company = db.scalars(select(Company)).one()
+    assert company.founded_year == 2003  # the canonical's facts project
+    assert set(db.scalars(select(ExternalId.external_id))) == {"Q478214", "Q124981765"}
+    assert stats.merged_members == 1
+    # No admission flag for either side: the merge entry IS the decision.
+    assert db.scalar(select(func.count()).select_from(ReconciliationFlag)) == 0
 
 
 def test_implausible_single_claim_projects_and_flags(db, wikidata_source):

@@ -53,6 +53,18 @@ def main() -> int:
             )
         }
 
+        # Companies holding another source's external id are cross-source
+        # admitted (ADR 0008): vPIC evidence outranks a quarantine verdict,
+        # exactly as in the engine. Without this guard the script would sweep
+        # the corroborated companies (Terrafugia et al.).
+        cross_source_admitted: set[int] = set(
+            session.scalars(
+                select(ExternalId.company_id).where(
+                    ExternalId.source_id != source.id, ExternalId.company_id.isnot(None)
+                )
+            )
+        )
+
         demote: dict[int, str] = {}
         for external_id, company_id in session.execute(
             select(ExternalId.external_id, ExternalId.company_id).where(
@@ -61,6 +73,10 @@ def main() -> int:
         ):
             if external_id in policy.IDENTITY_MERGES:
                 continue  # merge members follow their canonical entity
+            if external_id in policy.MERGE_CANONICALS:
+                continue  # naming a canonical is itself the admission decision
+            if company_id in cross_source_admitted:
+                continue
             record = records.get(external_id)
             if record is None:
                 continue
