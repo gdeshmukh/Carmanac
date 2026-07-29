@@ -9,13 +9,16 @@ The admission lists were drafted 2026-07-28 from the live class survey: all
 resolved to its English label and classified by hand. QID keys, labels as
 values - the labels are documentation, never matched against.
 
-The deliberate polarity (ADR 0007 §3): a class not on either list QUARANTINES
-its entities rather than admitting them. Under-admission is the cheap error
-(edit a list, re-run, the entity appears); over-admission means unwinding
-entity rows other data may reference. Genuinely ambiguous classes - "design
-company", "OEM", "shipyard", "factory owner" - are therefore on NEITHER list:
-their entities wait in quarantine, and reviewing those flags is how these
-lists grow.
+The deliberate polarity (ADR 0007 §3, tightened 2026-07-29 per Gaurav's
+review): admission requires AFFIRMATIVE car evidence - a target class, a
+builder-type class, or a hand-vetted pin. Version 1 admitted any entity whose
+classes were all generic corporate boilerplate, and the first live pass showed
+what that lets in: 2,175 roleless companies including seatbelt suppliers,
+parts makers, dealerships and glass-repair chains - exactly the "supporting
+cast at the expense of the cars" the charter forbids. Boilerplate-only sets
+now QUARANTINE. Under-admission stays the cheap error (edit a list, re-run,
+the entity appears); over-admission means unwinding entity rows other data
+may reference.
 """
 
 from __future__ import annotations
@@ -23,7 +26,9 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce; `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "1"
+# v2 (2026-07-29): admission requires affirmative evidence (target class,
+# builder class, or pin); boilerplate-only class sets quarantine.
+RECONCILER_VERSION = "2"
 
 # --- identity --------------------------------------------------------------
 
@@ -53,10 +58,38 @@ TARGET_CLASSES: dict[str, str] = {
     "Q112865922": "historical car manufacturer",
 }
 
-# Vetted co-classes: being one of these does not disqualify an entity.
-# Corporate boilerplate, national legal forms, adjacent manufacturing (a
-# carmaker that also builds motorcycles/trucks/planes is still a carmaker),
-# and racing operations (Ferrari, McLaren).
+# Builder-type classes (Gaurav 2026-07-29): the door deliberately left open
+# for company types that build on other marques' cars - they admit WITHOUT a
+# manufacturer role (ADR 0005: builders are companies, roles come from VIN
+# evidence). Kept intentionally tiny; grows only by explicit review, one or
+# two company types at most.
+BUILDER_CLASSES: dict[str, str] = {
+    "Q1734300": "coachbuilder",
+}
+
+# Hand-vetted entity pins: marques verified during the coverage-fixture review
+# (2026-07-28) whose Wikidata classes are pure corporate boilerplate - real
+# car companies the class-based rule cannot see. Admission only; NO role is
+# pinned (Gaurav 2026-07-29: roles come from source evidence - vPIC supplies
+# these, not curation).
+PINNED_ADMIT: dict[str, str] = {
+    "Q6742": "Peugeot",
+    "Q55633247": "Singer Vehicle Design",
+    "Q98139925": "Li Auto",
+    "Q65129456": "Gordon Murray Automotive",
+    "Q29068": "Hispano-Suiza",
+    "Q40996": "Praga",
+    "Q2110378": "Prince Motor Company",
+    "Q758549": "Auburn",
+    "Q59186515": "Automobili Pininfarina",
+    "Q694506": "Wiesmann",
+}
+
+# Understood co-classes. These no longer admit anything on their own (v2) -
+# their job is review triage: a quarantined entity's flag lists which of its
+# classes are genuinely UNKNOWN versus merely insufficient, so working the
+# queue starts with the unknowns. Corporate boilerplate, national legal
+# forms, adjacent manufacturing, racing operations.
 ALLOW_CLASSES: dict[str, str] = {
     # generic corporate
     "Q4830453": "business",
@@ -323,29 +356,33 @@ DENY = "deny"
 QUARANTINE = "quarantine"
 
 
-def classify(classes: frozenset[str] | set[str]) -> str:
+def classify(classes: frozenset[str] | set[str], external_id: str | None = None) -> str:
     """Apply the admission rule to an entity's full P31 class set.
 
-    Precedence, found the hard way on the first live pass:
+    Precedence, each step paid for by a live pass:
 
-    1. A TARGET class admits outright. The deny list exists to exclude
-       entities that are ONLY services/facilities/etc., not to veto a marque:
-       Ford is `automobile manufacturer` + `holding company` (both true - it
-       holds Lincoln), Geely carries `transport company`. Deny-first excluded
-       both. If Wikidata misclasses a non-marque as a target class, the wrong
-       tentative `manufacturer` role is the already-accepted KINTO risk and
-       vPIC arbitrates it (ADR 0007 §4/Consequences).
-    2. Then any deny class excludes: a dealership that is also a "business"
-       is still a dealership.
-    3. Then admission requires EVERY class to be understood (allow-listed).
-    4. Anything else - including an empty class set, which is zero evidence,
-       not vacuous truth - waits in quarantine for review.
+    1. A hand-vetted PIN admits absolutely - it encodes a human review that
+       outranks whatever classes the source holds today.
+    2. A TARGET class admits. The deny list exists to exclude entities that
+       are ONLY services/facilities/etc., not to veto a marque: Ford is
+       `automobile manufacturer` + `holding company` (both true - it holds
+       Lincoln). Deny-first excluded it on the first pass. If Wikidata
+       misclasses a non-marque as a target class, the wrong tentative role is
+       the accepted KINTO risk and vPIC arbitrates (ADR 0007 §4).
+    3. Any deny class excludes: a dealership that is also a "business" is
+       still a dealership.
+    4. A BUILDER class admits, rolelessly - the tuner/coachbuilder door.
+    5. Everything else waits in quarantine - including boilerplate-only sets
+       (v1 admitted those; the seatbelt suppliers taught us better) and the
+       empty set, which is zero evidence, not vacuous truth.
     """
+    if external_id is not None and external_id in PINNED_ADMIT:
+        return ADMIT
     if any(c in TARGET_CLASSES for c in classes):
         return ADMIT
     if any(c in DENY_CLASSES for c in classes):
         return DENY
-    if classes and all(c in ALLOW_CLASSES for c in classes):
+    if any(c in BUILDER_CLASSES for c in classes):
         return ADMIT
     return QUARANTINE
 

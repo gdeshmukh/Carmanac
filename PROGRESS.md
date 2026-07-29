@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: **the reconciler is live.** First companies pass run 2026-07-28: 9,383 companies reconciled from the 9,883 landed Wikidata entities (7,205 with manufacturer roles, 309 denied, 191 quarantined for review), every field traceable to its raw record, idempotent re-run verified. Fix queue 1-8 all done. Next: work the quarantine queue, decide the read surface (#9), then models ingestion.
+Phase 1: **the reconciler is live, admission tightened to policy v2 after Gaurav's review.** 7,226 companies (7,206 with manufacturer roles on car-class evidence, 10 fixture pins, Zagato via the coachbuilder door), 2,347 quarantined, 309 denied — coverage fixture **219/219** for the first time. Charter amended: **the focal point is the individual car's page.** Next: NHTSA vPIC (Gaurav's call — it supplies real car data AND arbitrates roles), read surface decision (#9).
 
 ## Done
 
@@ -134,7 +134,8 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - **Spec rating standards** (F8): `power_hp` is standardless (SAE net / DIN / JIS gross indistinguishable) and only EPA cycles get first-class columns. Rating-standard/test-cycle lookups, with non-EPA figures in EAV per the 80% rule. Same ADR as above, or its sibling.
 - **Concept cars and prototypes**: in scope or out? (Leaning toward: separate boolean flag on `configurations`, default to production-only in queries.)
 - **Race-only configurations** (GT3, Group B, etc.): in scope? (Leaning toward: yes, with a flag.)
-- **Slug strategy**: stable slugs vs. ID-based URLs. Stable slugs are nicer but historical renames are painful. (Leaning toward: slug + ID, accept slug at any historical value and 301 to canonical.)
+- **Slug strategy**: stable slugs vs. ID-based URLs. Stable slugs are nicer but historical renames are painful. (Leaning toward: slug + ID, accept slug at any historical value and 301 to canonical.) Gaurav 2026-07-29: collision disambiguators must be **source-neutral** — `tesla-q124981765` leaks Wikidata's identifier scheme into public identity; had ingestion started from vPIC the same company would have slugged differently, which is exactly the inconsistency to avoid. Low urgency (no pages exist), decide in the slug ADR.
+- **Company eras and revival** (from the Bugatti merge + Gaurav 2026-07-29): a single `defunct_year` cannot represent multi-era companies — Bugatti (Molsheim d.1963 → EB110 era → VW/Rimac era, alive), Scout Motors (revived 2022), MG (Morris → BL → MG Rover → SAIC). Company pages should be able to show eras; "defunct" must not mean permanently dead. Needs an ADR (era/active-period modeling vs. prose); until then the Bugatti canonical-record projection (`defunct 1963`) stands as a known-wrong tentative value.
 - **Multi-language attribute names**: do we store one canonical English attribute key and translate at the frontend, or store localized labels in `attribute_definitions`? (Leaning toward: canonical English keys, localized labels as a separate concern later.)
 - **Reference DDL vs. models as source of schema intent** — RESOLVED in practice: the SQLAlchemy models are now the source of truth. `docs/schema_phase1.sql` and `docs/schema.md` are flagged partially-superseded by ADR 0002/0003; full rewrite (or generating the DDL from models) is a tracked follow-up.
 
@@ -163,6 +164,12 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-29 (Gaurav's database review — admission tightened to policy v2)
+
+- **Gaurav reviewed the first pass's output against the charter and caught real over-admission**: of 9,383 companies, 2,175 held no manufacturer role — sampled: seatbelt suppliers (Sabelt), parts makers (Aptiv), dealerships, glass-repair chains, a padel company. Root cause: v1 admitted any all-boilerplate class set, contradicting the fetch code's own "suppliers land-and-quarantine" intent. The 7,206 role-holders sampled clean (the genuine long tail of dead marques — REO, Ripper Motor Carriage, Firestone-Columbus).
+- **Policy v2** (RECONCILER_VERSION=2): admission now requires affirmative evidence — target class, **builder class** (coachbuilder; the door Gaurav wants open for tuner-type companies, kept deliberately tiny), or **hand-vetted pin** (the 10 fixture marques with boilerplate-only classes: Peugeot, Singer, Li Auto, GMA, Hispano-Suiza, Praga, Prince, Auburn, Automobili Pininfarina, Wiesmann). ALLOW_CLASSES repurposed to review triage. `scripts/demote_unadmitted_companies.py` removed the 2,156 no-longer-admitted companies (derived rows only; raw untouched; nothing referenced them yet — the cheap moment ADR 0007 predicted). Re-run quarantined them with flags; idempotent; **fixture 219/219** — Zagato admitted through the coachbuilder door on its own classes.
+- **Decisions recorded from the review**: charter now names **individual car pages as the focal point** (everything else supporting cast); **no role-pin registry** — roles come from source evidence, and **vPIC moves up next** (real US car data + role arbitration in one source); Bugatti-style **company eras/revival** (Scout, MG) added to Open Questions for an ADR; slug disambiguators must be **source-neutral** (slug ADR); Wikidata's role restated: identity backbone + company/model skeleton, not the payload.
 
 ### 2026-07-28 (part 6 — queue #8: the reconciler, built and run)
 

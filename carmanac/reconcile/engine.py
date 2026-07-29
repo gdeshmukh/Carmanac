@@ -447,7 +447,7 @@ class _Pass:
                 self._mark(record)
                 continue
 
-            verdict = policy.classify(mapped.classes)
+            verdict = policy.classify(mapped.classes, mapped.external_id)
             self.stats.processed += 1
 
             if verdict == policy.DENY:
