@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: **two sources reconciled and cross-matched.** 7,230 companies (incl. 4 admitted purely by vPIC corroboration); ADR 0008 accepted and implemented — 73 of 247 vPIC passenger makes matched with vPIC-sourced roles, 174 in `match_review` with candidates, quarantine flags now resolve by evidence (`corroborated_by_vpic`). Charter: **the focal point is the individual car's page.** Next: work the ambiguous-match queue (mostly our company/brand merge backlog), then vPIC models — the first actual cars.
+Phase 1: **two sources reconciled and cross-matched; the duplicate backlog broken.** 7,210 companies; policy v5 — the ambiguous-match queue worked: 20 company/brand identity merges collapsed live, first 8 `VPIC_MATCHES` judgments, `PINNED_DENY` mechanism; **97 of 247 vPIC passenger makes matched** (24 converted this pass), 150 `match_review` open (149 no-match + BBC) with ~30 registry proposals awaiting Gaurav's review. ADR 0009 (catalogue-period spine, resolves F8's spine half) **proposed**. Charter: **the focal point is the individual car's page.** Next: Gaurav reviews the no-match proposals + admission batch triage + ADR 0009, then vPIC models — the first actual cars.
 
 ## Done
 
@@ -44,9 +44,17 @@ Phase 1: **two sources reconciled and cross-matched.** 7,230 companies (incl. 4 
 
 ## In Flight
 
-Nothing mid-task. PR #7 merged 2026-07-28. Every reconciler-blocking decision is made; `carmanac/reconcile/` remains the substance of what's ahead.
+PR for `feat/match-queue-merges` (policy v5 + ADR 0009 draft) open, awaiting review. Three review packets await Gaurav: the ~30 no-match registry proposals, the admission batch-triage decisions, and ADR 0009.
 
-## Next (immediate) — the F1-F9 fix queue, then the reconciler
+## Next (immediate)
+
+1. Gaurav reviews: no-match `VPIC_MATCHES` proposals (~30), admission batch decisions (out-of-scope signatures → deny/dismiss), ADR 0009, and the review finds (quattro GmbH, Ceer; Shelby American/Ineos/Solectria/Bolloré/Moke fetch gaps → fixture additions + pinned fetch).
+2. Apply the approved batch: registry entries, batch dismissals (+ engine DENY-dismisses-flags tweak), fetch-gap pins, re-run passes.
+3. vPIC models fetch-and-land (matched makes only; car+MPV filter) after the external-id namespacing decision; models match pass creates the first `models` rows.
+4. ADR 0009 accepted → `catalogue_periods` migration → year-level vPIC + EPA become unblocked.
+5. Thin read surface decision (F2): models landing makes /makes + /models pages demoable — revisit sequencing then.
+
+## Next (done) — the F1-F9 fix queue, then the reconciler
 
 1. ~~**Landing fixes (F4+F3)**~~ — DONE 2026-07-28 (PR #5): `MIN()` aggregates, derived canonicalization vars, `last_seen_at` + `DO UPDATE`, duplicate deleted.
 2. ~~**pytest + GitHub Actions (F1)**~~ — DONE 2026-07-28 (PR #5): 35 tests, mutation-verified, CI green on the same pinned Postgres image as dev.
@@ -130,7 +138,9 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - ~~**Coachbuilders**~~ — RESOLVED by ADR 0005 (proposed). They are `builders`, not makes, and attach to vehicles via `vehicle_derivations` keyed on the *base generation*. The gray area dissolves under the WMI rule: a body house only raises the "is it a make?" question when it builds its own car, and then it earns a WMI and passes the normal test. Historical coachbuilding (Duesenberg/Murphy) is the common case — `derived_generation_id` NULL, so the car stays a Duesenberg.
 - ~~**Builder product lines**~~ — RESOLVED at ADR 0005 acceptance (2026-07-27): a named product line (Singer DLS) *is* a model/generation under the builder company, linked to its donor via `vehicle_derivations.derived_generation_id`. No new entity kind.
 - **Platforms** (NEW, from ADR 0005 §5): a future `platforms` entity — generations point at a platform, platforms carry `evolved_from` lineage (Urus → MLB Evo → MLB → VW Group; matches industry usage). Replaces the dropped `platform_shared` derivation type. Which platform a generation belongs to is a sourced claim and will conflict ("basically a Q5 underneath" vs. `platform: MLB Evo`) — normal reconciliation machinery applies. Wikidata P4243 is the obvious first source. Needs its own ADR when that ingestion is planned.
-- **Model-year spine vs. production periods** (F8): every configuration requires a `model_years` row, but Euro/JDM records are often "built 1998–2005, specs unchanged" — fabricating per-year rows vs. generalizing the spine to catalogue periods (US model year as one kind, facelift/zenki-kouki as another). Needs an ADR before configuration-level ingestion.
+- **Model-year spine vs. production periods** (F8): ADR 0009 **proposed** 2026-07-29 — generalize `model_years` to catalogue periods (`model_year` / `production_period` / `phase` kinds, containment queries, fabrication rejected, table renamed `catalogue_periods`). Awaits Gaurav's review; configuration-level ingestion stays blocked until accepted.
+- **vPIC external-id namespacing** (found planning models ingestion): vPIC MakeIds and ModelIds are separate integer namespaces, but `external_ids` is unique on `(source_id, external_id)` — MakeId 440 and ModelId 440 would collide. Decide before the models fetch: prefix both kinds (`make:440`, `model:1403`; small re-key script + re-land, cheap while only 74 rows exist) vs. prefix models only (asymmetric forever).
+- **Company/brand duplicates beyond the match queue**: the 2026-07-29 merges resolved the pairs vPIC exposed, but the earlier review counted ~121 duplicated names overall (Mazda ×3 shape). The rest surface as sources touch them; a systematic sweep of exact-name duplicate companies is possible any time via one query + the same merge machinery.
 - **Spec rating standards** (F8): `power_hp` is standardless (SAE net / DIN / JIS gross indistinguishable) and only EPA cycles get first-class columns. Rating-standard/test-cycle lookups, with non-EPA figures in EAV per the 80% rule. Same ADR as above, or its sibling.
 - **Concept cars and prototypes**: in scope or out? (Leaning toward: separate boolean flag on `configurations`, default to production-only in queries.)
 - **Race-only configurations** (GT3, Group B, etc.): in scope? (Leaning toward: yes, with a flag.)
@@ -167,6 +177,16 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-29 (part 5 — the match queue worked; policy v5; ADR 0009 proposed)
+
+- **The ambiguous-match queue resolved** (policy v5): all 25 ambiguous flags dispositioned. 20 new `IDENTITY_MERGES` entries — 17 brand artifacts (Wikidata's one-editing-wave "<marque> (car brand)" entities, mostly Q124–125xxx/Q136xxx), Land Rover's company/marque split, Renault's three-way corporate split (S.A.S. + brand → Q6686), and Tesla with **reversed substance** (facts live on quarantined Q478214 Tesla Inc., now canonical; the fixture's brand-side pick keeps the company row). First 8 `VPIC_MATCHES` judgments for real-namesake cases (Chinese JV-market brand entities, SAIC's no-rings AUDI, the 1914 Mercury cyclecar maker, UK Scout vs Scout Motors, classless "Dodge" junk). New `PINNED_DENY` (mirror of PINNED_ADMIT) for the Peugeot assembly plant Wikidata misclasses as `automobile manufacturer` — unfixable by class-list edits, since target beats deny.
+- **Two mechanisms had to change for merges of already-materialized rows**: the engine admits quarantined merge members AND canonicals (a curated merge is a human identity decision about both sides; without it Tesla could not converge on a fresh rebuild), and `scripts/merge_duplicate_companies.py` collapses existing duplicates (the ladder checks `external_ids` before the registry, so registry entries alone cannot fix rows that exist). Also fixed a **latent sweep in the demote script**: it did not mirror cross-source admission and would have deleted the four vPIC-corroborated companies.
+- **Live: 19 collapsed + 1 adopted + 1 demoted → 7,210 companies; 24 of 25 ambiguous flags converted** (97/247 makes matched; BBC stays open pending research). Tesla gained founded 2003 / tesla.com / real summary from its canonical. Both passes re-run as no-ops; 84 tests green. Bare slugs freed by collapses (`audi`) wait for the slug ADR — no re-derivation.
+- **The 149 no-match flags triaged** (analysis, nothing applied): ~30 have confident registry answers — trigram-invisible name forms (RUF → Ruf Automobile, PANOZ → Panoz Auto Development, TH!NK → Think Global), quarantined-record corroborations the candidates can't see (KARMA → Q22671741, KANDI → Q17006727), wrong-top-candidate traps (STERLING MOTOR CAR's 0.73 hit is the 1910s namesake; the right answer is the Rover-era brand at 0.47). Genuine Wikidata coverage gaps found: **Shelby American, Ineos, Solectria, Bolloré, Moke** — zero landed records; fixture/fetch follow-up. Proposals await Gaurav.
+- **Admission queue group-triaged by class signature** (2,341 open): ~364 flags sit in affirmatively-out-of-scope signatures (motorcycle-only 197, truck/bus/other-vehicle 107, subsidiary/JV 74, racing teams 25; overlapping) — batch proposals drafted for Gaurav, incl. an engine tweak so a DENY verdict dismisses stale admission flags. The ~1,900 boilerplate-only remainder is the corroboration pool (vPIC models/EPA/Tier-3 evidence works it down; agent pre-screen later). The 44 class-less entities include the Wikidata class items themselves ("automobile manufacturer" as an entity), Gulf-state sales subsidiaries, and real finds: **quattro GmbH (Q312175)**, Ceer, Runner Automobiles, Sunnyclist.
+- **ADR 0009 proposed** (F8's spine half): `model_years` generalizes to catalogue periods — `model_year` / `production_period` / `phase` kinds, NULLS-NOT-DISTINCT uniqueness, same-kind overlap flags not constraints, fabrication rejected on provenance grounds, table renamed `catalogue_periods` at the cheap moment. Rating standards deferred to a sibling ADR. Configuration-level vPIC work stays blocked until review.
+- **vPIC models plan drafted**: fetch models for matched makes only (car+MPV-filtered vPIC model endpoints), models pass creates the first `models` rows; blocked decisions listed in Open Questions (external-id namespacing) — models-level work needs no spine, year-level does.
 
 ### 2026-07-29 (part 4 — ADR 0008 accepted + implemented; the sources meet)
 
