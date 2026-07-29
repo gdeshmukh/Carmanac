@@ -34,6 +34,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import ModuleType
 
 from sqlalchemy import func, select
@@ -153,6 +154,7 @@ class _Pass:
         self.session = session
         self.mapper = mapper
         self.stats = PassStats()
+        self.current_year = datetime.now(UTC).year
 
         self.source = session.scalars(select(Source).where(Source.name == mapper.SOURCE_NAME)).one()
         self.role_id = session.scalars(
@@ -413,6 +415,22 @@ class _Pass:
                 value = country_id
             setattr(company, field_name, value)
 
+    def _check_plausibility(self, company: Company, record: RawRecord) -> None:
+        """Post-projection sanity rules (policy v3). A single wrong claim has
+        no disagreement for multi_value to catch - AMG's lone "founded 1812" -
+        so bounds and cross-field checks flag it here. The value stays
+        projected (§6.4); the flag records the suspicion."""
+        for field_name, reason in policy.plausibility_issues(
+            company.founded_year, company.defunct_year, self.current_year
+        ):
+            self._open_company_flag(
+                company.id,
+                "implausible_value",
+                field_name,
+                {"value": getattr(company, field_name), "reason": reason},
+                record,
+            )
+
     # --- the pass ------------------------------------------------------------
 
     def _mark(self, record: RawRecord) -> None:
@@ -484,6 +502,7 @@ class _Pass:
                         current = self._write_assertions(company, mapped, record)
                         self._write_role(company, mapped, record)
                         self._project(company, current)
+                        self._check_plausibility(company, record)
                         for req in mapped.flag_requests:
                             self._open_company_flag(
                                 company.id, req.kind, req.field_name, req.detail, record

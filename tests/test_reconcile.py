@@ -386,6 +386,43 @@ def test_curated_merge_one_company_many_external_ids(db, wikidata_source):
     assert db.scalar(select(func.count()).select_from(ExternalId)) == 3
 
 
+def test_implausible_single_claim_projects_and_flags(db, wikidata_source):
+    """The AMG shape (policy v3): ONE founding claim, obviously wrong, no
+    disagreement for multi_value to catch. The value still projects (§6.4)
+    but an implausible_value flag records the suspicion."""
+    _land(
+        db, wikidata_source, "Q1370877", label="Mercedes-AMG", inceptions=("1812-06-01T00:00:00Z",)
+    )
+    run_companies_pass(db, wikidata)
+
+    company = db.scalars(select(Company)).one()
+    assert company.founded_year == 1812  # still projects, tentatively
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "implausible_value")
+    ).one()
+    assert flag.field_name == "founded_year"
+    assert flag.company_id == company.id
+
+    run_companies_pass(db, wikidata)  # open flag not duplicated
+    assert db.scalar(select(func.count()).select_from(ReconciliationFlag)) == 1
+
+
+def test_defunct_before_founded_flags(db, wikidata_source):
+    _land(
+        db,
+        wikidata_source,
+        "Q2",
+        label="Backwards Motors",
+        inceptions=("1990-01-01T00:00:00Z",),
+        dissolutions=("1950-01-01T00:00:00Z",),
+    )
+    run_companies_pass(db, wikidata)
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "implausible_value")
+    ).one()
+    assert flag.field_name == "defunct_year"
+
+
 def test_slug_collision_gets_qid_suffix(db, wikidata_source):
     """Two distinct marques, one name: ascending-QID order gives the lower QID
     the bare slug, deterministically (ADR 0007 §1/§7)."""
