@@ -118,8 +118,12 @@ WHERE {
     ?item wdt:P452 wd:Q190117 .
   } UNION {
     # Axis 3: pinned - known marques both axes miss. Q6742 Peugeot,
-    # Q55633247 Singer Vehicle Design. Grown by coverage-fixture triage.
-    VALUES ?item { wd:Q6742 wd:Q55633247 }
+    # Q55633247 Singer Vehicle Design; 2026-07-29, from the vPIC no-match
+    # review: Ineos Automotive (P31: business only), Solectria (no P31 at
+    # all), Moke International and Moke America (manufacturer/brand
+    # boilerplate). Grown by coverage-fixture triage.
+    VALUES ?item { wd:Q6742 wd:Q55633247 wd:Q108757682 wd:Q97353704
+                   wd:Q57079249 wd:Q117381875 }
   }
   OPTIONAL { ?item wdt:P31 ?class . }       # the FULL class set - admission
                                             # classifies on everything the

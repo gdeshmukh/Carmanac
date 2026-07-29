@@ -8,9 +8,12 @@ vPIC which makes have PASSENGER vehicles: `GetMakesForVehicleType/car` plus
 admitting strictly stays the reconciler's polarity; this simply doesn't haul
 in vehicle types the charter rules out of scope.
 
-**One record per make.** `external_id` is vPIC's numeric MakeId (their stable
-key, and the `external_ids` namespace for this source); the payload is the
-make's name plus the sorted list of passenger vehicle types it appears under.
+**One record per make.** `external_id` is `make:<MakeId>` — vPIC's stable key,
+kind-prefixed because vPIC's MakeId and ModelId are separate integer
+namespaces while `external_ids` is unique on `(source_id, external_id)`:
+bare integers would let MakeId 440 and ModelId 440 collide (decided
+2026-07-29, ahead of the models fetch). The payload is the make's name plus
+the sorted list of passenger vehicle types it appears under.
 Sorting is the same canonicalization lesson the Wikidata GROUP_CONCAT
 instability taught (F4): the type list's order is an artifact of our fetch
 sequence, and an unsorted payload would re-land forever as the artifact
@@ -91,7 +94,7 @@ def land_passenger_makes(session: Session, client: VpicClient | None = None) -> 
         {
             "source_id": source.id,
             "url": client.base_url,
-            "external_id": str(payload["make_id"]),
+            "external_id": f"make:{payload['make_id']}",
             "http_status": 200,
             "content_hash": content_hash(payload),
             "payload": payload,

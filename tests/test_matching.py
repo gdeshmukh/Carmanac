@@ -42,7 +42,7 @@ def _land_vpic(db, source, make_id: int, name: str, types=("Passenger Car",)) ->
     payload = {"make_id": make_id, "make_name": name, "vehicle_types": sorted(types)}
     rec = RawRecord(
         source_id=source.id,
-        external_id=str(make_id),
+        external_id=f"make:{make_id}",
         content_hash=content_hash(payload),
         payload=payload,
     )
@@ -69,7 +69,7 @@ def test_exact_match_attaches_id_and_vpic_role(db, wikidata_source, vpic_source)
 
     company = db.scalars(select(Company)).one()
     ids = {(e.source_id, e.external_id) for e in db.scalars(select(ExternalId))}
-    assert ids == {(wikidata_source.id, "Q27074"), (vpic_source.id, "440")}
+    assert ids == {(wikidata_source.id, "Q27074"), (vpic_source.id, "make:440")}
     roles = db.scalars(
         select(CompanyRoleAssignment).where(
             CompanyRoleAssignment.company_id == company.id,
@@ -161,7 +161,7 @@ def test_registry_match_wins(db, wikidata_source, vpic_source):
         del policy.VPIC_MATCHES["900"]
     assert stats.matched_existing == 1
     ids = {e.external_id for e in db.scalars(select(ExternalId))}
-    assert ids == {"Q35996", "900"}
+    assert ids == {"Q35996", "make:900"}
 
 
 def test_registry_preempts_wrong_unique_exact_name(db, wikidata_source, vpic_source):
@@ -177,7 +177,7 @@ def test_registry_preempts_wrong_unique_exact_name(db, wikidata_source, vpic_sou
     stats = run_vpic_match_pass(db)
     assert stats.matched_existing == 1 and stats.flagged == 0
     audi_ag = db.scalars(select(Company).where(Company.name == "Audi AG")).one()
-    vpic_row = db.scalars(select(ExternalId).where(ExternalId.external_id == "582")).one()
+    vpic_row = db.scalars(select(ExternalId).where(ExternalId.external_id == "make:582")).one()
     assert vpic_row.company_id == audi_ag.id
 
 

@@ -42,8 +42,16 @@ as a decision to revisit — never slipped in silently.
 
 - **Postgres is the source of truth.** `pgvector` extension for semantic search.
 - **Five-level entity hierarchy**: `companies` → `models` → `generations` →
-  `model_years` → `configurations`. Every spec-bearing row ultimately
-  foreign-keys back to `configurations`. `companies` holds every organisation
+  `catalogue_periods` → `configurations`. Every spec-bearing row ultimately
+  foreign-keys back to `configurations`. The 4th level is a **catalogue
+  period** (ADR 0009): a US model year (`start_year = end_year` — the shape
+  vPIC/EPA assert), a production period ("built 1998–2005" — the shape
+  Euro/JDM sources assert), or a facelift phase (zenki/kouki, Phase 1/2).
+  The level is mandatory for every configuration; no pass may fabricate
+  per-year rows from a period or vice versa. Aggregation above it is
+  untouched — the generation page stays the one shared page. (Table renamed
+  from `model_years`; the rename lands with the ADR 0009 migration.)
+  `companies` holds every organisation
   that appears on or behind a vehicle — BMW, Alpina, Singer, Zagato (ADR 0006).
   **"Make" is a role, not a table**: a company holding manufacturer
   responsibility (its own WMI) is a make, recorded in
@@ -87,9 +95,11 @@ Core tables (Phase 1 target):
 - `models` — nameplates under a company. FK → `companies`.
 - `generations` — generation of a model (E46, G80, etc.). FK → `models`. Holds
   chassis codes.
-- `model_years` — specific year within a generation. FK → `generations`.
-- `configurations` — atomic unit (year + trim + market + drivetrain combo).
-  FK → `model_years` + `market_regions`.
+- `catalogue_periods` (formerly `model_years`; ADR 0009) — the mandatory 4th
+  level under a generation: a US model year, a production period, or a
+  facelift phase, with `period_kinds` as the closed set. FK → `generations`.
+- `configurations` — atomic unit (period + trim + market + drivetrain
+  combo). FK → `catalogue_periods` + `market_regions`.
 - `engines` — engine entities. FK → `companies` (maker of the engine, may
   differ from the car's company).
 - `transmissions` — transmission entities.

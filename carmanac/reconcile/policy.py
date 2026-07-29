@@ -36,7 +36,10 @@ from __future__ import annotations
 # v5 (2026-07-29): the match-queue review - company/brand duplicate merges
 # into IDENTITY_MERGES, first VPIC_MATCHES judgments, PINNED_DENY, merge
 # members admit through their canonical entity.
-RECONCILER_VERSION = "5"
+# v6 (2026-07-29): the no-match review batch (Gaurav-approved) - 37 more
+# VPIC_MATCHES judgments, Consulier brand->Industries merge, Moke
+# International admit pin; vPIC external ids gain the make: prefix.
+RECONCILER_VERSION = "6"
 
 # --- identity --------------------------------------------------------------
 
@@ -91,6 +94,12 @@ IDENTITY_MERGES: dict[str, str] = {
     # project; the brand row's identity (slug, company id) is preserved by
     # the merge script.
     "Q124981765": "Q478214",
+    # Consulier (2026-07-29, from the no-match review): Wikidata splits the
+    # brand from Consulier Industries, Warren Mosler's company. Same
+    # company/brand shape as the batch above. (Whether Mosler Automotive,
+    # the 1993 successor, is an era of the same company is a separate open
+    # question - not merged.)
+    "Q132560783": "Q17812480",  # Consulier (brand) -> Consulier Industries
 }
 
 # A curated merge is a human identity decision about BOTH sides: naming a
@@ -121,6 +130,50 @@ VPIC_MATCHES: dict[str, str] = {
     # separate make) - a wrong unique match this pin preempts.
     "582": "Q23317",
     "12642": "Q112077124",  # SCOUT -> Scout Motors (VW), not the 1900s UK Scout
+    # --- the no-match review batch, approved by Gaurav 2026-07-29. Four
+    # recurring miss shapes: names trigram cannot see (RUF vs "Ruf
+    # Automobile"), quarantined records the candidate search never surfaces
+    # (KARMA, KANDI - these corroborate-create on match), wrong-namesake
+    # traps where the top candidate is a 1910s company (STERLING, AMERICAN
+    # MOTORS), and second MakeIds for already-matched companies (HUMVEE,
+    # GLICKENHAUS, CONSULIER GTP).
+    "496": "Q165708",  # RAM -> Ram Trucks
+    "539": "Q1165625",  # MORGAN -> Morgan Motor Company (GB; Q58159151 is a US namesake)
+    "1077": "Q27483",  # DAEWOO -> Daewoo Motors
+    "1124": "Q202708",  # AMERICAN MOTORS -> AMC (0.8 candidate is a 1910s namesake)
+    "1755": "Q1359036",  # TH!NK -> Think Global (the '!' defeats normalization)
+    "1777": "Q1934630",  # CODA -> Coda Automotive
+    "1991": "Q27423",  # BYD -> BYD Auto
+    "2018": "Q17006727",  # KANDI -> Kandi Technologies (quarantined; corroborates)
+    "2146": "Q848059",  # MAHINDRA -> Mahindra & Mahindra (the '&' defeats exact)
+    "3394": "Q12062242",  # THE VEHICLE PRODUCTION GROUP -> Vehicle Production Group
+    "4220": "Q746256",  # PANOZ -> Panoz Auto Development
+    "4410": "Q97353704",  # SOLECTRIA -> Solectria Corporation (pinned fetch)
+    "4764": "Q1806804",  # MOSLER -> Mosler Automotive
+    "5083": "Q21451523",  # GENESIS -> Genesis Motor
+    "5122": "Q22671741",  # KARMA -> Karma Automotive (quarantined; corroborates)
+    "5464": "Q732935",  # ASUNA -> Asuna (the umlaut in "Asüna" defeats exact)
+    "5555": "Q20827172",  # STERLING MOTOR CAR -> Sterling, the Rover-era US brand
+    "5557": "Q17812480",  # CONSULIER GTP -> Consulier Industries (GTP is the model)
+    "5938": "Q562261",  # PANTHER -> Panther Westwinds (Lima/Kallista, sold in US)
+    "7477": "Q1383437",  # EXCALIBUR AUTOMOBILE CORP -> Excalibur (Brooks Stevens)
+    "8549": "Q117381875",  # MOKE -> Moke America (the US EV company; Intl is UK/EU)
+    "9250": "Q1969669",  # VECTOR AEROMOTIVE -> Vector Motors (renamed, same company)
+    "9401": "Q119469",  # CLENET -> Clénet Coachworks (the accent defeats exact)
+    "9759": "Q108187217",  # SCUDERIA CAMERON GLICKENHAUS (SCG)
+    "9760": "Q295481",  # HUMVEE -> AM General (second MakeId)
+    "10393": "Q108187217",  # GLICKENHAUS -> SCG (second MakeId)
+    "10919": "Q28027517",  # LUCID -> Lucid Motors
+    "11792": "Q28225588",  # ALLARD MOTOR WORKS -> Allard Motor (the Montreal continuation)
+    "11832": "Q1045210",  # SHELBY -> Carroll Shelby International (the Cobra's page)
+    "11921": "Q7334368",  # RIMAC -> Rimac Automobili
+    "12360": "Q108757682",  # INEOS -> Ineos Automotive (pinned fetch)
+    "13024": "Q119469",  # CLENET COACHWORKS -> Clénet Coachworks
+    "13025": "Q209374",  # CHECKER -> Checker Motors Corporation
+    "13150": "Q131553501",  # TELO -> Telo Trucks
+    "13765": "Q265465",  # SANTANA -> Santana Motor
+    "13766": "Q265465",  # LAND ROVER SANTANA -> Santana Motor (licensee-built)
+    "13771": "Q134100360",  # SLATE -> Slate Auto
 }
 
 # --- admission (ADR 0007 §3) ------------------------------------------------
@@ -161,6 +214,10 @@ PINNED_ADMIT: dict[str, str] = {
     "Q758549": "Auburn",
     "Q59186515": "Automobili Pininfarina",
     "Q694506": "Wiesmann",
+    # Moke International (2026-07-29): a stray `P31: automotive industry`
+    # claim puts a DENY class on a real revival manufacturer - the same
+    # misclass shape as the Peugeot plant, opposite direction.
+    "Q57079249": "Moke International",
 }
 
 # Hand-vetted entity denials: the mirror of PINNED_ADMIT, for entities whose

@@ -243,7 +243,7 @@ class _MatchPass:
         records = [
             r for r in _current_records(self.session, self.vpic.id) if self._is_make_record(r)
         ]
-        records.sort(key=lambda r: int(r.external_id))  # ascending MakeId
+        records.sort(key=lambda r: int(r.payload["make_id"]))  # ascending MakeId
         log.info(
             "vPIC match pass: %d makes (reconciler v%s)", len(records), policy.RECONCILER_VERSION
         )
@@ -259,7 +259,9 @@ class _MatchPass:
                 self._mark(record)
                 continue
 
-            registry_qid = policy.VPIC_MATCHES.get(record.external_id)
+            # The registry is keyed by the human-readable MakeId (what a
+            # reviewer reads off a flag), not the namespaced external id.
+            registry_qid = policy.VPIC_MATCHES.get(str(record.payload["make_id"]))
             if registry_qid is not None:
                 company_id = self.wp.external_ids.get(registry_qid)
                 if company_id is None:
