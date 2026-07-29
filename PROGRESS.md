@@ -18,16 +18,16 @@ not a restatement.
 
 ## Current Focus
 
-Phase 1: **the first cars are landed.** 2,018 vPIC passenger models in the landing zone (`model:<id>`), across all 247 makes; **134/247 makes matched** to 7,215 companies; ADR 0009 implemented (`catalogue_periods` live, migration `76cb287dd71c`, deep-reviewed at Gaurav's request — one real find, fixed); **ADR 0010 (the models pass) proposed, awaiting Gaurav**. 113 `match_review` open (parked no-match pool), admission batch-triage proposals parked for Gaurav's "barely cars" pass. Charter: **the focal point is the individual car's page.** Next: ADR 0010 review → the first `models` rows; year-level vPIC + EPA after PR #17 merges.
+Phase 1: **the first cars are landed.** 2,018 vPIC passenger models in the landing zone (`model:<id>`), across all 247 makes; **134/247 makes matched** to 7,215 companies; ADR 0009 implemented (`catalogue_periods` live, migration `76cb287dd71c`, deep-reviewed at Gaurav's request — one real find, fixed); **ADR 0010 (the models pass) proposed, awaiting Gaurav**. 113 `match_review` open (parked no-match pool), admission batch-triage proposals parked for Gaurav's "barely cars" pass. Charter: **the focal point is the individual car's page.** Next: ADR 0010 review → the first `models` rows; year-level vPIC + EPA now unblocked.
 
 ## In Flight
 
-PR #17 (`catalogue_periods` migration + review fixes) and PR #18 (models fetch-and-land + ADR 0010, stacked on #17) open. Awaiting Gaurav: ADR 0010 review, the admission batch-triage decisions ("barely cars" pass), the parked no-match pool (113 flags).
+Nothing mid-task; PRs #16-#20 all merged 2026-07-29 (#18/#19 merged into their stacked bases instead of main — collected by #20; lesson: merge stacked PRs bottom-up, waiting for each retarget). Awaiting Gaurav: ADR 0010 review, the admission batch-triage decisions ("barely cars" pass), the parked no-match pool (113 flags).
 
 ## Next (immediate)
 
 1. Gaurav reviews ADR 0010 (the models pass) → implement → the first `models` rows (~134 makes' nameplates).
-2. Year-level vPIC + EPA unblock after PR #17 merges (US rows land as `model_year` periods).
+2. Year-level vPIC + EPA (US rows land as `model_year` periods) — unblocked, sequence after the models pass.
 3. Thin read surface decision (F2): models rows make /makes + /models pages demoable — revisit sequencing then.
 4. Gaurav's "barely cars" pass: admission batch decisions (moto/truck/bus/racing/subsidiary signatures), the out-of-scope vPIC makes (Blue Bird, Freightliner, Winnebago...), BLUECAR's company question (no company-shaped Wikidata entity; Bolloré is a holding group), and the parked no-match pool.
 
