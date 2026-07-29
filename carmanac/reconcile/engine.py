@@ -466,6 +466,12 @@ class _Pass:
                 continue
 
             verdict = policy.classify(mapped.classes, mapped.external_id)
+            # Cross-source admission (ADR 0008): an entity another source's
+            # evidence already matched to a company - external_ids knows it -
+            # is admitted regardless of its class verdict, so corroborated
+            # companies keep receiving this source's assertions on re-runs.
+            if verdict == policy.QUARANTINE and mapped.external_id in self.external_ids:
+                verdict = policy.ADMIT
             self.stats.processed += 1
 
             if verdict == policy.DENY:

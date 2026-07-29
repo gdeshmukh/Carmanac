@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: **the reconciler is live, admission tightened to policy v2 after Gaurav's review.** 7,226 companies (7,206 with manufacturer roles on car-class evidence, 10 fixture pins, Zagato via the coachbuilder door), 2,347 quarantined, 309 denied — coverage fixture **219/219** for the first time. Charter amended: **the focal point is the individual car's page.** Next: NHTSA vPIC (Gaurav's call — it supplies real car data AND arbitrates roles), read surface decision (#9).
+Phase 1: **two sources reconciled and cross-matched.** 7,230 companies (incl. 4 admitted purely by vPIC corroboration); ADR 0008 accepted and implemented — 73 of 247 vPIC passenger makes matched with vPIC-sourced roles, 174 in `match_review` with candidates, quarantine flags now resolve by evidence (`corroborated_by_vpic`). Charter: **the focal point is the individual car's page.** Next: work the ambiguous-match queue (mostly our company/brand merge backlog), then vPIC models — the first actual cars.
 
 ## Done
 
@@ -151,7 +151,8 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 - [0004](docs/decisions/0004-raw-record-retention.md) — Raw record retention tiered by re-fetchability: Tier 3/4 archival, Tier 1/2 prunable cache, bug artifacts always deletable, distrust never justifies deletion. Amends the CLAUDE.md invariant. Accepted 2026-07-24.
 - [0005](docs/decisions/0005-what-counts-as-a-make.md) — What counts as a make: manufacturer responsibility (issues its own VINs), **no exceptions**; under ADR 0006 the test classifies rather than admits. Derivation is one `vehicle_derivations` fact table keyed on the base generation; the nullable derived side records **catalogue placement** (own entry under the builder vs. stays under the base make), decoupled from the VIN test — legal status lives only in `company_role_assignments`. `platform_shared` dropped in favour of a future `platforms` entity. Accepted 2026-07-27 as amended; implemented in `05e766a04a5f`.
 - [0006](docs/decisions/0006-companies-not-makes.md) — One `companies` table; "make" becomes a role. Alpina is both a manufacturer and a builder, so two tables would give one company two rows and two pages. Accepted 2026-07-24, implemented in `5cbf6be81036`.
-- [0007](docs/decisions/0007-reconciler-policy-and-first-pass.md) — Reconciler: deterministic raw→assertions→projection pipeline; **one engine + one thin mapper per source**; QID-exact identity only in v1 (no fuzzy auto-merge until a labeled set exists); **strict admission, branching outwards** — vetted classes admit, deny-listed exclude, unknowns *quarantine* with `admission_review` flags (under-admission is the cheap error); `manufacturer` role asserted from both Wikidata classes (Pontiac counts; vPIC arbitrates later); tier → affinity → recency → flag; new `reconciled_records` + `reconciliation_flags` tables and `companies.website`. Accepted 2026-07-27; implementation pending the foundation review.
+- [0007](docs/decisions/0007-reconciler-policy-and-first-pass.md) — Reconciler: deterministic raw→assertions→projection pipeline; **one engine + one thin mapper per source**; QID-exact identity only in v1 (no fuzzy auto-merge until a labeled set exists); **strict admission, branching outwards** — vetted classes admit, deny-listed exclude, unknowns *quarantine* with `admission_review` flags (under-admission is the cheap error); `manufacturer` role asserted from both Wikidata classes (Pontiac counts; vPIC arbitrates later); tier → affinity → recency → flag; new `reconciled_records` + `reconciliation_flags` tables and `companies.website`. Accepted 2026-07-27; implemented 2026-07-28.
+- [0008](docs/decisions/0008-vpic-matching-and-corroboration.md) — vPIC matching + corroboration: match ladder (curated registry → unique exact-normalized-name → `match_review` flag with candidates, never fuzzy-auto); a confirmed match writes `external_ids`, asserts the `manufacturer` role from vPIC, resolves admission flags as `corroborated_by_vpic`, and admits matched quarantined entities (the fourth way in). Corroboration is US-scoped until more sources land; the corroboration trail is the future confidence methodology's raw material. Accepted 2026-07-29; implemented same day.
 
 ## Known Risks / Things to Watch
 
@@ -166,6 +167,13 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-29 (part 4 — ADR 0008 accepted + implemented; the sources meet)
+
+- **ADR 0008 accepted** with two review notes from Gaurav: corroboration is US-scoped until more sources land (absence stays silence, never demotion), and the corroboration trail is the deferred confidence methodology's future raw material (review #6) — recorded, not acted on.
+- **The match pass built and run** (PR #15): `carmanac/reconcile/matching.py` + `match_review` flag kind (migration `613bdd40c0bc`, second record-scoped kind). Live: **73/247 makes matched** (69 exact-name to existing companies, **4 quarantined entities admitted purely by vPIC evidence** — Terrafugia, Pininfarina, VinFast, Meyers Manx — their admission flags resolved `corroborated_by_vpic`, zero humans involved), 73 vPIC-sourced roles, 174 `match_review` flags with candidates. Idempotent; engine gained cross-source admission (external-ids presence overrides a quarantine verdict on re-runs). 81 tests green. Pass selects make-records by payload shape — the vPIC source will hold model records later.
+- **The 174 unmatched split three ways**, visible in flag details: (a) *ambiguous because of OUR duplicates* — AUDI/TESLA/FERRARI/MASERATI each match two companies, i.e. the company/brand merge backlog now measurably blocks matching, making it the top queue priority; (b) genuine no-matches (US importers, Zoox-type EV shops, FAW plant-brands); (c) name-form misses where trigram candidates point right at the answer ("AMERICAN MOTORS" → `american-motors-corporation`). Ambiguous flags carry full candidate detail (slug/name/summary) so review means picking, not researching.
+- Queue after the pass: 2,343 admission + 174 match + 163 multi-value + 153 implausible open; 16 resolved/dismissed by machine so far.
 
 ### 2026-07-29 (part 3 — vPIC lands; ADR 0008 proposed)
 

@@ -1,6 +1,6 @@
 # ADR 0008 — vPIC make matching and cross-source corroboration
 
-- Status: Proposed
+- Status: Accepted (2026-07-29, with two review notes recorded below)
 - Date: 2026-07-29
 - Depends on: ADR 0005 (what a make is), ADR 0007 (reconciler contract,
   QID-exact identity, no fuzzy auto-merge until a labeled set exists)
@@ -92,3 +92,15 @@ ADR's identity plumbing.
   false uniques (one company coincidentally named like an unrelated vPIC
   make). Mitigated by the passenger-type scope (247 makes, reviewable in
   bulk) and by every match being visible in `external_ids` with provenance.
+- **Corroboration is US-scoped for now** (review note, 2026-07-29): vPIC
+  only evidences makes that sold in the US since 1981, so non-US marques
+  (JDM-only, Euro-only, pre-1981) gain nothing from this pass — that changes
+  as EU type-approval / MLIT-class sources land, each bringing its own
+  corroboration reach. Absence of a vPIC match stays silence, never demotion.
+- **Corroboration is a confidence input** (review note, 2026-07-29): "this
+  company is confirmed by N independent tier-1 sources" is exactly the kind
+  of signal the deferred confidence-score methodology (review #6) should be
+  built from. Not acted on now - `confidence` stays NULL until that
+  methodology exists - but the corroboration trail this ADR creates
+  (`external_ids` provenance, `corroborated_by_vpic` resolutions) is its
+  future raw material, recorded rather than lost.
