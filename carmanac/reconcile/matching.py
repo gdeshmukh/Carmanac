@@ -232,12 +232,19 @@ class _MatchPass:
 
     @staticmethod
     def _is_make_record(record: RawRecord) -> bool:
-        """The vPIC source will hold several record shapes over time (makes
-        now, models later, plus the seed demo's configuration-level record).
-        This pass reconciles MAKE records only, selected by payload shape -
-        the same reason the Wikidata pass keys on its own payload contract."""
-        payload = record.payload
-        return isinstance(payload, dict) and "make_id" in payload and "make_name" in payload
+        """This pass reconciles MAKE records only, selected by the external
+        id's KIND PREFIX.
+
+        Payload shape is no longer sufficient, and the fix is load-bearing:
+        a MODEL payload carries `make_id` and `make_name` too - deliberately,
+        since that link is how a nameplate finds its make - so the original
+        shape test read all 2,018 landed model records as makes and attached
+        `model:<id>` external ids to *companies*. Caught by ADR 0010's tests
+        before the next match run, so no live rows were affected. The kind
+        prefix (the 2026-07-29 re-key) is the durable record-kind marker;
+        payload shape is not, because record kinds legitimately share fields.
+        """
+        return (record.external_id or "").startswith("make:")
 
     def run(self) -> MatchStats:
         records = [

@@ -1,6 +1,6 @@
 # ADR 0010 — The vPIC models pass: nameplates under matched makes
 
-- Status: Proposed
+- Status: Accepted (2026-07-29, as written)
 - Date: 2026-07-29
 - Depends on: ADR 0007 (reconciler contract), ADR 0008 (vPIC make matching),
   ADR 0009 (catalogue periods — not consumed here, but the level below this

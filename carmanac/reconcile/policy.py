@@ -39,7 +39,10 @@ from __future__ import annotations
 # v6 (2026-07-29): the no-match review batch (Gaurav-approved) - 37 more
 # VPIC_MATCHES judgments, Consulier brand->Industries merge, Moke
 # International admit pin; vPIC external ids gain the make: prefix.
-RECONCILER_VERSION = "6"
+# v7 (2026-07-29): the vPIC models pass (ADR 0010) - the first `models` rows,
+# under matched makes only, name asserted through field_provenance, slug
+# collisions flagged rather than auto-suffixed.
+RECONCILER_VERSION = "7"
 
 # --- identity --------------------------------------------------------------
 
@@ -576,6 +579,13 @@ def plausibility_issues(
 # authoritative source domain. Keyed by assertion field name; values are
 # `sources.name`. Inert while Wikidata is the only source, but §6.2 requires
 # the registry to exist so vPIC/EPA registration is an edit here, not logic.
+#
+# The keys are bare field names, which conflates `companies.name` with
+# `models.name` (ADR 0010 §3 asserts the latter). Harmless while vPIC is the
+# only source of model names - there is nothing to arbitrate - but the registry
+# owes an entity qualification before a second source asserts on the same
+# field name at a different level. Deferred deliberately: inventing the
+# qualified shape now would be designing against an imagined conflict.
 FIELD_AFFINITY: dict[str, str] = {
     "name": "Wikidata",
     "summary": "Wikidata",
