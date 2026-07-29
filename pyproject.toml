@@ -27,7 +27,7 @@ build-backend = "setuptools.build_meta"
 include = ["carmanac*"]
 
 # ---------------------------------------------------------------------------
-# ruff - lint + format, per CLAUDE.md conventions
+# ruff - lint + format, per docs/charter.md conventions
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100

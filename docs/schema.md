@@ -23,7 +23,7 @@ table), so deferring them costs nothing now.
 
 ---
 
-## Design principles carried from `CLAUDE.md`
+## Design principles carried from the project charter (`charter.md`)
 
 - **Five-level hierarchy is the spine.** `makes → models → generations →
   model_years → configurations`. Every spec-bearing row foreign-keys back toward
@@ -53,7 +53,7 @@ stable `code` (used in logic and slugs) and a human `name`.
 ## `sources`
 
 Referenced by every fact-bearing row. Carries `tier` (1–4, matching the source
-tiering in `CLAUDE.md`). This is why URLs never get hard-coded in business
+tiering in `charter.md`). This is why URLs never get hard-coded in business
 logic — a fact points at a `sources` row, and the row holds the URL and tier.
 
 ## Entity hierarchy
@@ -77,7 +77,7 @@ logic — a fact points at a `sources` row, and the row holds the URL and tier.
 
 ## Core spec columns on `configurations`
 
-The hybrid-storage rule from `CLAUDE.md`: a spec earns a column only if **≥80%
+The hybrid-storage rule from `charter.md`: a spec earns a column only if **≥80%
 of configurations would plausibly have a value**. The selected ~20 are grounded in
 what the three Phase 1 Tier 1 sources actually populate:
 

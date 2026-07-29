@@ -86,7 +86,7 @@ class ProvenanceMixin:
     @declared_attr
     @classmethod
     def source_id(cls) -> Mapped[int | None]:
-        # Indexed because CLAUDE.md requires every FK column to be indexed, and
+        # Indexed because the charter requires every FK column to be indexed, and
         # because "show me everything this source told us" is a core query for
         # the reconciliation and review workflows.
         return mapped_column(ForeignKey("sources.id"), index=True)

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     )
 
     # --- ingestion -----------------------------------------------------------
-    # Settings, not hard-coded literals: CLAUDE.md forbids source URLs in
+    # Settings, not hard-coded literals: the charter forbids source URLs in
     # business logic. The `sources` table holds what a source *is*
     # (wikidata.org, tier 1); these hold how we *reach* it, which is an
     # operational detail and overridable per environment.
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # Wikimedia's user-agent policy requires a descriptive agent with a way to
     # contact the operator, so they can reach us instead of silently blocking.
-    # CLAUDE.md: "identify the scraper bot honestly in user-agent strings".
+    # Charter rule: "identify the scraper bot honestly in user-agent strings".
     user_agent: str = (
         "CarmanacBot/0.1 (https://github.com/gdeshmukh/Carmanac; deshmukhgaurav523@gmail.com)"
     )
