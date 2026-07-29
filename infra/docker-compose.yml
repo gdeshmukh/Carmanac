@@ -6,7 +6,7 @@
 #   docker compose up -d      # start in the background
 #   docker compose ps         # see it running / healthy
 #   docker compose down       # stop it (DATA IS KEPT — see volume note below)
-#   docker compose down -v    # stop it AND delete all data (fresh start)
+#   docker compose down -v    # DELETES ALL DATA — run ../scripts/backup.sh first
 #
 # Connect from your machine once it's up:
 #   psql postgresql://carmanac:carmanac_dev_password@localhost:5432/carmanac

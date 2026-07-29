@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: schema live and twice-reviewed (R1-R12; foundation review F1-F9), first source landed via the three-axis Wikidata fetch (9,883 entities, 218-marque coverage fixture enforced), reconciler fully designed (ADR 0007 accepted + amended). Fix queue items 1-5 done; next: backups (#6), reconciler schema + build (#7-8).
+Phase 1: schema live and twice-reviewed (R1-R12; foundation review F1-F9), first source landed via the three-axis Wikidata fetch (9,883 entities, 218-marque coverage fixture enforced), reconciler fully designed (ADR 0007 accepted + amended). Fix queue items 1-6 done — **the F9 backup gate is cleared**; next: reconciler schema + build (#7-8).
 
 ## Done
 
@@ -53,7 +53,7 @@ Nothing mid-task. PR #7 merged 2026-07-28. Every reconciler-blocking decision is
 3. ~~**ADR 0007 amendments (F5) + association-provenance decision (F7)**~~ — DONE 2026-07-28: reconciliation unit = current record per (source, external_id) by `max(last_seen_at)`, ascending-QID processing order, tombstone retraction, `source_dropped` flags (QID merges flagged, never auto-merged), the three-step supersede dance; **all four association tables are now per-source assertion stores** (migration `d212a042caa7` — autogenerate produced a broken migration twice over, hand-rewritten; see its docstring).
 4. ~~**Query widening (F6)**~~ — DONE 2026-07-28 (PR #7, merged after Gaurav's marque-list approval): three-axis fetch (classes + automotive industry + pinned QIDs), full P31 class sets, ISO codes, label fallback chain; 9,883 entities landed idempotently; 218-marque coverage fixture enforced by the ingest script — 218/218.
 5. ~~**De-Claude the outward-facing repo**~~ — DONE 2026-07-28 (PR #8): PR-body footers stripped from #3–#6; CLAUDE.md content moved to `docs/charter.md` as a neutral project charter, thin CLAUDE.md untracked (machine-global git ignore, so `.gitignore` stays clean); all references repointed. **History rewrite considered and declined by Gaurav** — existing commit trailers stay; no attribution markers going forward. ADRs and PROGRESS untouched, as decided.
-6. **`scripts/backup.sh` (F9)** — pg_dump off-machine; first Tier 3/4 ingest is *gated* on backups existing.
+6. ~~**`scripts/backup.sh` (F9)**~~ — DONE 2026-07-28 (PR #9): pg_dump (custom format, zstd) → readability check → optional scratch-database restore verification → local rotation → rclone upload to Google Drive (`drive.file` scope) with size confirmation + age-based remote pruning. First run verified end to end: 988 KB dump, full restore reproduced 30 tables / 9,886 raw records, upload confirmed on Drive. `infra/` docs no longer present `down -v` as safe. **Tier 3/4 ingest is no longer gated.**
 7. Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8).
 8. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
 9. After the companies pass (F2): decide whether a thin read surface (FastAPI companies list/detail) jumps ahead of models ingestion.
@@ -163,6 +163,14 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-28 (part 4 — fix queue #6: backups; F9 gate cleared)
+
+- **`scripts/backup.sh` built and verified end to end** (PR #9): dump from the container (`pg_dump -Fc --compress=zstd`, filename stamped with UTC time + Alembic revision), `pg_restore --list` readability check on every run, `--verify-restore` flag that restores into a scratch database and counts tables (run on both test runs: 30 tables, 9,886 raw records reproduced), local keep-7 rotation, rclone upload to Google Drive with post-upload size confirmation and 90-day remote pruning. All knobs are env-overridable per the charter's no-hard-coded-operational-details rule.
+- **Off-machine = Google Drive via rclone**, Gaurav's choice from the options laid out. Deliberately minimal-privilege: `drive.file` OAuth scope, so the stored token can only touch files rclone created — a leaked `rclone.conf` exposes the backup folder, not the Drive. One-time browser OAuth done this session.
+- **Maintenance flag**: rclone's shared Google client_id is being retired during 2026 — create a personal client_id (free, rclone.org/drive guide) before it stops working.
+- `infra/README.md` and the compose header no longer present `down -v` as harmless (the F9 complaint): both now route through a backup first, and the README gained a Backups section.
+- Also this session, at Gaurav's direction: the **no-AI-attribution rule went global** to all his projects via user-level `~/.claude/CLAUDE.md` (machine-global git ignore already covered `CLAUDE.md`/`.claude/`).
 
 ### 2026-07-28 (part 3 — PR #7 merged; fix queue #5: de-Claude the public repo shape)
 
