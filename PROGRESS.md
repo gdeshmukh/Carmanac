@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: schema live and twice-reviewed (R1-R12; foundation review F1-F9), first source landed via the three-axis Wikidata fetch (9,883 entities, 218-marque coverage fixture enforced), reconciler fully designed (ADR 0007 accepted + amended). Fix queue items 1-6 done — **the F9 backup gate is cleared**; next: reconciler schema + build (#7-8).
+Phase 1: **the reconciler is live.** First companies pass run 2026-07-28: 9,383 companies reconciled from the 9,883 landed Wikidata entities (7,205 with manufacturer roles, 309 denied, 191 quarantined for review), every field traceable to its raw record, idempotent re-run verified. Fix queue 1-8 all done. Next: work the quarantine queue, decide the read surface (#9), then models ingestion.
 
 ## Done
 
@@ -55,7 +55,7 @@ Nothing mid-task. PR #7 merged 2026-07-28. Every reconciler-blocking decision is
 5. ~~**De-Claude the outward-facing repo**~~ — DONE 2026-07-28 (PR #8): PR-body footers stripped from #3–#6; CLAUDE.md content moved to `docs/charter.md` as a neutral project charter, thin CLAUDE.md untracked (machine-global git ignore, so `.gitignore` stays clean); all references repointed. **History rewrite considered and declined by Gaurav** — existing commit trailers stay; no attribution markers going forward. ADRs and PROGRESS untouched, as decided.
 6. ~~**`scripts/backup.sh` (F9)**~~ — DONE 2026-07-28 (PR #9): pg_dump (custom format, zstd) → readability check → optional scratch-database restore verification → local rotation → rclone upload to Google Drive (`drive.file` scope) with size confirmation + age-based remote pruning. First run verified end to end: 988 KB dump, full restore reproduced 30 tables / 9,886 raw records, upload confirmed on Drive. `infra/` docs no longer present `down -v` as safe. **Tier 3/4 ingest is no longer gated.**
 7. ~~Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8)~~ — DONE 2026-07-28 (PR #10, migration `111a7cd329b8`): sidecar state table, review-queue flags with the two-shape CHECK (entity-scoped kinds take exactly one arc column; `admission_review` is record-scoped and requires `raw_record_id`), partial arc indexes + partial open-queue index, `companies.website`. Hand-review + live probes clean (sequence present, all CHECK shapes fire); 4 new constraint tests; downgrade/upgrade round trip verified.
-8. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
+8. ~~Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample~~ — DONE 2026-07-28 (PR #11): engine + policy + types + wikidata mapper, 21 reconciler tests, first live pass (42s over 9,883 records), idempotency and fixture coverage verified (218/219 fixture marques admitted; Zagato deliberately quarantined). One policy defect found and fixed by the live run: deny-first excluded Ford/Geely; target-class now wins first. See Session Log for the open review items (Peugeot-shape roleless marques, Bugatti merge era-facts, Tesla slug collision).
 9. After the companies pass (F2): decide whether a thin read surface (FastAPI companies list/detail) jumps ahead of models ingestion.
 
 ## Next (Phase 1 — target: ~6–8 weeks)
@@ -163,6 +163,15 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-28 (part 6 — queue #8: the reconciler, built and run)
+
+- **`carmanac/reconcile/` built per ADR 0007**: `engine.py` (identity ladder, the three-step supersede dance, tombstones, projection, flags, `reconciled_records` bookkeeping — never inspects a payload), `policy.py` (admission lists drafted from a labeled survey of all 255 distinct P31 classes in the landed set; Bugatti merge registry; field-affinity registry), `types.py` (the mapper→engine contract), `sources/wikidata.py` (pure translation; earliest-founding/latest-dissolution policy lives here). `scripts/seed_countries.py` seeds full ISO 3166 incl. historic states (DD, SU, YU) via pycountry — reference data before the ingestion that joins it.
+- **First live pass: 9,383 companies in 42s** — 7,205 manufacturer roles, 35k+ assertions each carrying `raw_record_id`, Bugatti's three eras → one company, immediate re-run a complete no-op. Fixture verification: 218/219 marques admitted (Zagato quarantined on `design company`+`factory owner`, deliberately unlisted classes).
+- **The live run caught a policy defect the tests didn't**: deny-first admission excluded **Ford** (`automobile manufacturer` + `holding company` — both true) and Geely (`transport company`). Precedence fixed to target-first; the policy edit + re-run recovered exactly 60 marques without touching raw data — re-reconciliation working as designed. Test added.
+- **Merge semantics decision**: only the CANONICAL record of a curated merge writes fact assertions; members attach `external_ids` only. Three era-records contending for one (entity, field, source) live slot would supersede in a cycle — churn, not convergence.
+- **Flag hygiene**: admission auto-dismisses an entity's stale quarantine flags (Italdesign's shape); record-scoped flags dedupe on external id so changed payloads don't re-ask open questions. 477 flags open: 191 admission_review + 286 multi_value.
+- **Open review items for Gaurav**: (1) Zagato/`design company`/`factory owner` — allow-list them? (2) nine axis-2 marques admitted roleless (Peugeot, Li Auto, GMA, Hispano-Suiza, Praga, Prince, Auburn, Wiesmann, + Singer correctly so) — curated role pins would need a policy/ADR decision, or wait for vPIC; (3) **Bugatti projects `defunct_year=1963`** from the Molsheim record — true of Q27401, wrong for the unified company; merge era-facts need a rule; (4) Tesla's slug is `tesla-q124981765` (bare `tesla` went to a lower-QID namesake) — slug-strategy ADR territory.
 
 ### 2026-07-28 (part 5 — queue #7: reconciler state schema)
 
