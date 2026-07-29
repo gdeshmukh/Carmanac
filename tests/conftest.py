@@ -130,7 +130,8 @@ def db(engine: Engine) -> Iterator[Session]:
             text(
                 """
                 TRUNCATE raw_scrape.raw_records,
-                         external_ids, field_provenance,
+                         reconciled_records, reconciliation_flags,
+                         external_ids, field_provenance, countries,
                          configuration_attributes, configuration_engines,
                          configuration_transmissions, company_role_assignments,
                          vehicle_derivations, media_attachments, media_assets,
