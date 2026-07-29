@@ -179,6 +179,16 @@ The ladder for "which entity is this record about":
 2. **Miss** → create the entity (if admitted, §3) and write the `external_ids`
    row in the same transaction.
 
+**Curated identity merges** (amendment, 2026-07-28): some sources model one
+real-world company as several entities — Wikidata's Bugatti is three
+corporate-era entities (Q27401 Molsheim, Q1002267 EB110 era, Q2308012 VW era).
+A reviewed merge registry in `policy.py` maps such sets to one company at
+resolve time; the schema already supports many external ids per entity
+(ADR 0003). Decided with Bugatti as the precedent: **one company** — an EB110
+is as much a Bugatti as a Type 35 or a Chiron. Merges are curated and
+deterministic, never inferred; candidates surface through review, not
+name-matching.
+
 **No fuzzy auto-matching in v1.** The trigram indexes exist for candidate
 generation, but nothing auto-merges on name similarity until matcher precision
 is measured on a labeled set — the risk register's own rule ("do not add
@@ -211,8 +221,8 @@ open); no tier-restated-as-a-decimal placeholders.
 | --- | --- | --- |
 | `itemLabel` | `name` | as-is |
 | `itemDescription` | `summary` | as-is (`description` stays NULL — needs a real prose source) |
-| `inception` | `founded_year` | year component; `observed_value` keeps the full date |
-| `dissolved` | `defunct_year` | year component |
+| `inceptions` | `founded_year` | year of the EARLIEST claim (the payload lands every date claim, sorted; several claims → also a `multi_value` flag); `observed_value` keeps the full date |
+| `dissolutions` | `defunct_year` | year of the latest claim, same multi-claim handling |
 | `countries` + ISO codes | `country_id` | joined via `countries.code`; **exactly one** country projects, several → no projection + flag, zero → no assertion |
 | `websites` | `website` | first after canonical sort if one; several → flag (new column, see Consequences) |
 
