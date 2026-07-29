@@ -33,7 +33,13 @@ from __future__ import annotations
 # disagreement for multi_value to catch).
 # v4 (2026-07-29): the vPIC match pass (ADR 0008) - cross-source identity,
 # corroboration-admission, vPIC-sourced roles.
-RECONCILER_VERSION = "4"
+# v5 (2026-07-29): the match-queue review - company/brand duplicate merges
+# into IDENTITY_MERGES, first VPIC_MATCHES judgments, PINNED_DENY, merge
+# members admit through their canonical entity.
+# v6 (2026-07-29): the no-match review batch (Gaurav-approved) - 37 more
+# VPIC_MATCHES judgments, Consulier brand->Industries merge, Moke
+# International admit pin; vPIC external ids gain the make: prefix.
+RECONCILER_VERSION = "6"
 
 # --- identity --------------------------------------------------------------
 
@@ -48,13 +54,127 @@ RECONCILER_VERSION = "4"
 IDENTITY_MERGES: dict[str, str] = {
     "Q1002267": "Q27401",  # Bugatti Automobili S.p.A. (EB110 era) -> Bugatti (Molsheim)
     "Q2308012": "Q27401",  # Bugatti Automobiles S.A.S. (VW era)   -> Bugatti (Molsheim)
+    # --- the company/brand split, batch-resolved 2026-07-29 from the vPIC
+    # match queue. Wikidata grew bare "<marque> (car brand)" entities (mostly
+    # Q124-125xxx, one editing wave) alongside the long-standing company
+    # entities; both admitted, giving one real marque two company rows and
+    # blocking exact-name matching. Canonical = the substantive company-side
+    # entity (it holds the facts and is what model records point at); the
+    # brand artifact is a member.
+    "Q124982078": "Q26921",  # Alfa Romeo (brand)   -> Alfa Romeo
+    "Q124983953": "Q23317",  # Audi (brand)         -> Audi AG
+    "Q136368837": "Q23317",  # Audi (Deutsche Automarke artifact) -> Audi AG
+    "Q796364": "Q26678",  # BMW (brand)             -> BMW
+    "Q42434023": "Q27401",  # Bugatti (brand)       -> Bugatti (Molsheim)
+    "Q124966126": "Q27586",  # Ferrari (brand)      -> Ferrari
+    "Q139960054": "Q27597",  # Fiat (brand)         -> Fiat
+    "Q131548421": "Q1420893",  # Fisker (brand)     -> Fisker
+    "Q124966298": "Q9584",  # Honda (brand)         -> Honda
+    "Q124966860": "Q35886",  # Lamborghini (brand)  -> Lamborghini
+    "Q125097315": "Q35896",  # Lancia (brand)       -> Lancia
+    "Q124991042": "Q35962",  # Maserati (brand)     -> Maserati
+    "Q125055033": "Q35996",  # Mazda (brand)        -> Mazda
+    "Q125130399": "Q20165",  # Nissan (brand)       -> Nissan
+    "Q124966804": "Q40993",  # Porsche (brand)      -> Porsche
+    "Q125214266": "Q172741",  # Subaru (brand)      -> Subaru
+    # Land Rover: Wikidata splits the company (Q35907, holds the facts) from
+    # the marque JLR uses today (Q26777551). One make, one page - the Bugatti
+    # rule. Canonical is the fact-bearing company entity.
+    "Q26777551": "Q35907",
+    # Renault: conglomerate (Q6686, the century-old entity model records
+    # point at) vs "Renault S.A.S." (Q98584518, the 2020 legal restructure)
+    # vs brand (Q125544573). Corporate-era split of one carmaker - the
+    # Bugatti shape - so all three reconcile to Q6686.
+    "Q98584518": "Q6686",
+    "Q125544573": "Q6686",
+    # Tesla, REVERSED substance: the fixture's marque-side pick (Q124981765,
+    # materialized as the company) is the factless brand entity, while
+    # Tesla, Inc. (Q478214, boilerplate classes, quarantined) holds the
+    # founded/country/website facts. Canonical is Tesla, Inc. so the facts
+    # project; the brand row's identity (slug, company id) is preserved by
+    # the merge script.
+    "Q124981765": "Q478214",
+    # Consulier (2026-07-29, from the no-match review): Wikidata splits the
+    # brand from Consulier Industries, Warren Mosler's company. Same
+    # company/brand shape as the batch above. (Whether Mosler Automotive,
+    # the 1993 successor, is an era of the same company is a separate open
+    # question - not merged.)
+    "Q132560783": "Q17812480",  # Consulier (brand) -> Consulier Industries
 }
+
+# A curated merge is a human identity decision about BOTH sides: naming a
+# canonical declares it a company we hold, even where its own classes would
+# quarantine (Tesla, Inc. carries only corporate boilerplate). The engine
+# admits members and canonicals through this decision.
+MERGE_CANONICALS: frozenset[str] = frozenset(IDENTITY_MERGES.values())
 
 # Curated vPIC-make matches (ADR 0008 rung 1): vPIC MakeId -> Wikidata QID,
 # for makes the exact-name rung cannot place. Grown exclusively by resolving
 # `match_review` flags - each entry is a recorded human judgment, and
 # collectively they are the matcher's labeled set.
-VPIC_MATCHES: dict[str, str] = {}
+VPIC_MATCHES: dict[str, str] = {
+    # 2026-07-29, from the ambiguous-match review. Namesake companies are
+    # real and stay separate; the pin records which one the vPIC make IS.
+    "448": "Q53268",  # TOYOTA -> Toyota Motor (not the Chinese-market brand entity)
+    "465": "Q613883",  # MERCURY -> Ford's marque (not the 1914 cyclecar maker)
+    "473": "Q35996",  # MAZDA -> Mazda Motor (not the Chinese-market brand entity)
+    "474": "Q9584",  # HONDA -> Honda Motor (not the Chinese-market brand entity)
+    "476": "Q27564",  # DODGE -> Dodge (not quarantined classless "Dodge" Q134547944)
+    # VOLVO -> Volvo Cars, the passenger-car manufacturer. Not the trademark
+    # entity (Q20827600, co-owned with Volvo Group for trucks too) and not
+    # the Chinese-market brand entity.
+    "485": "Q215293",
+    # AUDI -> Audi AG. Its label "Audi AG" defeats exact-name matching, and
+    # after the brand-artifact merges the only exact-name "AUDI" hit would be
+    # SAIC's Chinese AUDI marque (Q136087723, the no-rings brand - a real,
+    # separate make) - a wrong unique match this pin preempts.
+    "582": "Q23317",
+    "12642": "Q112077124",  # SCOUT -> Scout Motors (VW), not the 1900s UK Scout
+    # --- the no-match review batch, approved by Gaurav 2026-07-29. Four
+    # recurring miss shapes: names trigram cannot see (RUF vs "Ruf
+    # Automobile"), quarantined records the candidate search never surfaces
+    # (KARMA, KANDI - these corroborate-create on match), wrong-namesake
+    # traps where the top candidate is a 1910s company (STERLING, AMERICAN
+    # MOTORS), and second MakeIds for already-matched companies (HUMVEE,
+    # GLICKENHAUS, CONSULIER GTP).
+    "496": "Q165708",  # RAM -> Ram Trucks
+    "539": "Q1165625",  # MORGAN -> Morgan Motor Company (GB; Q58159151 is a US namesake)
+    "1077": "Q27483",  # DAEWOO -> Daewoo Motors
+    "1124": "Q202708",  # AMERICAN MOTORS -> AMC (0.8 candidate is a 1910s namesake)
+    "1755": "Q1359036",  # TH!NK -> Think Global (the '!' defeats normalization)
+    "1777": "Q1934630",  # CODA -> Coda Automotive
+    "1991": "Q27423",  # BYD -> BYD Auto
+    "2018": "Q17006727",  # KANDI -> Kandi Technologies (quarantined; corroborates)
+    "2146": "Q848059",  # MAHINDRA -> Mahindra & Mahindra (the '&' defeats exact)
+    "3394": "Q12062242",  # THE VEHICLE PRODUCTION GROUP -> Vehicle Production Group
+    "4220": "Q746256",  # PANOZ -> Panoz Auto Development
+    "4410": "Q97353704",  # SOLECTRIA -> Solectria Corporation (pinned fetch)
+    "4764": "Q1806804",  # MOSLER -> Mosler Automotive
+    "5083": "Q21451523",  # GENESIS -> Genesis Motor
+    "5122": "Q22671741",  # KARMA -> Karma Automotive (quarantined; corroborates)
+    "5464": "Q732935",  # ASUNA -> Asuna (the umlaut in "Asüna" defeats exact)
+    "5555": "Q20827172",  # STERLING MOTOR CAR -> Sterling, the Rover-era US brand
+    "5557": "Q17812480",  # CONSULIER GTP -> Consulier Industries (GTP is the model)
+    "5938": "Q562261",  # PANTHER -> Panther Westwinds (Lima/Kallista, sold in US)
+    "7477": "Q1383437",  # EXCALIBUR AUTOMOBILE CORP -> Excalibur (Brooks Stevens)
+    "8549": "Q117381875",  # MOKE -> Moke America (the US EV company; Intl is UK/EU)
+    "9250": "Q1969669",  # VECTOR AEROMOTIVE -> Vector Motors (renamed, same company)
+    "9401": "Q119469",  # CLENET -> Clénet Coachworks (the accent defeats exact)
+    "9759": "Q108187217",  # SCUDERIA CAMERON GLICKENHAUS (SCG)
+    "9760": "Q295481",  # HUMVEE -> AM General (second MakeId)
+    "10393": "Q108187217",  # GLICKENHAUS -> SCG (second MakeId)
+    "10919": "Q28027517",  # LUCID -> Lucid Motors
+    "11792": "Q28225588",  # ALLARD MOTOR WORKS -> Allard Motor (the Montreal continuation)
+    "11832": "Q1045210",  # SHELBY -> Carroll Shelby International (the Cobra's page)
+    "11921": "Q7334368",  # RIMAC -> Rimac Automobili
+    "12360": "Q108757682",  # INEOS -> Ineos Automotive (pinned fetch)
+    "13024": "Q119469",  # CLENET COACHWORKS -> Clénet Coachworks
+    "13025": "Q209374",  # CHECKER -> Checker Motors Corporation
+    "13150": "Q131553501",  # TELO -> Telo Trucks
+    "13765": "Q265465",  # SANTANA -> Santana Motor
+    "13766": "Q265465",  # LAND ROVER SANTANA -> Santana Motor (licensee-built)
+    "13771": "Q134100360",  # SLATE -> Slate Auto
+}
 
 # --- admission (ADR 0007 §3) ------------------------------------------------
 
@@ -94,6 +214,21 @@ PINNED_ADMIT: dict[str, str] = {
     "Q758549": "Auburn",
     "Q59186515": "Automobili Pininfarina",
     "Q694506": "Wiesmann",
+    # Moke International (2026-07-29): a stray `P31: automotive industry`
+    # claim puts a DENY class on a real revival manufacturer - the same
+    # misclass shape as the Peugeot plant, opposite direction.
+    "Q57079249": "Moke International",
+}
+
+# Hand-vetted entity denials: the mirror of PINNED_ADMIT, for entities whose
+# Wikidata classes AFFIRM car-company-hood wrongly. A pin encodes a human
+# review that outranks the class sets; without it a misclassed entity is
+# unfixable by list edits (its target class would keep re-admitting it).
+PINNED_DENY: dict[str, str] = {
+    # Classed `automobile manufacturer`, actually a Peugeot assembly plant
+    # ("Montagewerk", defunct 1967) - a facility, which DENY covers by class
+    # everywhere Wikidata classes it correctly.
+    "Q80901498": "Peugeot assembly plant",
 }
 
 # Understood co-classes. These no longer admit anything on their own (v2) -
@@ -372,8 +507,10 @@ def classify(classes: frozenset[str] | set[str], external_id: str | None = None)
 
     Precedence, each step paid for by a live pass:
 
-    1. A hand-vetted PIN admits absolutely - it encodes a human review that
-       outranks whatever classes the source holds today.
+    1. A hand-vetted PIN admits or denies absolutely - it encodes a human
+       review that outranks whatever classes the source holds today (the
+       deny direction exists because a misclassed target-class entity - the
+       Peugeot plant - is unfixable by list edits).
     2. A TARGET class admits. The deny list exists to exclude entities that
        are ONLY services/facilities/etc., not to veto a marque: Ford is
        `automobile manufacturer` + `holding company` (both true - it holds
@@ -389,6 +526,8 @@ def classify(classes: frozenset[str] | set[str], external_id: str | None = None)
     """
     if external_id is not None and external_id in PINNED_ADMIT:
         return ADMIT
+    if external_id is not None and external_id in PINNED_DENY:
+        return DENY
     if any(c in TARGET_CLASSES for c in classes):
         return ADMIT
     if any(c in DENY_CLASSES for c in classes):

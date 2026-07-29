@@ -67,7 +67,7 @@ def test_merges_types_per_make_sorted(db, vpic_source):
     assert (result.fetched, result.inserted) == (1, 1)
 
     record = db.scalars(select(RawRecord)).one()
-    assert record.external_id == "441"
+    assert record.external_id == "make:441"
     assert record.payload["vehicle_types"] == [
         "Multipurpose Passenger Vehicle (MPV)",
         "Passenger Car",
@@ -95,4 +95,4 @@ def test_changed_payload_lands_alongside_history(db, vpic_source):
 
     records = db.scalars(select(RawRecord).order_by(RawRecord.id)).all()
     assert [r.payload["make_name"] for r in records] == ["DATSUN", "NISSAN"]
-    assert all(r.external_id == "500" for r in records)
+    assert all(r.external_id == "make:500" for r in records)

@@ -472,6 +472,15 @@ class _Pass:
             # companies keep receiving this source's assertions on re-runs.
             if verdict == policy.QUARANTINE and mapped.external_id in self.external_ids:
                 verdict = policy.ADMIT
+            # A curated merge is a human identity decision about both sides:
+            # members must reach the identity ladder to attach to their
+            # canonical, and a canonical with boilerplate-only classes
+            # (Tesla, Inc.) is still a company we decided we hold.
+            if verdict == policy.QUARANTINE and (
+                mapped.external_id in policy.IDENTITY_MERGES
+                or mapped.external_id in policy.MERGE_CANONICALS
+            ):
+                verdict = policy.ADMIT
             self.stats.processed += 1
 
             if verdict == policy.DENY:
