@@ -54,7 +54,7 @@ Nothing mid-task. PR #7 merged 2026-07-28. Every reconciler-blocking decision is
 4. ~~**Query widening (F6)**~~ — DONE 2026-07-28 (PR #7, merged after Gaurav's marque-list approval): three-axis fetch (classes + automotive industry + pinned QIDs), full P31 class sets, ISO codes, label fallback chain; 9,883 entities landed idempotently; 218-marque coverage fixture enforced by the ingest script — 218/218.
 5. ~~**De-Claude the outward-facing repo**~~ — DONE 2026-07-28 (PR #8): PR-body footers stripped from #3–#6; CLAUDE.md content moved to `docs/charter.md` as a neutral project charter, thin CLAUDE.md untracked (machine-global git ignore, so `.gitignore` stays clean); all references repointed. **History rewrite considered and declined by Gaurav** — existing commit trailers stay; no attribution markers going forward. ADRs and PROGRESS untouched, as decided.
 6. ~~**`scripts/backup.sh` (F9)**~~ — DONE 2026-07-28 (PR #9): pg_dump (custom format, zstd) → readability check → optional scratch-database restore verification → local rotation → rclone upload to Google Drive (`drive.file` scope) with size confirmation + age-based remote pruning. First run verified end to end: 988 KB dump, full restore reproduced 30 tables / 9,886 raw records, upload confirmed on Drive. `infra/` docs no longer present `down -v` as safe. **Tier 3/4 ingest is no longer gated.**
-7. Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8).
+7. ~~Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8)~~ — DONE 2026-07-28 (PR #10, migration `111a7cd329b8`): sidecar state table, review-queue flags with the two-shape CHECK (entity-scoped kinds take exactly one arc column; `admission_review` is record-scoped and requires `raw_record_id`), partial arc indexes + partial open-queue index, `companies.website`. Hand-review + live probes clean (sequence present, all CHECK shapes fire); 4 new constraint tests; downgrade/upgrade round trip verified.
 8. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
 9. After the companies pass (F2): decide whether a thin read surface (FastAPI companies list/detail) jumps ahead of models ingestion.
 
@@ -163,6 +163,12 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-28 (part 5 — queue #7: reconciler state schema)
+
+- **Migration `111a7cd329b8`** (PR #10): `reconciled_records` (raw_record_id PK/FK sidecar + `reconciler_version`, so re-reconciliation can target stale records mechanically), `reconciliation_flags` (exclusive-arc review queue; `flag_shape_matches_kind` CHECK encodes both shapes from ADR 0007 §8 — entity kinds take exactly one arc column, `admission_review` takes none and requires `raw_record_id`), `companies.website`.
+- Autogenerate was clean this time — but the hand-review checklist (PKs, CHECKs, triggers, cross-schema FKs) was run anyway and the `reconciliation_flags.id` sequence verified live, since PK handling is a proven autogenerate blind spot. All three CHECKs probed live from both directions before trusting them; 4 permanent tests added (45 total, green). Downgrade/upgrade round trip + `alembic check` clean.
+- Next: queue #8 — build `carmanac/reconcile/` (engine + policy + wikidata mapper) and run the companies pass.
 
 ### 2026-07-28 (part 4 — fix queue #6: backups; F9 gate cleared)
 

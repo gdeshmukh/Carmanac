@@ -23,6 +23,8 @@ from carmanac.db.models import (
     Generation,
     Model,
     ModelYear,
+    RawRecord,
+    ReconciliationFlag,
     Source,
     VehicleDerivation,
 )
@@ -314,6 +316,71 @@ def test_same_source_duplicate_role_assertion_rejected(db, graph):
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
+
+
+# --- ADR 0007 §8: reconciliation_flags carry their kind's shape --------------
+
+
+@pytest.fixture()
+def raw_record(db, wikidata_source):
+    rec = RawRecord(source_id=wikidata_source.id, content_hash="test", payload={"qid": "Q1"})
+    db.add(rec)
+    db.flush()
+    return rec
+
+
+def test_entity_flag_requires_exactly_one_entity(db, graph):
+    """An entity-scoped kind with an empty arc points at nothing - rejected by
+    flag_shape_matches_kind, same device as field_provenance's arc CHECK."""
+    db.add(ReconciliationFlag(kind="field_conflict", field_name="name"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_admission_review_rejects_entity(db, graph, raw_record):
+    """admission_review is record-scoped BY DEFINITION - the record was
+    quarantined, so no entity exists to attach to. An arc column set on one is
+    a contradiction the CHECK must catch."""
+    db.add(
+        ReconciliationFlag(
+            kind="admission_review",
+            company_id=graph["company"].id,
+            raw_record_id=raw_record.id,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_admission_review_requires_raw_record(db, graph):
+    """Without raw_record_id an admission_review flag references nothing at
+    all - there would be no way to know WHAT is quarantined."""
+    db.add(ReconciliationFlag(kind="admission_review"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_both_flag_shapes_insert(db, graph, raw_record):
+    db.add_all(
+        [
+            ReconciliationFlag(
+                kind="multi_value",
+                company_id=graph["company"].id,
+                field_name="founded_year",
+                detail={"values": ["1909", "1998"]},
+                source_id=graph["source"].id,
+            ),
+            ReconciliationFlag(
+                kind="admission_review",
+                raw_record_id=raw_record.id,
+                detail={"unclassified": ["Q431289"]},
+            ),
+        ]
+    )
+    db.commit()  # must not raise
 
 
 def test_second_source_may_assert_same_derivation(db, graph):
