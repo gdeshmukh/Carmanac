@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # (wikidata.org, tier 1); these hold how we *reach* it, which is an
     # operational detail and overridable per environment.
     wikidata_sparql_endpoint: str = "https://query.wikidata.org/sparql"
+    vpic_api_base: str = "https://vpic.nhtsa.dot.gov/api/vehicles"
 
     # Wikimedia's user-agent policy requires a descriptive agent with a way to
     # contact the operator, so they can reach us instead of silently blocking.

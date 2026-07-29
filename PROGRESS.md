@@ -167,6 +167,12 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 
 End-of-session notes go here. Newest at top. Be brief.
 
+### 2026-07-29 (part 3 — vPIC lands; ADR 0008 proposed)
+
+- **vPIC fetch-and-land built and run** (PR #14): `carmanac/ingest/vpic/` on the same pattern as Wikidata's — and the second source is when shared plumbing stopped being speculation, so the transport (`PoliteClient`: honest UA, rate limit, backoff) and landing semantics (hash idempotency, `last_seen_at` revert handling) were extracted to `carmanac/ingest/http.py` + `carmanac/ingest/landing.py`, with the Wikidata modules refactored onto them, public APIs unchanged.
+- **Cars-first at the source**: not GetAllMakes' 12,308 everything-makes — the `GetMakesForVehicleType` union for `car` + `MPV`: **247 passenger makes landed**, keyed by vPIC MakeId, sorted vehicle-type lists (the F4 canonicalization lesson applied preemptively). Idempotent re-run verified; 74 tests green. Peugeot and Ruf are in the set — the corroboration evidence, waiting.
+- **ADR 0008 proposed** (vPIC matching + corroboration): match ladder = curated registry → unique exact-normalized-name → `match_review` flag with trigram candidates (never fuzzy-auto, per ADR 0007 §5); a confirmed match writes `external_ids`, asserts the `manufacturer` role from vPIC (ADR 0005's evidence from the source that defines it), auto-resolves the company's `admission_review` flags as `corroborated_by_vpic`, and admits matched quarantined entities on re-run. Needs Gaurav's review before implementation — it adds a fourth admission path and a new flag kind.
+
 ### 2026-07-29 (part 2 — two-lens review; plausibility checks; policy v3)
 
 - **Post-v2 review run as data engineer + enthusiast lenses** (Gaurav's request). Key findings: single-claim wrong values project unflagged (Mercedes-AMG "founded 1812" — one claim, no disagreement, `multi_value` blind); company/brand duplicate identities are systematic (Mazda ×3, 121 duplicated names — merge-registry backlog); tuner/JDM builders absent entirely (Nismo, Mugen, TRD, Spoon, HKS — the builder fetch's priority quantified); ~35% non-English summaries; demotion freed the bare `tesla` slug but Tesla keeps its suffixed one (slugs never re-derive — re-slug deliberately under the slug ADR while no pages exist).
