@@ -1,7 +1,7 @@
 """Engines and transmissions - first-class entities, plus their join tables.
 
 These are not attributes of a configuration. Cross-make reuse makes that
-modeling non-negotiable (CLAUDE.md): the BMW B58 appears in the Toyota Supra,
+modeling non-negotiable (docs/charter.md): the BMW B58 appears in the Toyota Supra,
 GM LS engines end up in everything, the ZF 8HP is fitted by half the industry.
 `manufacturer_make_id` therefore points at the *engine's* maker, which
 deliberately may differ from the car's make.

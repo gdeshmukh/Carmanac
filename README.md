@@ -96,7 +96,7 @@ infra/              docker-compose + Postgres bootstrap
 scripts/            seed and ingest entry points
 ```
 
-`CLAUDE.md` holds the architecture invariants and conventions; `PROGRESS.md` is the working log, including the pre-reconciler schema review (R1–R12).
+[`docs/charter.md`](docs/charter.md) holds the mission, architecture invariants, and conventions; `PROGRESS.md` is the working log, including the pre-reconciler schema review (R1–R12).
 
 ## Stack
 

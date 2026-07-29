@@ -159,7 +159,7 @@ class FieldProvenance(Base):
         # Entity FKs are indexed as PARTIAL indexes (WHERE col IS NOT NULL):
         # each row sets only one arc column, so a partial index is far smaller
         # than a plain one on a mostly-null column. This is the high-volume
-        # table, so the leanness matters. Satisfies "index every FK" (CLAUDE.md).
+        # table, so the leanness matters. Satisfies "index every FK" (charter).
         *(
             Index(f"idx_field_provenance_{c}", c, postgresql_where=text(f"{c} IS NOT NULL"))
             for c in _ARC_COLUMNS

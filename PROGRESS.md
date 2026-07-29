@@ -6,7 +6,7 @@ Living log of project state. Update at the end of every working session — even
 
 ## Current Focus
 
-Phase 1: schema live and twice-reviewed (R1-R12; foundation review F1-F9), first source landed via the three-axis Wikidata fetch (9,883 entities, 218-marque coverage fixture enforced), reconciler fully designed (ADR 0007 accepted + amended). Fix queue items 1-4 done; next: de-Claude the outward repo (#5), backups (#6), reconciler schema + build (#7-8).
+Phase 1: schema live and twice-reviewed (R1-R12; foundation review F1-F9), first source landed via the three-axis Wikidata fetch (9,883 entities, 218-marque coverage fixture enforced), reconciler fully designed (ADR 0007 accepted + amended). Fix queue items 1-5 done; next: backups (#6), reconciler schema + build (#7-8).
 
 ## Done
 
@@ -44,15 +44,15 @@ Phase 1: schema live and twice-reviewed (R1-R12; foundation review F1-F9), first
 
 ## In Flight
 
-Step 4 (three-axis fetch + coverage fixture) built, verified, approved by Gaurav — being committed as PR #7. Every reconciler-blocking decision is made; `carmanac/reconcile/` remains the substance of what's ahead.
+Nothing mid-task. PR #7 merged 2026-07-28. Every reconciler-blocking decision is made; `carmanac/reconcile/` remains the substance of what's ahead.
 
 ## Next (immediate) — the F1-F9 fix queue, then the reconciler
 
 1. ~~**Landing fixes (F4+F3)**~~ — DONE 2026-07-28 (PR #5): `MIN()` aggregates, derived canonicalization vars, `last_seen_at` + `DO UPDATE`, duplicate deleted.
 2. ~~**pytest + GitHub Actions (F1)**~~ — DONE 2026-07-28 (PR #5): 35 tests, mutation-verified, CI green on the same pinned Postgres image as dev.
 3. ~~**ADR 0007 amendments (F5) + association-provenance decision (F7)**~~ — DONE 2026-07-28: reconciliation unit = current record per (source, external_id) by `max(last_seen_at)`, ascending-QID processing order, tombstone retraction, `source_dropped` flags (QID merges flagged, never auto-merged), the three-step supersede dance; **all four association tables are now per-source assertion stores** (migration `d212a042caa7` — autogenerate produced a broken migration twice over, hand-rewritten; see its docstring).
-4. **Query widening (F6)** — BUILT, uncommitted pending Gaurav's marque-list skim (see Session Log 2026-07-28 part 2): three-axis fetch (classes + automotive industry + pinned QIDs), full P31 class sets, ISO codes, label fallback chain; 9,883 entities landed idempotently; 218-marque coverage fixture enforced by the ingest script — currently 218/218.
-5. **De-Claude the outward-facing repo** (queued 2026-07-28, before backup work): strip AI-attribution markers so the repo reads as the scaffolding/review discipline it demonstrates — no more commit trailers or PR footers going forward; decide whether to rewrite existing history; decide CLAUDE.md's public shape (likely: project charter doc + thin tool-pointer file). ADRs and PROGRESS stay exactly as they are — they're the decision-making evidence worth showing.
+4. ~~**Query widening (F6)**~~ — DONE 2026-07-28 (PR #7, merged after Gaurav's marque-list approval): three-axis fetch (classes + automotive industry + pinned QIDs), full P31 class sets, ISO codes, label fallback chain; 9,883 entities landed idempotently; 218-marque coverage fixture enforced by the ingest script — 218/218.
+5. ~~**De-Claude the outward-facing repo**~~ — DONE 2026-07-28 (PR #8): PR-body footers stripped from #3–#6; CLAUDE.md content moved to `docs/charter.md` as a neutral project charter, thin CLAUDE.md untracked (machine-global git ignore, so `.gitignore` stays clean); all references repointed. **History rewrite considered and declined by Gaurav** — existing commit trailers stay; no attribution markers going forward. ADRs and PROGRESS untouched, as decided.
 6. **`scripts/backup.sh` (F9)** — pg_dump off-machine; first Tier 3/4 ingest is *gated* on backups existing.
 7. Migration: `reconciled_records`, `reconciliation_flags`, `companies.website` (ADR 0007 §8).
 8. Build `carmanac/reconcile/` (engine + wikidata mapper per ADR 0007 §2); run the companies pass; verify the hand-checked sample.
@@ -163,6 +163,13 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 ## Session Log
 
 End-of-session notes go here. Newest at top. Be brief.
+
+### 2026-07-28 (part 3 — PR #7 merged; fix queue #5: de-Claude the public repo shape)
+
+- Reconciled this file against reality on session start: only staleness was "In Flight" saying step 4 was uncommitted — it was up as PR #7, CI green. DB verified to match (Alembic head `d212a042caa7`; 9,883 distinct Wikidata entities). **PR #7 merged.**
+- **Fix queue #5 executed, scoped by Gaurav mid-session**: audit first, then act — found co-author trailers on 23/34 commits, "Generated with" footers on PRs #3–#6, and tracked `CLAUDE.md` as the outward-facing markers (code/docs only *reference* CLAUDE.md as the conventions doc; author on every commit is Gaurav).
+- Actions: footers edited out of PR bodies #3–#6; CLAUDE.md's content moved to **`docs/charter.md`** with the AI-addressed sections reframed as neutral Working Rules (content unchanged in substance — it was always project documentation); CLAUDE.md untracked and reduced to a thin local pointer that imports the charter, ignored via the machine-global git ignore (`~/.config/git/ignore`) so the repo's `.gitignore` never mentions it; references repointed in README, pyproject, `docs/schema.md`, and four code comments. ADR/PROGRESS history untouched.
+- **History rewrite declined** (Gaurav): the trailers stay in pre-merge history; the posture is clean-going-forward. Revisitable any time it stays a solo no-fork repo — `git filter-repo` strips trailers in ~an hour, force-push, stale branches deleted.
 
 ### 2026-07-28 (part 2 — step 4: three-axis fetch + coverage fixture; uncommitted pending review)
 
