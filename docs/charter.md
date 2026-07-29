@@ -18,6 +18,14 @@ centerpiece demonstrating data engineering, entity resolution at scale,
 relational schema design, and full-stack delivery. Scope is intentionally
 ambitious — that is the novelty.
 
+**The focal point is the individual car's page.** Configurations — and the
+generation and model views that aggregate them — are what users come for;
+capturing the cars is the mission. Companies, engines, and the other entities
+get pages too, but as supporting cast: the database is organised so the car
+pages can exist, not the other way around. Any ingestion or modeling decision
+that grows the supporting cast at the expense of reaching the cars is the
+wrong trade.
+
 ## Current Phase
 
 **Phase 1: schema live, first source landing.** All 29 tables are applied and

@@ -153,6 +153,26 @@ def test_unknown_class_quarantines():
     assert policy.classify({"Q4830453", "Q99999999999"}) == policy.QUARANTINE
 
 
+def test_boilerplate_only_quarantines():
+    """Policy v2, from Gaurav's review of the first live pass: 'business' +
+    'enterprise' is zero CAR evidence - the seatbelt-supplier shape. v1
+    admitted 2,175 of these."""
+    assert policy.classify({"Q4830453", "Q6881511"}) == policy.QUARANTINE
+
+
+def test_builder_class_admits():
+    """The deliberately-open door: a coachbuilder admits (rolelessly) even
+    with no target class."""
+    assert policy.classify({"Q1734300", "Q4830453"}) == policy.ADMIT
+
+
+def test_pin_admits_boilerplate_marque():
+    """Peugeot's shape: P31 is literally just 'organization'; the fixture
+    review vetted it by hand, and the pin encodes that judgment."""
+    assert policy.classify({"Q43229"}, "Q6742") == policy.ADMIT
+    assert policy.classify({"Q43229"}, "Q999999") == policy.QUARANTINE
+
+
 def test_empty_class_set_quarantines():
     """Zero evidence is not vacuous truth (strict-admission polarity)."""
     assert policy.classify(frozenset()) == policy.QUARANTINE
@@ -332,8 +352,9 @@ def test_denied_waits_in_raw_without_flag(db, wikidata_source):
 
 
 def test_business_only_admits_without_role(db, wikidata_source):
-    """Singer's shape: 'business' class admits, but no target class means no
-    manufacturer role - a builder, not a make."""
+    """Singer's shape: boilerplate classes but a PINNED entity (fixture-vetted)
+    admits - with no target class, no manufacturer role. A builder, not a
+    make."""
     _land(db, wikidata_source, "Q55633247", label="Singer Vehicle Design", classes=("Q4830453",))
     run_companies_pass(db, wikidata)
     assert db.scalars(select(Company)).one().name == "Singer Vehicle Design"
