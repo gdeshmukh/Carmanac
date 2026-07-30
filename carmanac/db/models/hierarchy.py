@@ -136,7 +136,11 @@ class CompanyRoleAssignment(Base, ProvenanceMixin):
 
 
 class Model(Base, TimestampMixin):
-    """A nameplate under a make, e.g. '3 Series', 'Corolla'."""
+    """A manufacturer's leaf catalogue designation, as filed (ADR 0011):
+    'Corolla', '330i', '911', 'C-Class'. Granularity is the manufacturer's
+    own — an engine badge, a body split, and a nameplate all sit at this
+    level. Series/lines ('3 Series') are aggregations over models, not rows
+    here."""
 
     __tablename__ = "models"
 
