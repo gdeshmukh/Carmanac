@@ -61,11 +61,20 @@ def main() -> int:
             print(f"  {name:<22} {kind:<10}: {n}")
 
         print("open flags by kind:")
+        # match_review is split by the flagged record's kind: the make queue
+        # (unmatched vPIC makes) and the model queue (slug collisions) are
+        # different questions with different resolutions, and one number
+        # covering both hides whichever grew.
         for kind, n in s.execute(
             text(
                 """
-                SELECT kind, count(*) FROM reconciliation_flags
-                WHERE status = 'open' GROUP BY kind ORDER BY kind
+                SELECT f.kind || CASE WHEN f.kind = 'match_review'
+                                      THEN ' (' || split_part(rr.external_id, ':', 1) || ')'
+                                      ELSE '' END,
+                       count(*)
+                FROM reconciliation_flags f
+                LEFT JOIN raw_scrape.raw_records rr ON rr.id = f.raw_record_id
+                WHERE f.status = 'open' GROUP BY 1 ORDER BY 1
                 """
             )
         ):
@@ -84,6 +93,20 @@ def main() -> int:
             )
         ).one()
         print(f"vPIC makes matched            : {matched}/{landed}")
+
+        reconciled, landed_models = s.execute(
+            text(
+                """
+                SELECT
+                  (SELECT count(*) FROM external_ids ei JOIN sources so ON so.id = ei.source_id
+                   WHERE so.name = 'NHTSA vPIC' AND ei.external_id LIKE 'model:%'),
+                  (SELECT count(*) FROM raw_scrape.raw_records rr
+                   JOIN sources so ON so.id = rr.source_id
+                   WHERE so.name = 'NHTSA vPIC' AND rr.external_id LIKE 'model:%')
+                """
+            )
+        ).one()
+        print(f"vPIC models reconciled        : {reconciled}/{landed_models}")
     return 0
 
 

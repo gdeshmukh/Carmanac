@@ -42,12 +42,23 @@ log = logging.getLogger(__name__)
 
 
 def landed_make_ids(session: Session) -> list[int]:
-    """MakeIds of every landed vPIC make record, ascending. Selected by
-    payload shape, like every consumer of this source's mixed record kinds."""
+    """MakeIds of every landed vPIC make record, ascending.
+
+    Selected by the external id's KIND PREFIX, like every consumer of this
+    source's mixed record kinds. Not by payload shape: model payloads carry
+    `make_id` too, so a shape test reads them as makes as well (harmless here -
+    their make ids are a subset - but the same defect that made the match pass
+    mis-attach model ids to companies, so both now key on the prefix).
+    """
     source = get_source(session, VPIC_SOURCE_NAME)
     make_ids = {
         record.payload["make_id"]
-        for record in session.scalars(select(RawRecord).where(RawRecord.source_id == source.id))
+        for record in session.scalars(
+            select(RawRecord).where(
+                RawRecord.source_id == source.id,
+                RawRecord.external_id.like("make:%"),
+            )
+        )
         if isinstance(record.payload, dict) and "make_id" in record.payload
     }
     return sorted(make_ids)

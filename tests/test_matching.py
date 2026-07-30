@@ -181,6 +181,39 @@ def test_registry_preempts_wrong_unique_exact_name(db, wikidata_source, vpic_sou
     assert vpic_row.company_id == audi_ag.id
 
 
+def test_model_records_are_not_read_as_makes(db, wikidata_source, vpic_source):
+    """Record kinds are told apart by the external-id PREFIX, not payload shape.
+
+    A model payload carries `make_id`/`make_name` too, so the shape test this
+    pass shipped with read every landed model record as a make and attached
+    `model:<id>` to a company - 2,018 wrong company external ids waiting on the
+    next run. The prefix is the durable marker.
+    """
+    _land_wd(db, wikidata_source, "Q35996", label="Mazda")
+    run_companies_pass(db, wikidata)
+    _land_vpic(db, vpic_source, 473, "MAZDA")
+    db.add(
+        RawRecord(
+            source_id=vpic_source.id,
+            external_id="model:2000",
+            content_hash="modelhash",
+            payload={
+                "model_id": 2000,
+                "model_name": "RX-7",
+                "make_id": 473,
+                "make_name": "MAZDA",
+                "vehicle_types": ["Passenger Car"],
+            },
+        )
+    )
+    db.commit()
+
+    stats = run_vpic_match_pass(db)
+    assert stats.processed == 1  # the make only
+    ids = {e.external_id for e in db.scalars(select(ExternalId))}
+    assert ids == {"Q35996", "make:473"}
+
+
 def test_match_pass_idempotent(db, wikidata_source, vpic_source):
     _land_wd(db, wikidata_source, "Q27074", label="Aston Martin")
     run_companies_pass(db, wikidata)
