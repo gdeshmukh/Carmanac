@@ -18,18 +18,18 @@ not a restatement.
 
 ## Current Focus
 
-Phase 1: **the first cars have identity.** ADR 0010 implemented and merged; **ADR 0011 proposed** (as-filed leaf models; series are lines, not entities; demo seed retired — every entity row is now reconciler-produced). **1,735 `models` rows** under 129 companies (the 134 matched makes, minus double-MakeIds), `name` asserted through `field_provenance`, 3 slug collisions flagged (all Santana); 280 model records wait under unmatched makes. 2,018 vPIC model records landed across all 247 makes; **134/247 makes matched** to 7,215 companies; ADR 0009 implemented (`catalogue_periods` live, migration `76cb287dd71c`). 113 make-level `match_review` open (parked no-match pool), admission batch-triage proposals parked for Gaurav's "barely cars" pass. Charter: **the focal point is the individual car's page.** Next: the Wikidata models+generations sweep (the nameplate/generation-asserting source), then year-level vPIC + EPA writes.
+Phase 1: **the first cars have identity.** ADR 0010 implemented and merged; **ADR 0011 proposed** (as-filed leaf models; series are lines, not entities; demo seed retired — every entity row is now reconciler-produced). **1,735 `models` rows** under 129 companies (the 134 matched makes, minus double-MakeIds), `name` asserted through `field_provenance`; all 3 Santana slug collisions resolved as merges (Gaurav 2026-07-30: one page per wheelbase — 1,738 records reconcile onto 1,735 rows, model queue at zero); 280 model records wait under unmatched makes. 2,018 vPIC model records landed across all 247 makes; **134/247 makes matched** to 7,215 companies; ADR 0009 implemented (`catalogue_periods` live, migration `76cb287dd71c`). 113 make-level `match_review` open (parked no-match pool), admission batch-triage proposals parked for Gaurav's "barely cars" pass. Charter: **the focal point is the individual car's page.** Next: the Wikidata models+generations sweep (the nameplate/generation-asserting source), then year-level vPIC + EPA writes.
 
 ## In Flight
 
-PR #21 merged (2026-07-30). **ADR 0011 drafted, implemented, and amended on `feat/adr-0011-as-filed-models` (PR #22, open — amendment pushed to the same branch, deliberately not stacked)**: as-filed models; series are lines, not entities; demo seed retired live *including* the fabricated raw records and false-attribution rows — models 1,735 pure vPIC, three levels below at honest zero, zero raw-less provenance/role rows anywhere. Awaiting Gaurav: PR #22 review (C-Class carve-out now evidence-backed by the VIN-decode probe), the 3 Santana slug-collision flags (verdict; era context recorded), the admission batch-triage decisions ("barely cars" pass), the parked no-match pool (113 flags).
+PR #21 merged (2026-07-30). **ADR 0011 drafted, implemented, and amended on `feat/adr-0011-as-filed-models` (PR #22, open — amendment pushed to the same branch, deliberately not stacked)**: as-filed models; series are lines, not entities; demo seed retired live *including* the fabricated raw records and false-attribution rows — models 1,735 pure vPIC, three levels below at honest zero, zero raw-less provenance/role rows anywhere. Awaiting Gaurav: **PR #22 review/merge only.** Santana resolved 2026-07-30 (merge, applied — `scripts/apply_santana_model_merges.py`); the "barely cars" batch-triage is **delayed until much later** (Gaurav: "after we figure out what cars are"); the no-match pool (113 flags) stays parked with it.
 
 ## Next (immediate)
 
 1. **Wikidata models+generations fetch**, designed as one maximal sweep (model entities, generation entities, P179/P361/P155-P156 links, years, P4243 platform) → the cross-source model ladder + generation ADR. Probe 2026-07-30: generation entities exist (BMW E30) but links are sparse and series entities are duplicated — discovery must be multi-property, gaps expected.
 2. vPIC year fetch (landing only, runnable anytime): untyped `GetModelsForMakeIdYear` halves calls (~6.3k requests ≈ 1.75 h for matched makes; bound 1981 → current+1 by policy — vPIC happily returns rows for 2099), intersected against the known passenger ModelIds. `model_year` writes wait on 1. Per the fetch-wide rule, fold in `GetWMIsForManufacturer` (grounds the issues-its-own-VINs test) and manufacturer details.
 3. Thin read surface (F2): parked (Gaurav 2026-07-30 — database fill first).
-4. Gaurav's "barely cars" pass: admission batch decisions (moto/truck/bus/racing/subsidiary signatures), the out-of-scope vPIC makes (Blue Bird, Freightliner, Winnebago...), BLUECAR's company question (no company-shaped Wikidata entity; Bolloré is a holding group), and the parked no-match pool.
+4. Gaurav's "barely cars" pass — **delayed until much later** (Gaurav 2026-07-30: "after we figure out what cars are"): admission batch decisions (moto/truck/bus/racing/subsidiary signatures), the out-of-scope vPIC makes (Blue Bird, Freightliner, Winnebago...), BLUECAR's company question, and the parked no-match pool.
 
 ## Next (Phase 1 horizon)
 
@@ -92,6 +92,11 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
+
+### 2026-07-30 (part 4 — Santana resolved: one page per wheelbase; the model queue hits zero)
+
+- **The 3 slug-collision flags resolved as merges** (Gaurav: "a diff page for each wheelbase makes sense" — three pages, not six): each LAND ROVER SANTANA ModelId attached to the row its SANTANA twin created (`scripts/apply_santana_model_merges.py`, idempotent), flags resolved as `same_nameplate_second_makeid` — resolved with the verdict recorded, never deleted; they are the first model-level labeled decisions. Models pass now reconciles **1,738 records onto 1,735 rows**, zero open model flags. Sharp edge logged for the ladder ADR: a multi-id model's twins currently both assert `name` (harmless while byte-identical; a one-sided vPIC rename would need the company engine's canonical-record rule).
+- "Barely cars" batch-triage **delayed until much later** (Gaurav: "after we figure out what cars are"); the no-match pool parks with it. Awaiting Gaurav shrinks to PR #22 alone.
 
 ### 2026-07-30 (part 3 — no artifacts left: the demo raw records go too; C-Class answered by VIN decode)
 
