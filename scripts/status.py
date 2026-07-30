@@ -50,6 +50,8 @@ def main() -> int:
                 SELECT so.name,
                        CASE WHEN rr.external_id LIKE 'make:%' THEN 'makes'
                             WHEN rr.external_id LIKE 'model:%' THEN 'models'
+                            WHEN rr.external_id LIKE 'modelyears:%' THEN 'model-years'
+                            WHEN rr.external_id LIKE 'vehicle:%' THEN 'vehicles'
                             WHEN rr.external_id LIKE 'Q%' THEN 'entities'
                             ELSE 'other' END,
                        count(*)
