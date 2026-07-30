@@ -1,8 +1,8 @@
 # ADR 0011 — Models are as-filed leaf designations; series are lines, not entities
 
-- Status: Proposed (drafted from Gaurav's 2026-07-30 review of the models
-  pass; §1's class-shaped-name carve-out is the one interpretive addition
-  to confirm)
+- Status: Accepted (2026-07-30, PR #22 — including the §1 C-Class
+  carve-out, confirmed after the VIN-decode probe, and the §3 amendment
+  deleting the fabricated demo raw records)
 - Date: 2026-07-30
 - Depends on: ADR 0007 (reconciler contract), ADR 0010 (the models pass)
 
