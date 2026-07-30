@@ -77,24 +77,28 @@ id map), then descends:
    entity had a resolvable company and near-miss candidates; else it
    waits in raw.
 
-### 3. Wikidata may CREATE models under held companies — the global expansion
+### 3. The global expansion: approved in principle, TABLED — v1 corroborates, never creates
 
-The mission is every production car globally; vPIC only sees the US.
-An entity that resolves to a held company (rung 3 found no as-filed
-match, rungs 4–5 found no line/generation evidence) and is model-shaped
-**creates** an as-asserted model under that company — identity ladder
-first, slug collisions flag rather than suffix, exactly ADR 0010's
-mechanics with Wikidata as the filing source. This is the single biggest
-consequence of this ADR: `models` grows from 1,735 toward the ~11k
-entities with manufacturers — the Euro/JDM/historical nameplates vPIC
-never met. Under-admission stays the cheap error: a wrongly-waiting
-entity is one policy edit + re-run away.
+The mission is every production car globally, and Wikidata's ~11k
+manufacturer-linked model entities are the road there. **Approved in
+principle, deliberately not in v1** (Gaurav, 2026-07-30): the vPIC+EPA
+base gives the US cars deep, multi-source data the reconciler can prove
+itself on; single-source global creation would mint thousands of rows
+with exactly one assertion behind each. The pass therefore **matches and
+enriches only**. A model-shaped entity under a held company with no
+as-filed match is marked reconciled-seen and waits — no row, no flag
+(ADR 0010 §1's posture, one level over). The sweep still lands
+*everything* (fetch-wide): raw is the stocked warehouse the expansion
+draws from the day it turns on, by re-run, with no re-fetch.
 
-`FIELD_AFFINITY` for `models.name` registers to the **filing source
-per row** in effect: vPIC-created models keep vPIC names (Wikidata labels
-prefix the make — "Toyota 4Runner" must not rename `4Runner`), and
-Wikidata asserts `summary` everywhere it matches. Wikidata-created models
-take their (prefix-stripped) label as name.
+The expansion turns on by explicit decision when either trigger fires:
+a second global-capable source lands to corroborate (Wikipedia
+infoboxes, Euro type approval), or the US set is reconciled deeply
+enough that the machinery's precision is demonstrated.
+
+`FIELD_AFFINITY` in v1 is simple: `models.name` stays with vPIC (the
+filing source — Wikidata labels prefix the make, and "Toyota 4Runner"
+must never rename `4Runner`); Wikidata asserts `summary` on every match.
 
 ### 4. Lines are grouping rows, not entities
 
@@ -116,13 +120,23 @@ superseded, flagged, never unique-constrained across sources.
   ambiguous extractions flag rather than guess. Span years only when the
   entity asserts dates; span-less generations are legal (identity now,
   time later).
-- **Line case** (the BMW shape): generation entities of a *line* land as
-  line-level structure only. Instantiating them under each member model
-  (E46 under `330i` by year overlap) is **deferred to the year-pass
-  ADR**, where vPIC's year lists exist to overlap against — that
-  inference needs the time axis this sweep doesn't carry, and doing it
-  with sparse Wikidata dates would guess. Chains (P155/P156) order
-  generations even where dates are absent.
+- **Line case** (the BMW shape): generation entities of a *line* wait in
+  raw. Instantiating them under each member model (E46 under `330i` by
+  year overlap) is **deferred to the year-pass ADR**, where vPIC's year
+  lists exist to overlap against — that inference needs the time axis
+  this sweep doesn't carry, and doing it with sparse Wikidata dates
+  would guess. Chains (P155/P156) order generations even where dates
+  are absent.
+- **The shared "all E46 cars" page is a view, not an entity** — the same
+  species as a line, one level down (Gaurav's framing: membership-shaped
+  and far less load-bearing than the FK spine). Under as-filed models
+  the E46 concept spans several per-model generation rows (`330i`/E46,
+  `M3`/E46, …), and the page renders over `generations.chassis_codes @>
+  ['E46']` — the GIN-indexed array built for exactly this query on day
+  one. ADR 0009's "the generation page stays the one shared page"
+  carries forward with its mechanism updated: aggregation pages are
+  queries over the spine (lines over models, code pages over
+  generations); only the five-level FK chain is load-bearing.
 
 ### 6. What this ADR does NOT do
 
@@ -137,8 +151,10 @@ superseded, flagged, never unique-constrained across sources.
 - A migration for `model_lines` / `model_line_members` (provenance
   columns per the charter's fact-table rule).
 - `RECONCILER_VERSION` bumps; the sweep lands ~14.6k raw records
-  (bare-QID, `sweep: models`); the pass grows `models` toward the global
-  set and creates the first `generations` and lines.
+  (bare-QID, `sweep: models`). In v1 `models` does **not** grow — the
+  pass enriches matched US models (summary, QID), builds lines and
+  memberships, and creates direct-case generations; the ~9k unmatched
+  model entities wait in raw as the expansion's stocked warehouse.
 - The duplicate-entity disease (four "BMW 3 Series") meets the same cure
   as companies: curated `IDENTITY_MERGES`, model-level registry, grown by
   resolving flags.
