@@ -67,12 +67,7 @@ python -m venv .venv
 
 # 3. schema
 .venv/bin/alembic upgrade head
-
-# 4. one demo vehicle, end to end (idempotent)
-.venv/bin/python scripts/seed_demo.py
 ```
-
-The seed threads a 2002 BMW 330i (E46, US) through all five levels plus engine, transmission, and EAV attributes — with three sources contributing different fields to the one configuration, each traceable to its scrape.
 
 To pull real data:
 
