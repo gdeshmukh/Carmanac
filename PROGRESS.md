@@ -26,8 +26,8 @@ PR #21 merged (2026-07-30). **ADR 0011 drafted, implemented, and amended on `fea
 
 ## Next (immediate)
 
-1. **Wikidata models+generations fetch**, designed as one maximal sweep (model entities, generation entities, P179/P361/P155-P156 links, years, P4243 platform) → the cross-source model ladder + generation ADR. Probe 2026-07-30: generation entities exist (BMW E30) but links are sparse and series entities are duplicated — discovery must be multi-property, gaps expected.
-2. vPIC year fetch (landing only, runnable anytime): untyped `GetModelsForMakeIdYear` halves calls (~6.3k requests ≈ 1.75 h for matched makes; bound 1981 → current+1 by policy — vPIC happily returns rows for 2099), intersected against the known passenger ModelIds. `model_year` writes wait on 1. Per the fetch-wide rule, fold in `GetWMIsForManufacturer` (grounds the issues-its-own-VINs test) and manufacturer details.
+1. **ADR 0012: Wikidata models+generations fetch**, designed as one maximal sweep (model entities, generation entities, P179/P361/P155-P156 links, years, P4243 platform) → the cross-source model ladder + generation ADR. Probe 2026-07-30: generation entities exist (BMW E30) but links are sparse and series entities are duplicated — discovery must be multi-property, gaps expected.
+2. vPIC year fetch — **built** (`carmanac/ingest/vpic/years.py`, `modelyears:<id>` records, commit-per-make resumability); the ~3.2 h all-makes backfill run awaits Gaurav's go. **EPA vehicles.csv landed 2026-07-30**: 49,995 per-variant rows (`vehicle:<id>`, 1984–2027), idempotent re-land verified. Both write passes stay behind their ADRs. Next vPIC extras (own design turn, probe first): the manufacturer/WMI sweep — manufacturers are a different id space from makes, and the naive per-manufacturer WMI sweep would be ~17k requests, so it needs scoping before fetching.
 3. Thin read surface (F2): parked (Gaurav 2026-07-30 — database fill first).
 4. Gaurav's "barely cars" pass — **delayed until much later** (Gaurav 2026-07-30: "after we figure out what cars are"): admission batch decisions (moto/truck/bus/racing/subsidiary signatures), the out-of-scope vPIC makes (Blue Bird, Freightliner, Winnebago...), BLUECAR's company question, and the parked no-match pool.
 
@@ -92,6 +92,11 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
+
+### 2026-07-30 (part 5 — ADR 0011 accepted; EPA lands; the year fetch is built and armed)
+
+- **ADR 0011 accepted** (PR #22) — with a merge-race footnote: Gaurav's merge and the Santana push crossed, stranding commit `b45f91d` on the merged branch; recovered by cherry-pick onto main. Lesson: once a PR is under review, no further pushes without checking merge state first.
+- **The two safe landings built** (`feat/vpic-years-epa-landing`): vPIC model-years fetcher (`modelyears:<id>` per-model sorted year lists, untyped endpoint intersected against known passenger ModelIds, 1981→current+1 policy bound, commit-per-make so the long sweep is resumable) and the EPA bulk lander (`vehicle:<id>` per CSV row, untransformed). **EPA ran live: 49,995 rows, 1984–2027, re-land 0 new.** The vPIC sweep (~11.6k requests ≈ 3.2 h at the polite rate, one-time; annual top-ups ≈ 4 min) awaits Gaurav's go. Fetch-wide note: the year endpoint itself carries nothing beyond the (model, year) link, so "grab more while there" means chaining other sweeps — manufacturers/WMI needs its own scoping probe (different id space; naive sweep ≈ 17k requests).
 
 ### 2026-07-30 (part 4 — Santana resolved: one page per wheelbase; the model queue hits zero)
 
