@@ -266,11 +266,19 @@ class _ModelsPass:
 
     @staticmethod
     def _is_model_record(record: RawRecord) -> bool:
-        """This source holds several record shapes (makes, models, the seed
-        demo's configuration-level record), selected by payload shape - the
-        same convention the match pass and the models fetch already use."""
-        payload = record.payload
-        return isinstance(payload, dict) and "model_id" in payload and "make_id" in payload
+        """MODEL records only, selected by the external id's KIND PREFIX.
+
+        This pass shipped selecting by payload shape ("model_id" in payload)
+        - the exact defect class the match pass had already fixed and PROGRESS
+        recorded as a lesson. The model-years fetch then landed
+        `modelyears:<id>` payloads carrying model_id + make_id + make_name,
+        which this test read as model records: every one under a matched make
+        would have slug-collided with its real model row and opened a
+        spurious flag (~1,500 of them). Caught by the 2026-07-30 direction
+        review before any pass re-ran. Kinds share fields legitimately; only
+        the namespaced id says what a record IS.
+        """
+        return (record.external_id or "").startswith("model:")
 
     def run(self) -> ModelsPassStats:
         records = [

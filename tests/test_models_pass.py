@@ -237,6 +237,41 @@ def test_renamed_model_supersedes_rather_than_appends(db, wikidata_source, vpic_
     ]
 
 
+def test_modelyears_records_are_not_read_as_models(db, wikidata_source, vpic_source):
+    """Record kinds are told apart by the external-id PREFIX, not payload
+    shape - the lesson, learned twice. A `modelyears:` payload carries
+    model_id + make_id + make_name too; the shape test this pass shipped
+    with read every one as a model record, and each would have slug-collided
+    with its real row (~1,500 spurious flags). Caught by the 2026-07-30
+    direction review."""
+    honda = _matched_make(db, wikidata_source, vpic_source, "Q9584", "Honda", 474)
+    _land_model(db, vpic_source, 1861, "Accord", 474, "HONDA")
+    run_vpic_models_pass(db)
+
+    payload = {
+        "model_id": 1861,
+        "model_name": "Accord",
+        "make_id": 474,
+        "make_name": "HONDA",
+        "years": [2001, 2002],
+    }
+    db.add(
+        RawRecord(
+            source_id=vpic_source.id,
+            external_id="modelyears:1861",
+            content_hash=content_hash(payload),
+            payload=payload,
+        )
+    )
+    db.commit()
+
+    stats = run_vpic_models_pass(db)
+    assert stats.processed == 1  # the model record only, not the years record
+    assert stats.flags_opened == 0 and stats.models_created == 0
+    assert db.scalar(select(func.count()).select_from(Model)) == 1
+    assert honda.id == db.scalars(select(Model)).one().company_id
+
+
 def test_models_pass_idempotent(db, wikidata_source, vpic_source):
     _matched_make(db, wikidata_source, vpic_source, "Q9584", "Honda", 474)
     _land_model(db, vpic_source, 1861, "Accord", 474, "HONDA")
