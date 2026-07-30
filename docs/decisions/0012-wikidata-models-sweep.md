@@ -1,6 +1,6 @@
 # ADR 0012 — The Wikidata models sweep: the ladder, lines, and generations
 
-- Status: Proposed
+- Status: Accepted (2026-07-30, PR #24, as amended - expansion tabled, E46-page-as-view)
 - Date: 2026-07-30
 - Depends on: ADR 0007 (reconciler contract), ADR 0008 (match-pass
   precedent), ADR 0010 (the models pass), ADR 0011 (as-filed models;
