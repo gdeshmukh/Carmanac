@@ -1,18 +1,28 @@
-"""Retire the demo seed's entity chain (ADR 0011 §3).
+"""Retire the demo seed, artifacts included (ADR 0011 §3).
 
-Deletes the synthetic 2002 BMW 330i scaffolding the old seed_demo.py
-created: the `3-series` model, its E46 → 2002 → 330i-us-sedan chain, the
-demo engine/transmission, and every row hanging off them (joins, EAV,
-provenance, external ids, flags). One-off and idempotent — a second run
-finds nothing.
+Two phases, both idempotent — a second run finds nothing:
 
-What it deliberately does NOT touch:
+1. The entity chain the old seed_demo.py created: the `3-series` model,
+   its E46 → 2002 → 330i-us-sedan chain, the demo engine/transmission,
+   and every row hanging off them (joins, EAV, provenance, external ids,
+   flags).
+2. The raw-side artifacts: the three fabricated `/demo` raw records
+   (ADR 0004's own-artifacts clause — fabrications are not evidence and
+   are deletable at any tier), the superseded company-arc provenance
+   history that attributed demo content to real sources, the seed's
+   raw-less Wikidata role row on BMW, and the demo record's
+   reconciliation bookkeeping. Deletion is the right verb here, not
+   supersession: supersession records a source changing its mind, and no
+   source ever asserted these.
 
-- The BMW company row (real, reconciler-owned, vPIC-matched) and its
-  role/provenance rows.
-- The three simulated raw records (raw is not casually deleted; inert).
-- Reference data the seed also created: lookups, `sources`,
-  `attribute_definitions`.
+After a run that deletes the role row, re-run the companies pass
+(`scripts/reconcile_companies.py`) so the Wikidata manufacturer role on
+BMW is re-asserted from the real Q26678 record.
+
+What stays: the BMW company row and its Q26678 mapping (substantively
+real — the reconciler upserts by natural key and adopted them), and the
+reference data the seed also created (lookups, `sources`,
+`attribute_definitions`).
 """
 
 from __future__ import annotations
@@ -23,6 +33,8 @@ from sqlalchemy.orm import Session
 from carmanac.db.models import (
     CataloguePeriod,
     Company,
+    CompanyRole,
+    CompanyRoleAssignment,
     Configuration,
     ConfigurationAttribute,
     ConfigurationEngine,
@@ -32,7 +44,10 @@ from carmanac.db.models import (
     FieldProvenance,
     Generation,
     Model,
+    RawRecord,
+    ReconciledRecord,
     ReconciliationFlag,
+    Source,
     Transmission,
 )
 from carmanac.db.session import SessionLocal
@@ -125,15 +140,61 @@ def retire(session: Session) -> dict[str, int]:
     return counts
 
 
+def retire_raw_artifacts(session: Session) -> dict[str, int]:
+    """Phase 2: the fabricated raw records and their false-attribution rows."""
+    counts: dict[str, int] = {}
+
+    demo_ids = list(session.scalars(select(RawRecord.id).where(RawRecord.url.like("%/demo"))))
+    if demo_ids:
+        counts["field_provenance_history"] = _delete(
+            session, delete(FieldProvenance).where(FieldProvenance.raw_record_id.in_(demo_ids))
+        )
+        counts["reconciliation_flags"] = _delete(
+            session,
+            delete(ReconciliationFlag).where(ReconciliationFlag.raw_record_id.in_(demo_ids)),
+        )
+        counts["reconciled_records"] = _delete(
+            session, delete(ReconciledRecord).where(ReconciledRecord.raw_record_id.in_(demo_ids))
+        )
+        counts["raw_records"] = _delete(
+            session, delete(RawRecord).where(RawRecord.id.in_(demo_ids))
+        )
+
+    # The seed's role row: live, sourced "Wikidata", but pointing at no raw
+    # record - real passes always carry one. Identified precisely so the
+    # pass-created replacement (which has a raw_record_id) never matches.
+    bmw_id = session.scalar(select(Company.id).where(Company.slug == "bmw"))
+    wikidata_id = session.scalar(select(Source.id).where(Source.name == "Wikidata"))
+    manufacturer_id = session.scalar(
+        select(CompanyRole.id).where(CompanyRole.code == "manufacturer")
+    )
+    counts["company_role_assignments"] = _delete(
+        session,
+        delete(CompanyRoleAssignment).where(
+            CompanyRoleAssignment.company_id == bmw_id,
+            CompanyRoleAssignment.company_role_id == manufacturer_id,
+            CompanyRoleAssignment.source_id == wikidata_id,
+            CompanyRoleAssignment.raw_record_id.is_(None),
+        ),
+    )
+    return counts
+
+
 def main() -> int:
     with SessionLocal() as session:
         counts = retire(session)
+        artifact_counts = retire_raw_artifacts(session)
         session.commit()
     deleted = {k: v for k, v in counts.items() if v}
+    artifacts = {k: v for k, v in artifact_counts.items() if v}
     if deleted:
         print("Retired demo seed rows: " + ", ".join(f"{k}={v}" for k, v in deleted.items()))
-    else:
-        print("Nothing to retire - the demo seed chain is already gone.")
+    if artifacts:
+        print("Retired raw artifacts:  " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
+    if artifacts.get("company_role_assignments"):
+        print("Re-run scripts/reconcile_companies.py to re-assert BMW's Wikidata role.")
+    if not deleted and not artifacts:
+        print("Nothing to retire - the demo seed and its artifacts are already gone.")
     return 0
 
 

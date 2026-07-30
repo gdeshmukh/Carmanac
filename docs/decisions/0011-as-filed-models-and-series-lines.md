@@ -42,11 +42,14 @@ per-make curated splitting stays forbidden (ADR 0007's no-fuzzy rule).
 **The class-shaped-name carve-out.** Mercedes' `C-Class` row stays. It
 looks series-shaped, but it is Mercedes' actual filing — the finest grain
 the source asserts for that make — so it IS the leaf designation, and its
-engine variants land as configurations (the 4Runner shape). Removing it
-would orphan the make's entire US catalogue, and the next pass run would
-lawfully recreate it from raw. "Series are not models" (§2) is a statement
-about aggregation entities, never about filed names that happen to sound
-broad.
+engine variants land as configurations (the 4Runner shape). vPIC's own
+VIN layer confirms where the badge lives: a W205 pattern decodes
+`Model=C-Class, Trim=C300` (probed 2026-07-30), so C300 vs C350 lands in
+`configurations.trim_name`, one level down — the same place BMW's VIN
+layer puts `xDrive35i` under `Model=X3`. Removing the row would orphan
+the make's entire US catalogue, and the next pass run would lawfully
+recreate it from raw. "Series are not models" (§2) is a statement about
+aggregation entities, never about filed names that happen to sound broad.
 
 ### 2. Series and lines are not entities
 
@@ -61,7 +64,7 @@ of it), rendered as a view or page over the member models. A page does not
 require an identity row. Designing that relation belongs to the Wikidata
 models ADR, not this one.
 
-### 3. The demo seed chain retires
+### 3. The demo seed retires, artifacts included
 
 The seed's entity chain — `3-series` → E46 → 2002 → 330i-us-sedan, plus
 the demo engine (M54B30), transmission (Getrag 220), their join rows, EAV
@@ -70,10 +73,23 @@ whose schema-proving job ended when real ingestion landed, and its head
 row now violates §2. It is deleted live by `scripts/retire_demo_seed.py`;
 `scripts/seed_demo.py` is deleted with it (README updated).
 
-What stays: the three simulated raw records (raw is not casually deleted,
-and they are inert), and everything the seed created that is *reference*
-rather than demo — lookup rows, the `sources` rows, the two
-`attribute_definitions`.
+**The simulated raw records go too** (amended on review: no artifacts
+left over). The three `/demo` records are fabricated payloads, not source
+data — ADR 0004's retention exists to preserve *evidence*, and its
+own-artifacts clause makes fabrications deletable at any tier. With them
+go the rows that falsely attribute demo content to real sources: the
+seed's superseded company-arc history on BMW, its raw-less Wikidata role
+row (the real pass re-asserts the role from the real Q26678 record on the
+next run), and the demo record's reconciliation bookkeeping. The live
+company assertions need nothing — the first real pass already superseded
+every seeded value onto the real record.
+
+What stays: reference data the seed also created (lookup rows, the
+`sources` rows, the two `attribute_definitions`) — and the BMW company
+row with its Q26678 mapping, which are substantively real: the reconciler
+upserts by natural key and adopted them, so they are indistinguishable
+from pass-created rows. The artifact test is *false attribution or
+fabricated content*, not who inserted first.
 
 ### 4. Our identity is ours; external ids are correspondence, not identity
 
@@ -115,7 +131,11 @@ model-level merge registry arrives with the cross-source ladder.
 - `models` drops to 1,735 (pure vPIC); `generations`, `catalogue_periods`,
   `configurations` drop to 0. Every entity row in the database is now
   reconciler-produced. The zeros are honest: no source has asserted those
-  levels yet.
+  levels yet — and they are temporary, since year-level vPIC + EPA's
+  per-variant rows are exactly the configuration feedstock, blocked only
+  on the generation question.
+- Wikidata raw records drop to 9,889 — now exactly the companies pass's
+  `processed` count, a cross-check the demo record used to break.
 - Near-duplicate leaf filings stay separate rows until curated merges or
   review resolve them (BMW `228`/`228i`, Ferrari `308GTS`/`308
   Convertible`, `Boxster`/`718 Boxster`) — §5's machinery, model-level.
