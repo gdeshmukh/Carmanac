@@ -94,6 +94,12 @@ End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
 
+### 2026-07-31 (part 5 — PR #28 merged; the source inventory for the next data turn)
+
+- **PR #28 merged** (Gaurav); main synced, both new passes double re-ran as exact no-ops, 140 tests green. Gaurav's direction: with real cars in, go get the rest of what vPIC and EPA offer.
+- **Source inventory taken** (fill rates measured live; vPIC variable list probed live): EPA vehicles.csv has ~70 unconsumed columns — near-universal tier (annual fuel cost, CO2 g/mi, petroleum barrels, EPA size class ~97-100%), mid tier (engine id/descriptor 63-75%, luggage/passenger volumes ~34%, smog/GHG scores ~36%, start-stop 37%), electrified tail (EV/PHEV range, charge times, motor, alt-fuel doubles ≤4%). EPA also publishes `emissions.csv`, joinable on the same vehicle id our 13,565 external ids already hold. vPIC's landed payloads are deliberately thin identity feedstock; the source's depth is its **144 VIN-decode variables** (Body Class, Doors, Series/Trim as filed, 20 engine fields incl. displacement/kW/turbo, battery pack fields, GVWR, plant country, ~40 safety-equipment fields) — reachable per VIN pattern or via the monthly full-database download, which needs its own probe-first design turn (the WMI/manufacturer sweep scoping note stands).
+- Next per Gaurav: pick the EPA long-tail slice (columns vs EAV per the 80% rule) and the vPIC spec-depth path; each an ADR before implementation.
+
 ### 2026-07-31 (part 4 — ADR 0014 accepted and implemented: the first whole cars)
 
 - **The fundamentals review became the doctrine** (Gaurav: "serving as a goal per car makes this adr 0014 decision even better"): the hierarchy is a goal per car, not a form every car must fill. The single-car trace (2019 Mercedes-AMG AMG GT S Coupe) found the decisive case — vPIC files ONE `AMG GT` whose 2019 model year holds C190 coupes and X290 4-doors simultaneously — so generation placement moved from the period to the **configuration** (nullable, evidence-gated). Charter amended; ADR 0009 carries the revision pointer; chassis codes confirmed not-a-level (per-make grain; pages over codes are views).
