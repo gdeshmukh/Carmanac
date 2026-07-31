@@ -378,6 +378,99 @@ def test_ambiguous_hits_flag_never_guess(db, wikidata_source, vpic_source):  # n
     assert _decision(db, "Q700").outcome == "flagged_ambiguous"
 
 
+# --- shared claims: the label-twin cluster (live finding, 2026-07-30) ---------
+
+
+def test_shared_claims_flag_never_attach(db, wikidata_source, vpic_source):  # noqa: F811
+    """The BMW X5 shape found live: several entities carrying the bare
+    nameplate label (the nameplate + its generation entities, chains only, no
+    P179) all exact-match one as-filed model. Correspondence is not 1:1 and
+    the nameplate is not mechanically identifiable -> nobody attaches, ONE
+    flag carries the cluster, and re-runs must not churn assertions."""
+    _matched_make(db, wikidata_source, vpic_source, "Q26678", "BMW", 452)
+    _land_model(db, vpic_source, 5, "X5", 452, "BMW")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(db, wikidata_source, "Q1000", "BMW X5", description="SUV", makers=["Q26678"])
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q2000",
+        "BMW X5",
+        description="car model",
+        makers=["Q26678"],
+        follows=["Q3000"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 0 and stats.flags_opened == 1
+    assert (
+        db.scalar(select(ExternalId).where(ExternalId.external_id.in_(["Q1000", "Q2000"]))) is None
+    )
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).one()
+    assert flag.detail["reason"] == "shared_model_match"
+    assert [c["qid"] for c in flag.detail["claimants"]] == ["Q1000", "Q2000"]
+    assert _decision(db, "Q1000").outcome == "flagged_shared_match"
+    assert _decision(db, "Q2000").outcome == "flagged_shared_match"
+
+    rerun = run_wikidata_models_pass(db)
+    assert rerun.assertions_inserted == 0 and rerun.assertions_superseded == 0
+    assert rerun.flags_opened == 0, "the cluster flag is asked once"
+
+
+def test_claimant_with_p179_to_claimant_defers_to_generation(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+):
+    """A claimant whose P179 points at another claimant is that claimant's
+    generation wearing the nameplate label (Wikidata labels W205 'Mercedes-
+    Benz C-Class'): it leaves the cluster, the real nameplate attaches 1:1,
+    and the deferred entity becomes a direct-case generation under it."""
+    _matched_make(db, wikidata_source, vpic_source, "Q36008", "Mercedes-Benz", 449)
+    _land_model(db, vpic_source, 2, "C-Class", 449, "MERCEDES-BENZ")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q100",
+        "Mercedes-Benz C-Class",
+        classes=["Q59773381"],
+        makers=["Q36008"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q200",
+        "Mercedes-Benz C-Class",
+        description="fourth generation",
+        makers=["Q36008"],
+        series_of=["Q100"],
+        aliases=["Mercedes-Benz C-Class (W205)"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 1 and stats.flags_opened == 0
+    model = db.scalars(select(Model)).one()
+    wd_qid = db.scalars(
+        select(ExternalId).where(ExternalId.model_id == model.id, ExternalId.external_id.like("Q%"))
+    ).one()
+    assert wd_qid.external_id == "Q100", (
+        "the nameplate entity, not its generation, is the model's QID"
+    )
+    generation = db.scalars(select(Generation)).one()
+    assert generation.model_id == model.id
+    assert generation.chassis_codes == ["W205"], "code extracted from the alias parenthetical"
+    assert _decision(db, "Q200").outcome == "generation_created"
+
+
 # --- the sweep partition ------------------------------------------------------
 
 

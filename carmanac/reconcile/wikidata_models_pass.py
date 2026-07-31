@@ -193,6 +193,17 @@ class _WikidataModelsPass:
             ).append(m.id)
             self.model_by_company_slug[(m.company_id, m.slug)] = m.id
 
+        # Reverse of model_by_qid: the model's ONE QID (lowest wins if legacy
+        # data ever holds several - the deterministic assert-anchor, same
+        # principle as the engine's merge canonicals). Rung-3 claims collect
+        # here before resolution, keyed by model.
+        self.qid_by_model: dict[int, str] = {}
+        for qid, model_id in sorted(
+            self.model_by_qid.items(), key=lambda kv: int(kv[0][1:]), reverse=True
+        ):
+            self.qid_by_model[model_id] = qid
+        self.claims: dict[int, list[tuple[str, str]]] = {}
+
         # Lines resolve by natural key - they hold no external ids (§4).
         self.line_by_key: dict[tuple[int, str], int] = {
             (line.company_id, line.slug): line.id for line in session.scalars(select(ModelLine))
@@ -460,6 +471,7 @@ class _WikidataModelsPass:
         )
         self.session.flush()
         self.model_by_qid[subject.entity.qid] = model_id
+        self.qid_by_model[model_id] = subject.entity.qid
 
     def _slug_pair(self, model_id: int) -> str:
         model = self.models[model_id]
@@ -497,12 +509,21 @@ class _WikidataModelsPass:
             entity = subject.entity
             self.stats.processed += 1
 
-            # Rung 1: the QID already corresponds to one of our rows.
+            # Rung 1: the QID already corresponds to one of our rows. Only
+            # the model's anchor QID asserts facts - a second mapped QID
+            # re-asserting summary would contend for the same live slot and
+            # supersede in a cycle on every run (the engine's §5 churn, one
+            # level down). Legacy fan-in refreshes identity only.
             if qid in self.model_by_qid:
+                model_id = self.model_by_qid[qid]
                 self.stats.models_refreshed += 1
-                self._enrich_model(self.model_by_qid[qid], subject)
+                if self.qid_by_model.get(model_id) == qid:
+                    self._enrich_model(model_id, subject)
+                    outcome = "model_refreshed"
+                else:
+                    outcome = "model_refreshed_secondary"
                 self._dismiss_flags(qid, "resolves_to_existing_model")
-                self._decide(subject, "1", "external_id", "model_refreshed")
+                self._decide(subject, "1", "external_id", outcome)
                 continue
             if qid in self.generation_by_qid:
                 # Refreshed in the generation phase, where display names and
@@ -551,15 +572,16 @@ class _WikidataModelsPass:
                 )
                 continue
 
-            # Rung 3: exact-normalized name/alias match, never fuzzy.
+            # Rung 3: exact-normalized name/alias match, never fuzzy. A unique
+            # hit is only a CLAIM here - live data showed 51 models claimed by
+            # several entities at once (generation entities carrying the bare
+            # nameplate label: four "BMW X5"s, four "Honda Accord"s - the
+            # 3-Series lesson at nameplate level), so correspondence is decided
+            # per MODEL in _resolve_claims, after every claim is known.
             hits = self._name_hits(subject)
             if len(hits) == 1:
                 ((model_id, method),) = hits.items()
-                self._attach_model(model_id, subject)
-                self._enrich_model(model_id, subject)
-                self._dismiss_flags(qid, f"matched:{self._slug_pair(model_id)}")
-                self.stats.models_matched += 1
-                self._decide(subject, "3", method, "matched", {"model": self._slug_pair(model_id)})
+                self.claims.setdefault(model_id, []).append((qid, method))
             elif len(hits) > 1:
                 self._flag(
                     subject,
@@ -577,6 +599,72 @@ class _WikidataModelsPass:
                     {"candidates": sorted(self._slug_pair(m) for m in hits)},
                 )
             # 0 hits: falls through to the structure phases.
+
+    def _claim_detail(self, qid: str) -> dict:
+        """What a reviewer needs to tell a nameplate entity from its
+        label-twin generations: description and sitelink title."""
+        entity = self.subjects[qid].entity
+        return {
+            "qid": qid,
+            "description": entity.description,
+            "article": (entity.article or "").rsplit("/", 1)[-1] or None,
+        }
+
+    def _resolve_claims(self) -> None:
+        """Decide model correspondence per model, over all rung-3 claims.
+
+        Exactly one claimant -> the correspondence is 1:1 and attaches. More
+        than one -> Wikidata holds several entities whose names all say this
+        model, and picking the nameplate mechanically would be a guess (the
+        labels are identical; descriptions and classes are nominal, not
+        structural) -> ONE flag carries the cluster, everything waits, and
+        the curated registry resolves it (ADR 0012's duplicate-entity cure).
+
+        One refinement keeps real structure out of the cluster: a claimant
+        whose P179 points at ANOTHER claimant of the same model is that
+        claimant's generation (Wikidata labels generation entities with the
+        bare nameplate), so it defers to the structure phase - where the
+        surviving claimant, once attached, makes it a direct-case generation.
+        """
+        for model_id in sorted(
+            self.claims, key=lambda m: min(int(q[1:]) for q, _ in self.claims[m])
+        ):
+            claimants = self.claims[model_id]
+            cluster = {q for q, _ in claimants}
+            active = [
+                (q, method)
+                for q, method in claimants
+                if not set(self.subjects[q].entity.series_of) & (cluster - {q})
+            ]
+            active.sort(key=lambda c: int(c[0][1:]))
+            if not active:
+                continue  # every claimant deferred to the structure phase
+
+            existing_qid = self.qid_by_model.get(model_id)
+            if existing_qid is not None:
+                # The model already has its QID: later claimants are source-
+                # side duplicates of it, a curated-merge question.
+                reason, outcome = "second_qid_for_model", "flagged_second_qid"
+            elif len(active) == 1:
+                qid, method = active[0]
+                subject = self.subjects[qid]
+                self._attach_model(model_id, subject)
+                self._enrich_model(model_id, subject)
+                self._dismiss_flags(qid, f"matched:{self._slug_pair(model_id)}")
+                self.stats.models_matched += 1
+                self._decide(subject, "3", method, "matched", {"model": self._slug_pair(model_id)})
+                continue
+            else:
+                reason, outcome = "shared_model_match", "flagged_shared_match"
+
+            detail = {
+                "model": self._slug_pair(model_id),
+                "claimants": [self._claim_detail(q) for q, _ in active],
+                **({"existing_qid": existing_qid} if existing_qid else {}),
+            }
+            self._flag(self.subjects[active[0][0]], reason, detail)
+            for qid, method in active:
+                self._decide(self.subjects[qid], "3", method, outcome, detail)
 
     # --- rung 4: lines -------------------------------------------------------
 
@@ -843,6 +931,7 @@ class _WikidataModelsPass:
             policy.RECONCILER_VERSION,
         )
         self._match_phase()
+        self._resolve_claims()
         self._line_phase()
         self._membership_phase()
         self._structure_phase()
