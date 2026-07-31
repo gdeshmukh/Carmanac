@@ -50,7 +50,7 @@ def graph(db, wikidata_source):
     kind = db.scalar(select(PeriodKind).where(PeriodKind.code == "model_year"))
     assert kind is not None, "period_kinds seed rows missing from migration"
     period = CataloguePeriod(
-        generation_id=gen_a.id, period_kind_id=kind.id, start_year=2002, end_year=2002
+        model_id=model.id, period_kind_id=kind.id, start_year=2002, end_year=2002
     )
     db.add(period)
     db.flush()
@@ -214,7 +214,7 @@ def test_duplicate_open_ended_period_rejected(db, graph):
     default UNIQUE semantics would let re-runs append forever."""
     db.add(
         CataloguePeriod(
-            generation_id=graph["gen_b"].id,
+            model_id=graph["model"].id,
             period_kind_id=graph["period_kind"].id,
             start_year=2019,
         )
@@ -222,7 +222,7 @@ def test_duplicate_open_ended_period_rejected(db, graph):
     db.commit()
     db.add(
         CataloguePeriod(
-            generation_id=graph["gen_b"].id,
+            model_id=graph["model"].id,
             period_kind_id=graph["period_kind"].id,
             start_year=2019,
         )
@@ -235,7 +235,7 @@ def test_duplicate_open_ended_period_rejected(db, graph):
 def test_period_ending_before_it_starts_rejected(db, graph):
     db.add(
         CataloguePeriod(
-            generation_id=graph["gen_b"].id,
+            model_id=graph["model"].id,
             period_kind_id=graph["period_kind"].id,
             start_year=2005,
             end_year=1998,
@@ -246,21 +246,22 @@ def test_period_ending_before_it_starts_rejected(db, graph):
     db.rollback()
 
 
-def test_both_kinds_coexist_on_one_generation(db, graph):
-    """ADR 0009's mixed granularity: US model years and a Euro production
-    period describe the same generation side by side."""
+def test_both_kinds_coexist_on_one_model(db, graph):
+    """ADR 0009's mixed granularity (re-parented by ADR 0014): US model
+    years and a Euro production period describe the same model side by
+    side."""
     pp = db.scalar(select(PeriodKind).where(PeriodKind.code == "production_period"))
     assert pp is not None, "period_kinds seed rows missing from migration"
     db.add_all(
         [
             CataloguePeriod(
-                generation_id=graph["gen_a"].id,
+                model_id=graph["model"].id,
                 period_kind_id=graph["period_kind"].id,
                 start_year=2003,
                 end_year=2003,
             ),
             CataloguePeriod(
-                generation_id=graph["gen_a"].id,
+                model_id=graph["model"].id,
                 period_kind_id=pp.id,
                 start_year=1998,
                 end_year=2005,

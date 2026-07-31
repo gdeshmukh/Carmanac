@@ -262,7 +262,10 @@ class Generation(Base, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text)
 
     model: Mapped[Model] = relationship(back_populates="generations")
-    catalogue_periods: Mapped[list[CataloguePeriod]] = relationship(back_populates="generation")
+    # Placed configurations (ADR 0014: placement is configuration-level,
+    # evidence-gated). Generation pages render over these plus the
+    # chassis-code views.
+    configurations: Mapped[list[Configuration]] = relationship(back_populates="generation")
 
     __table_args__ = (
         UniqueConstraint("model_id", "slug", name="uq_generations_model_id_slug"),
@@ -282,33 +285,37 @@ class Generation(Base, TimestampMixin):
 
 
 class CataloguePeriod(Base, TimestampMixin):
-    """The mandatory 4th level (ADR 0009): the span a source catalogues a
-    generation under. Thin by design.
+    """The 4th level (ADR 0009, re-parented by ADR 0014): the span a source
+    catalogues a MODEL under. Pure time, thin by design.
 
     `kind` says which convention the row follows: `model_year` (US-style,
     start = end - the shape vPIC/EPA assert), `production_period` (Euro/JDM
     "built 1998-2005"), or `phase` (zenki/kouki, Phase 1/2). `end_year` NULL
     means still in production. A row exists only because a current raw record
     asserted that exact shape - no pass may fabricate per-year rows from a
-    period or vice versa. One generation routinely carries both kinds at once
+    period or vice versa. One model routinely carries both kinds at once
     (US years next to a Euro period); queries by year use containment.
-    Same-kind overlap within a generation is a reconciliation flag, never a
+    Same-kind overlap within a model is a reconciliation flag, never a
     constraint - two sources bracketing a run differently must both land.
+
+    Periods hang under models, not generations (ADR 0014): a period records
+    exactly what the year-asserting sources say - (model, span) - and
+    generation placement is an evidence-gated fact on the CONFIGURATION,
+    because one model year can contain configurations of two generations at
+    once (the 2019 AMG GT: C190 coupes and X290 4-doors side by side).
     """
 
     __tablename__ = "catalogue_periods"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    generation_id: Mapped[int] = mapped_column(
-        ForeignKey("generations.id"), nullable=False, index=True
-    )
+    model_id: Mapped[int] = mapped_column(ForeignKey("models.id"), nullable=False, index=True)
     period_kind_id: Mapped[int] = mapped_column(
         ForeignKey("period_kinds.id"), nullable=False, index=True
     )
     start_year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     end_year: Mapped[int | None] = mapped_column(SmallInteger)  # null = still in production
 
-    generation: Mapped[Generation] = relationship(back_populates="catalogue_periods")
+    model: Mapped[Model] = relationship()
     period_kind: Mapped[PeriodKind] = relationship()
     configurations: Mapped[list[Configuration]] = relationship(back_populates="catalogue_period")
 
@@ -316,7 +323,7 @@ class CataloguePeriod(Base, TimestampMixin):
         # NULLS NOT DISTINCT: an open-ended period (end_year NULL) must still
         # collide with its duplicate - the R3/R4 lesson yet again.
         UniqueConstraint(
-            "generation_id",
+            "model_id",
             "period_kind_id",
             "start_year",
             "end_year",
@@ -356,6 +363,12 @@ class Configuration(Base, TimestampMixin):
     market_region_id: Mapped[int] = mapped_column(
         ForeignKey("market_regions.id"), nullable=False, index=True
     )
+    # Generation placement (ADR 0014): NULLABLE and evidence-gated - written
+    # only when a source places THIS car (body style, chassis code, dated
+    # spans), never inferred from the year alone. NULL means "no source has
+    # placed this car yet", visibly; the model -> year pages render it fully
+    # either way. This is the goal level of the goal-per-car hierarchy.
+    generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id"), index=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False)
 
     # --- identity / classification (mostly NHTSA vPIC) ---
@@ -401,6 +414,7 @@ class Configuration(Base, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text)
 
     catalogue_period: Mapped[CataloguePeriod] = relationship(back_populates="configurations")
+    generation: Mapped[Generation | None] = relationship(back_populates="configurations")
 
     __table_args__ = (
         # THE NATURAL KEY. Slug is derived from a name, so it cannot carry

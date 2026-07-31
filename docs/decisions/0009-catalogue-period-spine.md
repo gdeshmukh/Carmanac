@@ -1,6 +1,11 @@
 # ADR 0009 — What the 4th level holds: model years, production periods, phases
 
-- Status: Accepted (2026-07-29, with review notes below)
+- Status: Accepted (2026-07-29, with review notes below). **Revised by
+  ADR 0014 (2026-07-31)**: periods re-parent from generations to models
+  (pure time under the model — what the year sources assert), and
+  generation placement becomes an evidence-gated nullable fact on
+  `configurations`. The period kinds, natural-key, no-fabrication, and
+  mixed-granularity rules here all stand unchanged.
 - Date: 2026-07-29 (rewritten same day for clarity after first review)
 
 Review notes (Gaurav, 2026-07-29): (1) aggregation above the 4th level is
