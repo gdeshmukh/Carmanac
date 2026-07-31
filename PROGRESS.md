@@ -94,6 +94,11 @@ End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
 
+### 2026-07-31 (PR #25 merged; the review's three questions answered with a live-data companion page)
+
+- **PR #25 merged** (Gaurav reviewed the whole pass). His review questions — why chains can't create, what the label-twin trap left, what the 658-flag queue is — answered on a companion page built from the live rows (three real chains: X5 E53→E70→F15 siblings, Ford Model N→T→A successors, BMW 2002→E21 boundary-cross — identical edges; the 47-cluster table; queue = 47 clusters + 593 near-miss + 18 ambiguous, with the 2 similarity-1.0 near-misses identified as deferred-claimant echoes of open clusters). Vocabulary note recorded: "rung" (ADR 0008's ladder) read poorly in review; "level" collides with the hierarchy — "step" is the plain candidate if `match_decisions.rung` gets renamed.
+- Housekeeping: `.claude/`/`CLAUDE.md` confirmed ignored via the global excludes file, `.github` is tracked (its earlier graying was the anomaly) — the VS Code decoration change is cosmetic. Postgres container restarted after overnight host shutdown; state intact. Next: the wd-model flag queues, then the year-pass/EPA ADR (Gaurav's go pending).
+
 ### 2026-07-30 (part 8 — ADR 0012 implemented: the sweep lands, the first generations exist, and the label-twin trap fires live)
 
 - **The sweep** (probed live before building): population 14,524 — the ADR's three classes exactly; `ORDER BY ?item` costs ~90s server-side so the QID list fetches unordered (0.5s) and sorts client-side; details come in 49 `VALUES`-batches of 300 (2.1s each), commit per batch. Bare QIDs + the stamped `sweep: models` marker; **30 QIDs landed from BOTH sweeps**, so `_current_records` now partitions on the marker — without it whichever sweep landed last would shadow the other pass's view.
