@@ -20,6 +20,8 @@ from carmanac.db.models.hierarchy import (
     Configuration,
     Generation,
     Model,
+    ModelLine,
+    ModelLineMember,
 )
 from carmanac.db.models.lookups import (
     Aspiration,
@@ -51,6 +53,7 @@ from carmanac.db.models.provenance import ExternalId, FieldProvenance, RawRecord
 from carmanac.db.models.reconciliation import (
     FLAG_KINDS,
     FLAG_STATUSES,
+    MatchDecision,
     ReconciledRecord,
     ReconciliationFlag,
 )
@@ -83,9 +86,12 @@ __all__ = [
     "FuelType",
     "Generation",
     "MarketRegion",
+    "MatchDecision",
     "MediaAsset",
     "MediaAttachment",
     "Model",
+    "ModelLine",
+    "ModelLineMember",
     "PeriodKind",
     "RawRecord",
     "ReconciledRecord",

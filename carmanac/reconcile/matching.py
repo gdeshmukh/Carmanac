@@ -176,6 +176,8 @@ class _MatchPass:
         for flag in self.open_match_flags.pop(record.external_id, []):
             flag.status = "dismissed"
             flag.resolved_at = func.now()
+            # The close reason feeds the labeled set (2026-07-30 review).
+            flag.detail = {**(flag.detail or {}), "resolution": "record_resolves_to_company"}
             self.stats.match_flags_dismissed += 1
 
     def _corroborate_create(self, wd_record: RawRecord, vpic_record: RawRecord) -> int | None:

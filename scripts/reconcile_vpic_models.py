@@ -12,7 +12,7 @@ import logging
 
 from carmanac.db.session import SessionLocal
 from carmanac.reconcile import policy
-from carmanac.reconcile.models_pass import run_vpic_models_pass
+from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 

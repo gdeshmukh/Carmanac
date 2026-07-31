@@ -8,12 +8,16 @@ later source reconciles against.
 
 from carmanac.ingest.wikidata.client import SparqlClient, SparqlError
 from carmanac.ingest.wikidata.land import LandResult, land_makes
-from carmanac.ingest.wikidata.queries import MAKES_QUERY
+from carmanac.ingest.wikidata.models import land_models
+from carmanac.ingest.wikidata.queries import MAKES_QUERY, MODELS_DETAIL_QUERY, MODELS_QID_QUERY
 
 __all__ = [
     "MAKES_QUERY",
+    "MODELS_DETAIL_QUERY",
+    "MODELS_QID_QUERY",
     "LandResult",
     "SparqlClient",
     "SparqlError",
     "land_makes",
+    "land_models",
 ]

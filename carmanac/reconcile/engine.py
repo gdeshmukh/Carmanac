@@ -110,11 +110,24 @@ def _sort_key(external_id: str) -> tuple[int, int | str]:
     return (0, int(m.group(1))) if m else (1, external_id)
 
 
-def _current_records(session: Session, source_id: int) -> list[RawRecord]:
-    """The reconciliation units: current record per external_id (§1)."""
+def _current_records(session: Session, source_id: int, sweep: str | None = None) -> list[RawRecord]:
+    """The reconciliation units: current record per external_id (§1).
+
+    `sweep` partitions a source's records by the landing-stamped payload
+    marker (ADR 0012 §1): the models sweep lands the same bare QIDs the
+    makes sweep does, with a different payload shape, and without the
+    partition whichever sweep landed an entity most recently would shadow
+    the other pass's view of it. None - the default, and what every
+    pre-marker payload has - selects records with NO marker.
+    """
+    marker = RawRecord.payload.op("->>")("sweep")
     subq = (
         select(RawRecord)
-        .where(RawRecord.source_id == source_id, RawRecord.external_id.isnot(None))
+        .where(
+            RawRecord.source_id == source_id,
+            RawRecord.external_id.isnot(None),
+            marker.is_(None) if sweep is None else marker == sweep,
+        )
         .order_by(
             RawRecord.external_id,
             RawRecord.last_seen_at.desc(),
@@ -211,10 +224,12 @@ class _Pass:
     def _dismiss_admission_flags(self, record: RawRecord) -> None:
         """An entity that admits has outgrown its quarantine question: the
         situation resolved itself (a payload or policy change), and dismissal
-        records that no human decision was needed."""
+        records that no human decision was needed - plus WHY, so the close
+        feeds the labeled set (2026-07-30 review)."""
         for flag in self.open_admission.pop(record.external_id, []):
             flag.status = "dismissed"
             flag.resolved_at = func.now()
+            flag.detail = {**(flag.detail or {}), "resolution": "entity_admitted"}
             self.stats.flags_dismissed += 1
         self.open_flags.discard(("record", record.external_id, "admission_review"))
 

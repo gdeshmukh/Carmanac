@@ -35,11 +35,14 @@ def main() -> int:
         for label, sql in (
             ("companies", "SELECT count(*) FROM companies"),
             ("models", "SELECT count(*) FROM models"),
+            ("model_lines", "SELECT count(*) FROM model_lines"),
+            ("model_line_members", "SELECT count(*) FROM model_line_members"),
             ("generations", "SELECT count(*) FROM generations"),
             ("catalogue_periods", "SELECT count(*) FROM catalogue_periods"),
             ("configurations", "SELECT count(*) FROM configurations"),
             ("external_ids", "SELECT count(*) FROM external_ids"),
             ("assertions (field_provenance)", "SELECT count(*) FROM field_provenance"),
+            ("match decisions", "SELECT count(*) FROM match_decisions"),
         ):
             print(f"{label:<30}: {s.execute(text(sql)).scalar()}")
 
@@ -52,6 +55,10 @@ def main() -> int:
                             WHEN rr.external_id LIKE 'model:%' THEN 'models'
                             WHEN rr.external_id LIKE 'modelyears:%' THEN 'model-years'
                             WHEN rr.external_id LIKE 'vehicle:%' THEN 'vehicles'
+                            -- bare QIDs split by the landing-stamped sweep
+                            -- marker (ADR 0012 §1), never by payload shape
+                            WHEN rr.external_id LIKE 'Q%'
+                                 AND rr.payload->>'sweep' = 'models' THEN 'model entities'
                             WHEN rr.external_id LIKE 'Q%' THEN 'entities'
                             ELSE 'other' END,
                        count(*)
@@ -70,9 +77,12 @@ def main() -> int:
         for kind, n in s.execute(
             text(
                 """
-                SELECT f.kind || CASE WHEN f.kind = 'match_review'
-                                      THEN ' (' || split_part(rr.external_id, ':', 1) || ')'
-                                      ELSE '' END,
+                SELECT f.kind || CASE WHEN f.kind <> 'match_review' THEN ''
+                                      -- bare-QID records (the Wikidata sweeps)
+                                      -- have no kind prefix to split on
+                                      WHEN rr.external_id LIKE 'Q%'
+                                      THEN ' (wd ' || coalesce(rr.payload->>'sweep', 'make') || ')'
+                                      ELSE ' (' || split_part(rr.external_id, ':', 1) || ')' END,
                        count(*)
                 FROM reconciliation_flags f
                 LEFT JOIN raw_scrape.raw_records rr ON rr.id = f.raw_record_id
@@ -109,6 +119,34 @@ def main() -> int:
             )
         ).one()
         print(f"vPIC models reconciled        : {reconciled}/{landed_models}")
+
+        wd_models, wd_gens, wd_swept = s.execute(
+            text(
+                """
+                SELECT
+                  (SELECT count(*) FROM external_ids ei JOIN sources so ON so.id = ei.source_id
+                   WHERE so.name = 'Wikidata' AND ei.model_id IS NOT NULL),
+                  (SELECT count(*) FROM external_ids ei JOIN sources so ON so.id = ei.source_id
+                   WHERE so.name = 'Wikidata' AND ei.generation_id IS NOT NULL),
+                  (SELECT count(DISTINCT rr.external_id) FROM raw_scrape.raw_records rr
+                   JOIN sources so ON so.id = rr.source_id
+                   WHERE so.name = 'Wikidata' AND rr.payload->>'sweep' = 'models')
+                """
+            )
+        ).one()
+        print(f"Wikidata model QIDs -> models : {wd_models}/{wd_swept} swept")
+        print(f"Wikidata QIDs -> generations  : {wd_gens}")
+
+        print("match decisions by outcome:")
+        for pass_name, outcome, n in s.execute(
+            text(
+                """
+                SELECT pass_name, outcome, count(*) FROM match_decisions
+                GROUP BY 1, 2 ORDER BY 1, 3 DESC
+                """
+            )
+        ):
+            print(f"  {pass_name:<16} {outcome:<28}: {n}")
     return 0
 
 

@@ -24,6 +24,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -79,6 +80,63 @@ class ReconciledRecord(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     reconciler_version: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class MatchDecision(Base):
+    """The match-decision log: what the matcher did with one source record,
+    per pass (2026-07-30 direction review; folded into ADR 0012's build).
+
+    The review's finding was that the labeled set was not being captured -
+    rung-2 auto-matches recorded no method, and the charter's Tier-2/3 gate
+    ("matcher precision measured on a labeled set") was uncomputable. Every
+    pass now upserts one row per attempted record: which RUNG decided, by
+    which METHOD, with what OUTCOME, so precision is a query instead of an
+    archaeology dig.
+
+    One row per (source, pass, external_id), upserted - the log records the
+    CURRENT decision; how a decision changed over time is carried by the raw
+    history, the flags, and git (policy registries are version-controlled).
+    Human judgments live where they always did: curated policy registries and
+    flag resolutions. This table is the machine side of the labeled set.
+    """
+
+    __tablename__ = "match_decisions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, index=True)
+    # Which pass decided - 'wikidata_models', 'vpic_match', ... - so one
+    # source's records can carry decisions from several passes.
+    pass_name: Mapped[str] = mapped_column(Text, nullable=False)
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_record_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("raw_scrape.raw_records.id"), index=True
+    )
+
+    # The ladder rung that decided (matching the pass's documented ladder),
+    # the mechanical method on that rung ('exact_label', 'prefix_stripped_
+    # alias', 'curated', ...), and what happened ('matched', 'waits_no_held_
+    # maker', 'flagged_ambiguous', ...). Text, not enums: each pass owns its
+    # vocabulary, and the queries that compute precision group by these.
+    rung: Mapped[str | None] = mapped_column(Text)
+    method: Mapped[str | None] = mapped_column(Text)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[dict | None] = mapped_column(JSONB)
+
+    reconciler_version: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "pass_name",
+            "external_id",
+            name="uq_match_decisions_source_id_pass_name_external_id",
+        ),
+        # The precision queries: outcomes per pass, and "what did rung X do".
+        Index("idx_match_decisions_pass_name_outcome", "pass_name", "outcome"),
+    )
 
 
 class ReconciliationFlag(Base):

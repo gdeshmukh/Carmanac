@@ -59,7 +59,7 @@ COVERAGE: tuple[str, ...] = ("name",)
 
 
 @dataclass
-class ModelsPassStats:
+class VpicModelsPassStats:
     """What one models pass did. Every counter is per-record or per-row."""
 
     processed: int = 0
@@ -82,13 +82,13 @@ class ModelsPassStats:
         )
 
 
-class _ModelsPass:
+class _VpicModelsPass:
     """One run of the models pass. Holds the per-run caches; `run()` is the
     entry point. Deliberately not reusable across runs."""
 
     def __init__(self, session: Session):
         self.session = session
-        self.stats = ModelsPassStats()
+        self.stats = VpicModelsPassStats()
         self.source = get_source(session, VPIC_SOURCE_NAME)
 
         # `make:<id>` -> company_id: the matched makes, and the gate on §1.
@@ -153,10 +153,13 @@ class _ModelsPass:
     def _dismiss_flags(self, record: RawRecord) -> None:
         """A record that now resolves to a row has outgrown its question - a
         human merged the nameplates, or the payload changed. Dismissal records
-        that no decision was needed in the end."""
+        that no decision was needed in the end - and WHY, so the close feeds
+        the labeled set (2026-07-30 review: 61/64 dismissals carried no
+        resolution and taught nothing)."""
         for flag in self.open_flags.pop(record.external_id, []):
             flag.status = "dismissed"
             flag.resolved_at = func.now()
+            flag.detail = {**(flag.detail or {}), "resolution": "record_resolves_to_model"}
             self.stats.flags_dismissed += 1
 
     # --- identity (§2) -------------------------------------------------------
@@ -280,7 +283,7 @@ class _ModelsPass:
         """
         return (record.external_id or "").startswith("model:")
 
-    def run(self) -> ModelsPassStats:
+    def run(self) -> VpicModelsPassStats:
         records = [
             r for r in _current_records(self.session, self.source.id) if self._is_model_record(r)
         ]
@@ -311,9 +314,9 @@ class _ModelsPass:
         return self.stats
 
 
-def run_vpic_models_pass(session: Session) -> ModelsPassStats:
+def run_vpic_models_pass(session: Session) -> VpicModelsPassStats:
     """Run the full vPIC models pass (ADR 0010). Commits on success."""
-    stats = _ModelsPass(session).run()
+    stats = _VpicModelsPass(session).run()
     session.commit()
     log.info("vPIC models pass done: %s", stats.summary())
     return stats
