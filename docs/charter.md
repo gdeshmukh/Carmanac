@@ -41,16 +41,25 @@ These are settled decisions. Proposals to change one must be flagged explicitly
 as a decision to revisit — never slipped in silently.
 
 - **Postgres is the source of truth.** `pgvector` extension for semantic search.
-- **Five-level entity hierarchy**: `companies` → `models` → `generations` →
-  `catalogue_periods` → `configurations`. Every spec-bearing row ultimately
-  foreign-keys back to `configurations`. The 4th level is a **catalogue
-  period** (ADR 0009): a US model year (`start_year = end_year` — the shape
-  vPIC/EPA assert), a production period ("built 1998–2005" — the shape
-  Euro/JDM sources assert), or a facelift phase (zenki/kouki, Phase 1/2).
-  The level is mandatory for every configuration; no pass may fabricate
-  per-year rows from a period or vice versa. Aggregation above it is
-  untouched — the generation page stays the one shared page. (Table renamed
-  from `model_years`; the rename lands with the ADR 0009 migration.)
+- **The entity hierarchy is a goal per car, not a form every car must fill**
+  (ADR 0014, from the 2026-07-31 fundamentals review). The mandatory,
+  source-asserted rails are `companies` → `models` → `catalogue_periods` →
+  `configurations`; every spec-bearing row ultimately foreign-keys back to
+  `configurations`. **`generations` is the goal level**: generation
+  placement is an evidence-gated fact on the configuration
+  (`configurations.generation_id`, nullable), written only when a source
+  places the individual car (body style, chassis code, dated spans) —
+  never inferred from the year alone, because one model year can contain
+  two generations at once (the 2019 AMG GT: C190 coupes beside X290
+  4-doors). Pages render richly when placed and degrade gracefully to
+  model → year when not; nothing lies. A **catalogue period** (ADR 0009,
+  re-parented to models by ADR 0014) is pure time: a US model year
+  (`start_year = end_year` — the shape vPIC/EPA assert), a production
+  period ("built 1998–2005" — Euro/JDM), or a facelift phase
+  (zenki/kouki, Phase 1/2). No pass may fabricate per-year rows from a
+  period or vice versa, and no pass may fabricate a generation.
+  Aggregation pages (lines, chassis-code pages, the generation page) are
+  queries over the spine, not entities.
   `companies` holds every organisation
   that appears on or behind a vehicle — BMW, Alpina, Singer, Zagato (ADR 0006).
   **"Make" is a role, not a table**: a company holding manufacturer
