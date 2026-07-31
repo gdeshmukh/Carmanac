@@ -120,6 +120,23 @@ def main() -> int:
         ).one()
         print(f"vPIC models reconciled        : {reconciled}/{landed_models}")
 
+        year_models, epa_attached, epa_rows = s.execute(
+            text(
+                """
+                SELECT
+                  (SELECT count(DISTINCT model_id) FROM catalogue_periods),
+                  (SELECT count(*) FROM match_decisions
+                   WHERE pass_name = 'epa_attach' AND outcome = 'attached'),
+                  (SELECT count(*) FROM raw_scrape.raw_records rr
+                   JOIN sources so ON so.id = rr.source_id
+                   WHERE so.name = 'EPA fueleconomy.gov'
+                     AND rr.external_id LIKE 'vehicle:%')
+                """
+            )
+        ).one()
+        print(f"models with year spine        : {year_models}")
+        print(f"EPA rows attached             : {epa_attached}/{epa_rows}")
+
         wd_models, wd_gens, wd_swept = s.execute(
             text(
                 """

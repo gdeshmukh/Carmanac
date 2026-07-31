@@ -54,7 +54,7 @@ from __future__ import annotations
 # carries "Daihatsu Rocky"); the cross-badge guard; prefix stripping uses
 # the company's vPIC make names too ("Audi AG" strips as AUDI); refreshes
 # preserve the match method in the decision log.
-RECONCILER_VERSION = "10"
+RECONCILER_VERSION = "11"
 
 # --- identity --------------------------------------------------------------
 
@@ -227,6 +227,15 @@ VPIC_MATCHES: dict[str, str] = {
     "13766": "Q265465",  # LAND ROVER SANTANA -> Santana Motor (licensee-built)
     "13771": "Q134100360",  # SLATE -> Slate Auto
 }
+
+# Curated EPA-make matches (ADR 0014 §3): normalized EPA make string ->
+# Wikidata QID, for the ~1% of EPA rows whose make string the vPIC make-name
+# bridge cannot place (Scion, "McLaren Automotive", "American Motors
+# Corporation"...). Grown exclusively by resolving the epa_attach pass's
+# `unbridged_make` flags - each entry is a recorded human judgment, the
+# VPIC_MATCHES species one bridge over. Starts empty on purpose: the tail is
+# reviewed, never guessed.
+EPA_MAKE_MATCHES: dict[str, str] = {}
 
 # Curated Wikidata-model matches (ADR 0012, the ADR 0008 registry precedent
 # one level down): QID -> "company-slug/model-slug", for model entities the
