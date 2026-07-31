@@ -75,18 +75,24 @@ def qid_from_uri(uri: str) -> str:
     return uri.removeprefix(_ENTITY_PREFIX)
 
 
-def canonicalize(binding: dict[str, Any]) -> dict[str, Any]:
+def canonicalize(
+    binding: dict[str, Any], multi_vars: frozenset[str] = MULTI_VALUE_VARS
+) -> dict[str, Any]:
     """Sort the GROUP_CONCAT lists in a binding so equal content compares equal.
 
     Applied to the payload itself, not merely to the hash input: a stored record
     that reorders between runs would look changed to a human reading it too, and
     the two would not diff cleanly. Canonical on the way in is simpler than
     canonical at every read.
+
+    `multi_vars` is the query's own GROUP_CONCAT alias set (queries.py derives
+    it from the query text); the makes sweep's is the default, the models sweep
+    passes its own.
     """
     canonical: dict[str, Any] = {}
     for var, cell in binding.items():
         value = cell.get("value")
-        if var in MULTI_VALUE_VARS and isinstance(value, str):
+        if var in multi_vars and isinstance(value, str):
             parts = sorted(value.split(_MULTI_VALUE_SEPARATOR))
             cell = {**cell, "value": _MULTI_VALUE_SEPARATOR.join(parts)}
         canonical[var] = cell

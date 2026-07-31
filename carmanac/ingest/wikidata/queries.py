@@ -155,10 +155,101 @@ GROUP BY ?item ?itemLabel ?itemDescription
 # and the first `) AS` after GROUP_CONCAT( is always the aggregate's own close.
 _GROUP_CONCAT_ALIAS = re.compile(r"GROUP_CONCAT\(.+?\)\s+AS\s+\?(\w+)")
 
-MULTI_VALUE_VARS: frozenset[str] = frozenset(_GROUP_CONCAT_ALIAS.findall(MAKES_QUERY))
 
-if not MULTI_VALUE_VARS:  # pragma: no cover - guards the regex, not the data
-    raise RuntimeError(
-        "No GROUP_CONCAT aliases found in MAKES_QUERY - the derivation regex is "
-        "broken, and canonicalization would silently stop hashing stably."
-    )
+def multi_value_vars(query: str) -> frozenset[str]:
+    """The GROUP_CONCAT'd variable names of a query - what canonicalization
+    must sort. Derived per query now that there are two sweeps."""
+    found = frozenset(_GROUP_CONCAT_ALIAS.findall(query))
+    if not found:
+        raise RuntimeError(
+            "No GROUP_CONCAT aliases found - the derivation regex is broken, "
+            "and canonicalization would silently stop hashing stably."
+        )
+    return found
+
+
+MULTI_VALUE_VARS: frozenset[str] = multi_value_vars(MAKES_QUERY)
+
+# --- the models sweep (ADR 0012 §1) ------------------------------------------
+#
+# Two request shapes instead of the makes sweep's one, both probed live
+# 2026-07-30 before building:
+#
+# 1. The QID list: the union of the three model-shaped classes. Deliberately
+#    UNORDERED - `ORDER BY ?item` pushed the same query from 0.5s to ~90s
+#    (WDQS sorts URIs before the LIMIT), so determinism comes from sorting
+#    client-side, where 14.5k strings cost nothing.
+# 2. Detail batches: `VALUES ?item { ... }` with a page of QIDs, aggregated
+#    to exactly one row per entity (verified live: 300 in, 300 out, no dupes).
+#    Batching is what makes the sweep resumable and keeps each request far
+#    from the endpoint's 60s timeout; a single 14.5k-entity aggregation would
+#    gamble the whole fetch on one long query against a service that 504s
+#    under load.
+#
+# The classes are NOT a level taxonomy (ADR 0012: one 3-Series lineage holds
+# all three shapes plus a classless stub) - they are the fetch net. Level is
+# decided per make by the reconciler, structurally.
+
+MODEL_CLASSES: dict[str, str] = {
+    "Q3231690": "car model",
+    "Q59773381": "automobile model series",
+    "Q29048322": "vehicle model",
+}
+
+MODELS_QID_QUERY = """
+SELECT DISTINCT ?item WHERE {{
+  VALUES ?cls {{ {classes} }}
+  ?item wdt:P31 ?cls .
+}}
+""".format(classes=" ".join(f"wd:{qid}" for qid in MODEL_CLASSES))
+
+# Everything ADR 0012 §1 lists, per entity: the full P31 class set, label +
+# English aliases + description, P176 manufacturer (the attach point), P179
+# series / P361 part-of (line and generation evidence), P155/P156 chains (the
+# richest generation signal), every date property (P571 inception, P576
+# dissolved, P729 service entry, P730 service retirement, P2669 discontinued),
+# and the enwiki sitelink title (the pointer the Wikipedia-infobox wave needs).
+# Same fallback label chain and GROUP_CONCAT + canonicalize discipline as the
+# makes query - every aggregate order-independent or canonicalized.
+MODELS_DETAIL_QUERY = """
+SELECT ?item ?itemLabel ?itemDescription ?article
+       (GROUP_CONCAT(DISTINCT ?alias;        separator="|") AS ?aliases)
+       (GROUP_CONCAT(DISTINCT ?class;        separator="|") AS ?classes)
+       (GROUP_CONCAT(DISTINCT ?maker;        separator="|") AS ?makers)
+       (GROUP_CONCAT(DISTINCT ?series;       separator="|") AS ?seriesOf)
+       (GROUP_CONCAT(DISTINCT ?partOf;       separator="|") AS ?partsOf)
+       (GROUP_CONCAT(DISTINCT ?follows;      separator="|") AS ?followsIds)
+       (GROUP_CONCAT(DISTINCT ?followedBy;   separator="|") AS ?followedByIds)
+       (GROUP_CONCAT(DISTINCT ?inception;    separator="|") AS ?inceptions)
+       (GROUP_CONCAT(DISTINCT ?dissolved;    separator="|") AS ?dissolutions)
+       (GROUP_CONCAT(DISTINCT ?prodStart;    separator="|") AS ?prodStarts)
+       (GROUP_CONCAT(DISTINCT ?prodEnd;      separator="|") AS ?prodEnds)
+       (GROUP_CONCAT(DISTINCT ?discontinued; separator="|") AS ?discontinueds)
+WHERE {{
+  VALUES ?item {{ {values} }}
+  OPTIONAL {{ ?item wdt:P31  ?class . }}
+  OPTIONAL {{ ?item wdt:P176 ?maker . }}
+  OPTIONAL {{ ?item wdt:P179 ?series . }}
+  OPTIONAL {{ ?item wdt:P361 ?partOf . }}
+  OPTIONAL {{ ?item wdt:P155 ?follows . }}
+  OPTIONAL {{ ?item wdt:P156 ?followedBy . }}
+  OPTIONAL {{ ?item wdt:P571 ?inception . }}
+  OPTIONAL {{ ?item wdt:P576 ?dissolved . }}
+  OPTIONAL {{ ?item wdt:P729 ?prodStart . }}
+  OPTIONAL {{ ?item wdt:P730 ?prodEnd . }}
+  OPTIONAL {{ ?item wdt:P2669 ?discontinued . }}
+  OPTIONAL {{ ?item skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }}
+  OPTIONAL {{
+    ?article schema:about ?item ;
+             schema:isPartOf <https://en.wikipedia.org/> .
+  }}
+  SERVICE wikibase:label {{
+    bd:serviceParam wikibase:language "en,mul,de,ja,fr,it".
+    ?item rdfs:label ?itemLabel.
+    ?item schema:description ?itemDescription.
+  }}
+}}
+GROUP BY ?item ?itemLabel ?itemDescription ?article
+"""
+
+MODELS_MULTI_VALUE_VARS: frozenset[str] = multi_value_vars(MODELS_DETAIL_QUERY)
