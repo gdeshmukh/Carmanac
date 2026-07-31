@@ -168,6 +168,79 @@ class Model(Base, TimestampMixin):
     )
 
 
+class ModelLine(Base, TimestampMixin):
+    """A grouping row, NOT an entity in the hierarchy (ADR 0012 §4).
+
+    "3 Series" is an aggregation over as-filed models (ADR 0011 §2), served
+    as a browse view over its members - /makes/bmw/3-series is a page over
+    memberships, never a sixth level. Nothing in the FK spine points here,
+    and lines hold NO external ids: the series QID stays on the raw record,
+    and identity resolves by the (company, slug) natural key. A source
+    entity mapping to a line therefore never violates ADR 0011 §4's 1:1
+    external-id rule.
+    """
+
+    __tablename__ = "model_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    company: Mapped[Company] = relationship()
+    members: Mapped[list[ModelLineMember]] = relationship(back_populates="line")
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "slug", name="uq_model_lines_company_id_slug"),
+    )
+
+
+class ModelLineMember(Base, ProvenanceMixin):
+    """One source's assertion that a model belongs to a line (ADR 0012 §4).
+
+    A fact like any other - per-source assertion store with supersession,
+    the `company_role_assignments` shape: membership holds if ANY live row
+    says so, a second source corroborating is a second live row, and a
+    source withdrawing the claim is supersession, never deletion. Uniqueness
+    is per (line, model, source) live rows only - deliberately never across
+    sources.
+    """
+
+    __tablename__ = "model_line_members"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_line_id: Mapped[int] = mapped_column(
+        ForeignKey("model_lines.id"), nullable=False, index=True
+    )
+    model_id: Mapped[int] = mapped_column(ForeignKey("models.id"), nullable=False, index=True)
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("model_line_members.id", name="fk_model_line_members_superseded_by"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    line: Mapped[ModelLine] = relationship(back_populates="members")
+    model: Mapped[Model] = relationship()
+
+    __table_args__ = (
+        *provenance_table_args(),
+        # One LIVE membership assertion per (line, model, source) - the
+        # company_role_assignments shape. NULLS NOT DISTINCT so sourceless
+        # rows count as one anonymous asserter rather than never colliding.
+        Index(
+            "uq_model_line_members_live",
+            "model_line_id",
+            "model_id",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+
 class Generation(Base, TimestampMixin):
     """A generation of a model - E46, G80, XV70.
 
