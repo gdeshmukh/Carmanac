@@ -345,13 +345,23 @@ class _WikidataModelsPass:
         }
 
     def _flag(self, subject: _Subject, reason: str, detail: dict) -> None:
-        if subject.entity.qid in self.open_match_flags:
+        full_detail = {"reason": reason, "qid": subject.entity.qid, **detail}
+        existing = self.open_match_flags.get(subject.entity.qid)
+        if existing is not None:
+            # One open question per record - but the question can CHANGE
+            # between runs (a cluster claimant becomes a market-name suspect
+            # once the model's nameplate attaches). An open flag is the
+            # current question, so its reason/detail refresh; only closes are
+            # immutable history.
+            for flag in existing:
+                if (flag.detail or {}).get("reason") != reason:
+                    flag.detail = full_detail
             return
         flag = ReconciliationFlag(
             kind="match_review",
             raw_record_id=subject.record.id,
             source_id=self.source.id,
-            detail={"reason": reason, "qid": subject.entity.qid, **detail},
+            detail=full_detail,
         )
         self.session.add(flag)
         self.open_match_flags[subject.entity.qid] = [flag]
@@ -712,12 +722,21 @@ class _WikidataModelsPass:
     def _refresh_method(self, subject: _Subject) -> str:
         """The method to record on a rung-1 refresh (ADR 0013 §4): keep the
         method that MADE the match. Backfill by recomputing the hit when the
-        log only holds 'external_id' (the pre-0013 overwrite)."""
+        log only holds 'external_id' (the pre-0013 overwrite) - resolving the
+        maker gate here, since rung 1 runs before the §2.2 resolution."""
         prior = self.prior_method.get(subject.entity.qid)
         if prior:
             return prior
         model_id = self.model_by_qid.get(subject.entity.qid)
-        if model_id is not None and subject.held_companies:
+        if model_id is not None:
+            if not subject.held_companies:
+                subject.held_companies = sorted(
+                    {
+                        self.company_by_qid[m]
+                        for m in subject.entity.makers
+                        if m in self.company_by_qid
+                    }
+                )
             hit = self._name_hits(subject).get(model_id)
             if hit is not None:
                 return hit[0]
