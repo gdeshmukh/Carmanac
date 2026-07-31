@@ -1,6 +1,7 @@
 # ADR 0014 — The year pass and the EPA attach: periods, configurations, and the two bridges
 
-- Status: Proposed
+- Status: Accepted (2026-07-31, as amended — goal-per-car doctrine;
+  configuration-level generation placement)
 - Date: 2026-07-31
 - Deliberation: 2026-07-31 fundamentals review (Gaurav) — the hierarchy is
   a **goal per car, not a form every car must fill**; endorsed. §1 amended
