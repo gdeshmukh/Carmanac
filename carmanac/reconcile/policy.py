@@ -49,7 +49,12 @@ from __future__ import annotations
 # only (the global expansion stays tabled), lines + memberships, direct-case
 # generations; the labeled-set capture lands with it (match_decisions log,
 # resolution reasons on every flag close, the negative-match registry).
-RECONCILER_VERSION = "9"
+# v10 (2026-07-31): name-form evidence ranks (ADR 0013) - labels outrank
+# aliases (Wikidata records rebadges and market names as aliases: the Raize
+# carries "Daihatsu Rocky"); the cross-badge guard; prefix stripping uses
+# the company's vPIC make names too ("Audi AG" strips as AUDI); refreshes
+# preserve the match method in the decision log.
+RECONCILER_VERSION = "10"
 
 # --- identity --------------------------------------------------------------
 

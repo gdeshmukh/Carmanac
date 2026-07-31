@@ -36,11 +36,21 @@ creates generations from the one unambiguous one-hop edge - P179 membership
 in a matched model - and routes chain-only evidence to the decision log as
 waits. The year-pass ADR gets the chains with vPIC's time axis in hand.
 
+**Name-form evidence ranks (ADR 0013).** A label says what an entity IS;
+aliases list what it is ALSO called - and Wikidata files rebadges and market
+names there (the Raize entity carries "Daihatsu Rocky", "Perodua Ativa" and
+"Subaru Rex" as aliases). Rung-3 claims therefore rank: a lone label
+claimant attaches; alias claimants never cluster - uncontested same-brand
+ones attach (the alias IS the as-filed US name: Echo, LeCar, Sentra), while
+contested or cross-badge ones flag as `market_name_or_rebadge`. Prefix
+stripping uses every recorded name a company wears, including its vPIC make
+names ("Audi AG" strips as AUDI).
+
 **The labeled set is captured from the first run** (2026-07-30 direction
 review): every attempted record upserts a `match_decisions` row (rung /
-method / outcome), every flag close records a resolution reason, and the
-negative-match registry (`policy.WIKIDATA_MODEL_NEGATIVES`) is consulted
-before any rung-3 accept.
+method / outcome, the method surviving refreshes), every flag close records
+a resolution reason, and the negative-match registry
+(`policy.WIKIDATA_MODEL_NEGATIVES`) is consulted before any rung-3 accept.
 
 FIELD_AFFINITY in v1 is simple (§3): `models.name` stays vPIC's - Wikidata
 labels prefix the make, and "Toyota 4Runner" must never rename `4Runner` -
@@ -113,6 +123,7 @@ class WikidataModelsStats:
     lines_matched: int = 0
     memberships_inserted: int = 0
     line_generations_waiting: int = 0
+    market_name_flagged: int = 0
     waits_no_held_maker: int = 0
     waits_unmatched: int = 0
     company_entities: int = 0
@@ -129,6 +140,7 @@ class WikidataModelsStats:
             f"generations: created={self.generations_created} "
             f"refreshed={self.generations_refreshed} "
             f"line_case_waiting={self.line_generations_waiting} | "
+            f"market_name_flags={self.market_name_flagged} "
             f"waits: no_held_maker={self.waits_no_held_maker} "
             f"unmatched={self.waits_unmatched} company_entity={self.company_entities} | "
             f"assertions={self.assertions_inserted} "
@@ -183,6 +195,34 @@ class _WikidataModelsPass:
         self.company_norm: dict[int, str] = {
             cid: normalize_name(c.name) for cid, c in self.companies.items()
         }
+        # Strip prefixes are the company's RECORDED names, plural (ADR 0013
+        # §1): its own name plus its vPIC make name(s) - "Audi AG" is the
+        # company but the badge on the car says "Audi", and vPIC holds that
+        # as data ("AUDI"). Longest-first so "Mercedes-Benz" beats "Mercedes".
+        self.company_prefixes: dict[int, tuple[str, ...]] = {}
+        make_names: dict[int, set[str]] = {}
+        for company_id, make_name in session.execute(
+            text(
+                """SELECT DISTINCT ei.company_id, rr.payload->>'make_name'
+                   FROM external_ids ei
+                   JOIN sources s ON s.id = ei.source_id AND s.name = 'NHTSA vPIC'
+                   JOIN raw_scrape.raw_records rr
+                     ON rr.source_id = s.id AND rr.external_id = ei.external_id
+                   WHERE ei.external_id LIKE 'make:%' AND ei.company_id IS NOT NULL"""
+            )
+        ):
+            if make_name:
+                make_names.setdefault(company_id, set()).add(normalize_name(make_name))
+        for cid in self.companies:
+            norms = {self.company_norm[cid]} | make_names.get(cid, set())
+            self.company_prefixes[cid] = tuple(sorted(norms, key=len, reverse=True))
+        # Held-company norms, longest first, for the cross-badge guard's
+        # "which brand does this label wear" question (ADR 0013 §3).
+        self._brand_norms: list[tuple[str, int]] = sorted(
+            ((norm, cid) for cid, norm in self.company_norm.items() if norm),
+            key=lambda t: len(t[0]),
+            reverse=True,
+        )
         self.company_by_slug: dict[str, int] = {c.slug: c.id for c in self.companies.values()}
         self.models: dict[int, Model] = {m.id: m for m in session.scalars(select(Model))}
         self.models_by_name: dict[int, dict[str, list[int]]] = {}
@@ -202,7 +242,22 @@ class _WikidataModelsPass:
             self.model_by_qid.items(), key=lambda kv: int(kv[0][1:]), reverse=True
         ):
             self.qid_by_model[model_id] = qid
-        self.claims: dict[int, list[tuple[str, str]]] = {}
+        # model_id -> [(qid, method, rank)]; rank 0 = label form, 1 = alias.
+        self.claims: dict[int, list[tuple[str, str, int]]] = {}
+
+        # Prior decisions, so a refresh preserves HOW a match was made
+        # (ADR 0013 §4) instead of overwriting the method with 'external_id'.
+        self.prior_method: dict[str, str] = {
+            qid: method
+            for qid, method in session.execute(
+                select(MatchDecision.external_id, MatchDecision.method).where(
+                    MatchDecision.source_id == self.source.id,
+                    MatchDecision.pass_name == PASS_NAME,
+                    MatchDecision.method.isnot(None),
+                    MatchDecision.method != "external_id",
+                )
+            )
+        }
 
         # Lines resolve by natural key - they hold no external ids (§4).
         self.line_by_key: dict[tuple[int, str], int] = {
@@ -290,13 +345,23 @@ class _WikidataModelsPass:
         }
 
     def _flag(self, subject: _Subject, reason: str, detail: dict) -> None:
-        if subject.entity.qid in self.open_match_flags:
+        full_detail = {"reason": reason, "qid": subject.entity.qid, **detail}
+        existing = self.open_match_flags.get(subject.entity.qid)
+        if existing is not None:
+            # One open question per record - but the question can CHANGE
+            # between runs (a cluster claimant becomes a market-name suspect
+            # once the model's nameplate attaches). An open flag is the
+            # current question, so its reason/detail refresh; only closes are
+            # immutable history.
+            for flag in existing:
+                if (flag.detail or {}).get("reason") != reason:
+                    flag.detail = full_detail
             return
         flag = ReconciliationFlag(
             kind="match_review",
             raw_record_id=subject.record.id,
             source_id=self.source.id,
-            detail={"reason": reason, "qid": subject.entity.qid, **detail},
+            detail=full_detail,
         )
         self.session.add(flag)
         self.open_match_flags[subject.entity.qid] = [flag]
@@ -479,18 +544,20 @@ class _WikidataModelsPass:
 
     def _name_hits(self, subject: _Subject) -> dict[int, str]:
         """Rung 3: exact-normalized hits across label/aliases and their
-        make-prefix-stripped forms, negatives excluded. {model_id: method} -
-        the method that FIRST hit each model, for the decision log."""
+        make-prefix-stripped forms, negatives excluded. {model_id: (method,
+        rank)} - rank 0 for label forms, 1 for alias forms (ADR 0013 §2:
+        a label says what the entity IS; aliases list what it is also
+        called, including its rebadges). Label forms are tried first, and a
+        label hit upgrades an earlier alias hit on the same model."""
         entity = subject.entity
-        hits: dict[int, str] = {}
-        names = [(entity.label, "label")] + [(a, "alias") for a in entity.aliases]
+        hits: dict[int, tuple[str, int]] = {}
+        names = [(entity.label, "label", 0)] + [(a, "alias", 1) for a in entity.aliases]
         for company_id in subject.held_companies:
             index = self.models_by_name.get(company_id, {})
-            prefix = self.company_norm.get(company_id, "")
-            for name, kind in names:
+            for name, kind, rank in names:
                 if not name:
                     continue
-                stripped = strip_prefix(name, prefix, normalize_name)
+                stripped = self._strip(name, company_id)
                 for candidate, method in (
                     (name, f"exact_{kind}"),
                     (stripped, f"prefix_stripped_{kind}"),
@@ -500,8 +567,44 @@ class _WikidataModelsPass:
                             policy.WIKIDATA_MODEL_NEGATIVES
                         ):
                             continue
-                        hits.setdefault(model_id, method)
+                        if model_id not in hits or rank < hits[model_id][1]:
+                            hits[model_id] = (method, rank)
         return hits
+
+    def _strip(self, name: str, company_id: int) -> str:
+        """Prefix-strip against every recorded name the company wears
+        (ADR 0013 §1): its own name and its vPIC make name(s), longest
+        first - 'Audi A3' strips under 'Audi AG' because vPIC says AUDI."""
+        for prefix in self.company_prefixes.get(company_id, ()):
+            stripped = strip_prefix(name, prefix, normalize_name)
+            if stripped != name:
+                return stripped
+        return name
+
+    def _label_brand(self, entity: ModelEntity) -> int | None:
+        """The held company whose name the LABEL wears as a prefix, longest
+        match - 'Subaru Trailseeker' wears Subaru. None when no held name
+        prefixes the label (or the label IS a company name outright)."""
+        if not entity.label:
+            return None
+        n = normalize_name(entity.label)
+        for norm, company_id in self._brand_norms:
+            if len(norm) < len(n) and n.startswith(norm):
+                return company_id
+        return None
+
+    def _is_cross_badge(self, entity: ModelEntity, model_id: int) -> bool:
+        """ADR 0013 §3: the entity's label wears a different held brand than
+        the model's company. Same-family prefixes (BMW / BMW M) don't count
+        as foreign, in either direction."""
+        brand = self._label_brand(entity)
+        if brand is None:
+            return False
+        model_company = self.models[model_id].company_id
+        if brand == model_company:
+            return False
+        b, m = self.company_norm[brand], self.company_norm[model_company]
+        return not (b.startswith(m) or m.startswith(b))
 
     def _match_phase(self) -> None:
         for qid in sorted(self.subjects, key=lambda q: int(q[1:])):
@@ -523,7 +626,7 @@ class _WikidataModelsPass:
                 else:
                     outcome = "model_refreshed_secondary"
                 self._dismiss_flags(qid, "resolves_to_existing_model")
-                self._decide(subject, "1", "external_id", outcome)
+                self._decide(subject, "1", self._refresh_method(subject), outcome)
                 continue
             if qid in self.generation_by_qid:
                 # Refreshed in the generation phase, where display names and
@@ -577,18 +680,24 @@ class _WikidataModelsPass:
             # several entities at once (generation entities carrying the bare
             # nameplate label: four "BMW X5"s, four "Honda Accord"s - the
             # 3-Series lesson at nameplate level), so correspondence is decided
-            # per MODEL in _resolve_claims, after every claim is known.
+            # per MODEL in _resolve_claims, after every claim is known. The
+            # entity claims only at its BEST evidence rank (ADR 0013 §2):
+            # a label hit plus an alias hit on another model is one claim on
+            # the label's model, not an ambiguity - the alias is the entity
+            # listing its other names.
             hits = self._name_hits(subject)
-            if len(hits) == 1:
-                ((model_id, method),) = hits.items()
-                self.claims.setdefault(model_id, []).append((qid, method))
-            elif len(hits) > 1:
+            best_rank = min((rank for _, rank in hits.values()), default=None)
+            best = {m: meth for m, (meth, rank) in hits.items() if rank == best_rank}
+            if len(best) == 1:
+                ((model_id, method),) = best.items()
+                self.claims.setdefault(model_id, []).append((qid, method, best_rank))
+            elif len(best) > 1:
                 self._flag(
                     subject,
                     "ambiguous_model_match",
                     {
                         "label": entity.label,
-                        "candidates": sorted(self._slug_pair(m) for m in hits),
+                        "candidates": sorted(self._slug_pair(m) for m in best),
                     },
                 )
                 self._decide(
@@ -596,7 +705,7 @@ class _WikidataModelsPass:
                     "3",
                     None,
                     "flagged_ambiguous",
-                    {"candidates": sorted(self._slug_pair(m) for m in hits)},
+                    {"candidates": sorted(self._slug_pair(m) for m in best)},
                 )
             # 0 hits: falls through to the structure phases.
 
@@ -610,15 +719,67 @@ class _WikidataModelsPass:
             "article": (entity.article or "").rsplit("/", 1)[-1] or None,
         }
 
-    def _resolve_claims(self) -> None:
-        """Decide model correspondence per model, over all rung-3 claims.
+    def _refresh_method(self, subject: _Subject) -> str:
+        """The method to record on a rung-1 refresh (ADR 0013 §4): keep the
+        method that MADE the match. Backfill by recomputing the hit when the
+        log only holds 'external_id' (the pre-0013 overwrite) - resolving the
+        maker gate here, since rung 1 runs before the §2.2 resolution."""
+        prior = self.prior_method.get(subject.entity.qid)
+        if prior:
+            return prior
+        model_id = self.model_by_qid.get(subject.entity.qid)
+        if model_id is not None:
+            if not subject.held_companies:
+                subject.held_companies = sorted(
+                    {
+                        self.company_by_qid[m]
+                        for m in subject.entity.makers
+                        if m in self.company_by_qid
+                    }
+                )
+            hit = self._name_hits(subject).get(model_id)
+            if hit is not None:
+                return hit[0]
+        return "external_id"
 
-        Exactly one claimant -> the correspondence is 1:1 and attaches. More
-        than one -> Wikidata holds several entities whose names all say this
-        model, and picking the nameplate mechanically would be a guess (the
-        labels are identical; descriptions and classes are nominal, not
-        structural) -> ONE flag carries the cluster, everything waits, and
-        the curated registry resolves it (ADR 0012's duplicate-entity cure).
+    def _attach_match(self, model_id: int, subject: _Subject, method: str) -> None:
+        self._attach_model(model_id, subject)
+        self._enrich_model(model_id, subject)
+        self._dismiss_flags(subject.entity.qid, f"matched:{self._slug_pair(model_id)}")
+        self.stats.models_matched += 1
+        self._decide(subject, "3", method, "matched", {"model": self._slug_pair(model_id)})
+
+    def _flag_market_name(
+        self, subject: _Subject, model_id: int, method: str, co_claimants: list[str]
+    ) -> None:
+        """An alias-form claim never clusters and never auto-attaches when
+        contested or cross-badge (ADR 0013 §2-§3): the alias is Wikidata's
+        record of what else this car is called - its market names and its
+        rebadges - so the correspondence is a review question, not a match."""
+        cross = self._is_cross_badge(subject.entity, model_id)
+        brand = self._label_brand(subject.entity)
+        detail = {
+            "model": self._slug_pair(model_id),
+            "via": method,
+            "label": subject.entity.label,
+            "cross_badge": cross,
+            **({"label_brand": self.companies[brand].slug} if brand is not None else {}),
+            **({"co_claimants": co_claimants} if co_claimants else {}),
+        }
+        self._flag(subject, "market_name_or_rebadge", detail)
+        self.stats.market_name_flagged += 1
+        self._decide(subject, "3", method, "flagged_market_name_or_rebadge", detail)
+
+    def _resolve_claims(self) -> None:
+        """Decide model correspondence per model, over all rung-3 claims,
+        with label evidence outranking alias evidence (ADR 0013 §2).
+
+        Label claimants: exactly one -> it attaches 1:1; several -> the
+        label-twin cluster flag (picking the nameplate from identical labels
+        would be a guess - the curated registry resolves it). Alias claimants
+        never cluster: uncontested same-brand ones attach (the alias IS the
+        as-filed market name - the Echo/LeCar species); contested or
+        cross-badge ones flag as `market_name_or_rebadge`.
 
         One refinement keeps real structure out of the cluster: a claimant
         whose P179 points at ANOTHER claimant of the same model is that
@@ -626,45 +787,74 @@ class _WikidataModelsPass:
         bare nameplate), so it defers to the structure phase - where the
         surviving claimant, once attached, makes it a direct-case generation.
         """
+        # Attaches and cluster flags first; market-name flags after, so an
+        # entity that label-attaches to its own model while alias-hitting
+        # another is treated the same regardless of model iteration order.
+        market_tasks: list[tuple[str, int, str, list[str]]] = []
         for model_id in sorted(
-            self.claims, key=lambda m: min(int(q[1:]) for q, _ in self.claims[m])
+            self.claims, key=lambda m: min(int(q[1:]) for q, _, _ in self.claims[m])
         ):
             claimants = self.claims[model_id]
-            cluster = {q for q, _ in claimants}
+            cluster = {q for q, _, _ in claimants}
             active = [
-                (q, method)
-                for q, method in claimants
+                (q, method, rank)
+                for q, method, rank in claimants
                 if not set(self.subjects[q].entity.series_of) & (cluster - {q})
             ]
             active.sort(key=lambda c: int(c[0][1:]))
             if not active:
                 continue  # every claimant deferred to the structure phase
+            label_active = [(q, m) for q, m, rank in active if rank == 0]
+            alias_active = [(q, m) for q, m, rank in active if rank == 1]
 
             existing_qid = self.qid_by_model.get(model_id)
             if existing_qid is not None:
-                # The model already has its QID: later claimants are source-
-                # side duplicates of it, a curated-merge question.
-                reason, outcome = "second_qid_for_model", "flagged_second_qid"
-            elif len(active) == 1:
-                qid, method = active[0]
-                subject = self.subjects[qid]
-                self._attach_model(model_id, subject)
-                self._enrich_model(model_id, subject)
-                self._dismiss_flags(qid, f"matched:{self._slug_pair(model_id)}")
-                self.stats.models_matched += 1
-                self._decide(subject, "3", method, "matched", {"model": self._slug_pair(model_id)})
+                # The model already has its QID. A returning LABEL claimant
+                # is a source-side duplicate of it (curated-merge question);
+                # a returning ALIAS claimant is the same market-name/rebadge
+                # question it was before the model matched - the outcome must
+                # not flip between runs.
+                if label_active:
+                    detail = {
+                        "model": self._slug_pair(model_id),
+                        "claimants": [self._claim_detail(q) for q, _ in label_active],
+                        "existing_qid": existing_qid,
+                    }
+                    self._flag(self.subjects[label_active[0][0]], "second_qid_for_model", detail)
+                    for q, method in label_active:
+                        self._decide(self.subjects[q], "3", method, "flagged_second_qid", detail)
+                co = sorted(q for q, _ in label_active + alias_active)
+                for qid, method in alias_active:
+                    market_tasks.append((qid, model_id, method, [c for c in co if c != qid]))
                 continue
-            else:
-                reason, outcome = "shared_model_match", "flagged_shared_match"
 
-            detail = {
-                "model": self._slug_pair(model_id),
-                "claimants": [self._claim_detail(q) for q, _ in active],
-                **({"existing_qid": existing_qid} if existing_qid else {}),
-            }
-            self._flag(self.subjects[active[0][0]], reason, detail)
-            for qid, method in active:
-                self._decide(self.subjects[qid], "3", method, outcome, detail)
+            if len(label_active) == 1:
+                qid, method = label_active[0]
+                self._attach_match(model_id, self.subjects[qid], method)
+            elif len(label_active) > 1:
+                detail = {
+                    "model": self._slug_pair(model_id),
+                    "claimants": [self._claim_detail(q) for q, _ in label_active],
+                }
+                self._flag(self.subjects[label_active[0][0]], "shared_model_match", detail)
+                for qid, method in label_active:
+                    self._decide(self.subjects[qid], "3", method, "flagged_shared_match", detail)
+            elif len(alias_active) == 1 and not self._is_cross_badge(
+                self.subjects[alias_active[0][0]].entity, model_id
+            ):
+                # Uncontested same-brand alias: Wikidata recording the
+                # alternate name of exactly this filing (Echo, LeCar, Sunny).
+                qid, method = alias_active[0]
+                self._attach_match(model_id, self.subjects[qid], method)
+                continue
+
+            co = sorted(q for q, _ in label_active + alias_active)
+            for qid, method in alias_active:
+                market_tasks.append((qid, model_id, method, [c for c in co if c != qid]))
+
+        for qid, model_id, method, co_claimants in market_tasks:
+            if not self.subjects[qid].decided:
+                self._flag_market_name(self.subjects[qid], model_id, method, co_claimants)
 
     # --- rung 4: lines -------------------------------------------------------
 
@@ -694,7 +884,7 @@ class _WikidataModelsPass:
                 self._decide(subject, "4", None, outcome)
                 continue
             company_id = subject.held_companies[0]
-            name = strip_prefix(entity.label, self.company_norm[company_id], normalize_name)
+            name = self._strip(entity.label, company_id)
             slug = slugify(name, qid)
             key = (company_id, slug)
             line_id = self.line_by_key.get(key)
@@ -755,21 +945,25 @@ class _WikidataModelsPass:
     def _refresh_generation(self, subject: _Subject) -> None:
         generation = self.session.get(Generation, self.generation_by_qid[subject.entity.qid])
         model = self.models[generation.model_id]
-        prefix = self.company_norm.get(model.company_id, "")
         display = (
-            strip_prefix(subject.entity.label, prefix, normalize_name)
+            self._strip(subject.entity.label, model.company_id)
             if subject.entity.label
             else generation.name
         )
         self._generation_facts(generation, subject, display)
         self.stats.generations_refreshed += 1
         self._dismiss_flags(subject.entity.qid, "resolves_to_existing_generation")
-        self._decide(subject, "1", "external_id", "generation_refreshed")
+        self._decide(
+            subject,
+            "1",
+            self.prior_method.get(subject.entity.qid, "external_id"),
+            "generation_refreshed",
+        )
 
     def _create_generation(self, model_id: int, subject: _Subject) -> None:
         entity = subject.entity
         model = self.models[model_id]
-        display = strip_prefix(entity.label, self.company_norm[model.company_id], normalize_name)
+        display = self._strip(entity.label, model.company_id)
         slug = slugify(display, entity.qid)
         occupant = self.generation_by_model_slug.get((model_id, slug))
         if occupant is not None:
@@ -873,9 +1067,7 @@ class _WikidataModelsPass:
             candidates: list[dict] = []
             if subject.held_companies and entity.label:
                 for company_id in subject.held_companies:
-                    stripped = strip_prefix(
-                        entity.label, self.company_norm[company_id], normalize_name
-                    )
+                    stripped = self._strip(entity.label, company_id)
                     candidates = self._trigram_candidates(stripped, company_id)
                     if candidates:
                         break
