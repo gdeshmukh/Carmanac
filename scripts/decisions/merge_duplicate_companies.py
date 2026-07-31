@@ -23,8 +23,8 @@ Per member with its own company row:
   and the rest on the next pass. Identity (id, slug) is preserved.
 
 Everything deleted is derived; raw records are untouched (ADR 0004). Re-run
-`scripts/reconcile_companies.py` afterwards to let the canonical records
-re-assert, then `scripts/reconcile_vpic_makes.py` to convert the match flags
+`scripts/pipeline/reconcile_companies.py` afterwards to let the canonical records
+re-assert, then `scripts/pipeline/reconcile_vpic_makes.py` to convert the match flags
 the duplicates were blocking. Runs dry by default; pass --execute to apply.
 """
 
@@ -148,8 +148,8 @@ def main() -> int:
             return 0
         session.commit()
         print(
-            "done; re-run scripts/reconcile_companies.py then "
-            "scripts/reconcile_vpic_makes.py to converge"
+            "done; re-run scripts/pipeline/reconcile_companies.py then "
+            "scripts/pipeline/reconcile_vpic_makes.py to converge"
         )
     return 0
 

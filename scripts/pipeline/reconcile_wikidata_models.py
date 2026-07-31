@@ -1,6 +1,6 @@
 """Run the Wikidata models-sweep pass (ADR 0012) over landed sweep records.
 
-    .venv/bin/python scripts/reconcile_wikidata_models.py
+    .venv/bin/python scripts/pipeline/reconcile_wikidata_models.py
 
 Match and enrich only - no model creation (the global expansion is tabled,
 ADR 0012 §3). Idempotent: a re-run over unchanged records is a no-op.

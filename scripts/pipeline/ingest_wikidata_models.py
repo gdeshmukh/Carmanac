@@ -1,6 +1,6 @@
 """Fetch the Wikidata models sweep into the raw landing zone (ADR 0012 §1).
 
-    .venv/bin/python scripts/ingest_wikidata_models.py
+    .venv/bin/python scripts/pipeline/ingest_wikidata_models.py
 
 Lands raw records only - no models, lines or generations are created and
 nothing is reconciled. Safe to re-run: commits per batch, unchanged payloads

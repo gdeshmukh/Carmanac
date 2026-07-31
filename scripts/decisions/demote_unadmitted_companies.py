@@ -102,7 +102,7 @@ def main() -> int:
         session.execute(delete(Company).where(Company.id.in_(ids)))
         session.commit()
         print(
-            f"demoted {len(ids)} companies; re-run scripts/reconcile_companies.py "
+            f"demoted {len(ids)} companies; re-run scripts/pipeline/reconcile_companies.py "
             f"to quarantine their records under policy v{policy.RECONCILER_VERSION}"
         )
     return 0

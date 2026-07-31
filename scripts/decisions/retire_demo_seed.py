@@ -16,7 +16,7 @@ Two phases, both idempotent — a second run finds nothing:
    source ever asserted these.
 
 After a run that deletes the role row, re-run the companies pass
-(`scripts/reconcile_companies.py`) so the Wikidata manufacturer role on
+(`scripts/pipeline/reconcile_companies.py`) so the Wikidata manufacturer role on
 BMW is re-asserted from the real Q26678 record.
 
 What stays: the BMW company row and its Q26678 mapping (substantively
@@ -192,7 +192,7 @@ def main() -> int:
     if artifacts:
         print("Retired raw artifacts:  " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
     if artifacts.get("company_role_assignments"):
-        print("Re-run scripts/reconcile_companies.py to re-assert BMW's Wikidata role.")
+        print("Re-run scripts/pipeline/reconcile_companies.py to re-assert BMW's Wikidata role.")
     if not deleted and not artifacts:
         print("Nothing to retire - the demo seed and its artifacts are already gone.")
     return 0

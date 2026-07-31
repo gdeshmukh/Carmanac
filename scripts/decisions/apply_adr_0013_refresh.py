@@ -1,6 +1,6 @@
 """One-time derived-state refresh for ADR 0013 §5, then the v10 pass.
 
-    .venv/bin/python scripts/apply_adr_0013_refresh.py
+    .venv/bin/python scripts/decisions/apply_adr_0013_refresh.py
 
 Three steps, all over reconciler-DERIVED state (raw records and the labeled
 set untouched; everything deleted is rebuilt from raw by the run at the end):

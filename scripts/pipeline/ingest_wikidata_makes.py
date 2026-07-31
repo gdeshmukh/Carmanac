@@ -1,6 +1,6 @@
 """Fetch every Wikidata automobile manufacturer into the raw landing zone.
 
-    .venv/bin/python scripts/ingest_wikidata_makes.py
+    .venv/bin/python scripts/pipeline/ingest_wikidata_makes.py
 
 Lands raw records only - no `makes` rows are created and nothing is reconciled.
 Safe to re-run: an unchanged payload is rejected by the hash constraint, so a
