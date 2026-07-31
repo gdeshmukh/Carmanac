@@ -2,6 +2,10 @@
 
 - Status: Proposed
 - Date: 2026-07-31
+- Deliberation: 2026-07-31 fundamentals review (Gaurav) — the hierarchy is
+  a **goal per car, not a form every car must fill**; endorsed. §1 amended
+  same day: the generation link moved from periods to configurations after
+  the AMG GT split-year finding.
 - Depends on: ADR 0009 (catalogue-period spine — §1 proposes a flagged
   revision), ADR 0011 (as-filed models), ADR 0012 (generations and lines;
   deferred the line-case instantiation here), ADR 0013 (name-form evidence
@@ -50,25 +54,34 @@ source speaks.
 
 ## Decision
 
-### 1. Periods hang under models; the generation link becomes an evidence-gated fact (REVISES ADR 0009 — flagged)
+### 1. Generations become the goal level: periods are pure time under models, placement lives on configurations (REVISES ADR 0009 — flagged)
 
-This is a deliberate, flagged revision of an architecture invariant, not
-a slip: **`catalogue_periods` gains `model_id` (NOT NULL, FK, indexed)
-and `generation_id` becomes NULLABLE.** A period always knows its model
-— that is exactly what vPIC asserts: (model, year), no more. The
-period→generation link is written only when a source actually places
-that period's span inside a generation (dated overlap today, infobox
-spans later), with normal fact provenance. Configurations still FK
-periods; nothing downstream changes.
+The fundamentals review set the doctrine this section applies: **the
+five-level hierarchy is a goal per car, not a form every car must
+fill.** Company → model → period → configuration are source-asserted
+everywhere and stay mandatory rails. Generation is the one level no US
+source asserts, so it becomes **evidence-gated placement**:
+
+- **`catalogue_periods`**: `generation_id` is replaced by `model_id`
+  (NOT NULL, FK, indexed). A period is pure time under its model —
+  exactly what vPIC and EPA assert: (model, year), no more.
+- **`configurations`** gain `generation_id` (NULLABLE, FK, indexed),
+  written only when evidence places the individual car — body style,
+  chassis code, dated generation spans. The placement lives here and
+  not on the period because of the AMG GT finding: vPIC files ONE
+  `AMG GT` model whose 2019 model year contains C190 coupes and X290
+  4-doors **simultaneously** — the (model, 2019) period belongs to no
+  single generation, while every one of its configurations' generation
+  is knowable. A period-level link would be NULL exactly where the data
+  is richest; the configuration-level link is always well-defined.
+- Generation pages render over their placed configurations and the
+  chassis-code views (ADR 0012 §5). A car whose generation is unplaced
+  renders on its model → year pages, fully, and nothing lies — the
+  goal degrades gracefully instead of blocking.
 
 What this preserves: no fabrication, in either direction — ADR 0009's
-core. A period under a bare model records precisely the assertion made.
-What it changes: the five-level FK chain becomes four levels with
-generations as an **attachable enrichment level** rather than a
-mandatory waypoint. Generation pages still render (over the periods
-linked to them, and the chassis-code views of ADR 0012 §5); the
-generation question for any period stays visibly open (NULL) instead of
-invisibly wrong.
+core. NULL means "no source has placed this car yet," visibly, instead
+of invisibly wrong or silently absent.
 
 Rejected alternatives:
 
@@ -89,17 +102,18 @@ no-ops (the settling discipline: a world-changing run settles on the
 following run). Decision log: pass `vpic_years`, one decision per
 record.
 
-Generation attach, in the same pass, only where legal: a period whose
-year falls inside a **dated** generation of its model links to it
-(containment, ADR 0009's mixed-granularity rule); overlapping dated
-generations flag rather than guess. Undated generations get nothing —
-their dating is the line-case/infobox work, not this pass's.
+The year pass writes **no generation links** — placement is
+configuration-level (§1) and needs evidence this pass doesn't carry.
+Generation placement is its own future pass, activating when the
+evidence exists: dated generation spans, body-style + chassis-code
+corroboration, infobox spans. In v1 every `configurations.generation_id`
+is NULL — honest, visible, and queryable as the placement backlog.
 
 The 453 line-case generation entities **stay deferred** (ADR 0012 §5
-posture). This ADR decouples them from the year pass: periods no longer
-wait on generation instantiation, and the E46-under-330i inference still
-needs generation time that neither vPIC years nor 6%-sparse Wikidata
-dates provide. They activate when a generation-dating source lands.
+posture) and are now fully decoupled: periods and configurations no
+longer wait on generation instantiation at all, and the E46-under-330i
+inference still needs generation time that neither vPIC years nor
+6%-sparse Wikidata dates provide.
 
 ### 3. The EPA attach: two bridges, both laddered, never fuzzy
 
@@ -138,7 +152,8 @@ under the same rules — EPA asserts (model, year) exactly as vPIC does.
 
 One **configuration** per EPA vehicle id under the resolved period:
 US market, `trim_name` from the trim-parse residue (empty for exact
-hits), drivetrain from `drive`. Core numeric specs (displacement,
+hits), drivetrain from `drive`, `generation_id` NULL (§2 — placement is
+a later evidence pass). Core numeric specs (displacement,
 cylinders, EPA economy figures) land as facts — columns where the ~20
 universal core specs already have them, EAV otherwise, attributes
 registered in `attribute_definitions` before landing (charter rule).
@@ -159,13 +174,15 @@ lines.
 
 ## Consequences
 
-- A migration: `catalogue_periods.model_id` NOT NULL FK (backfill from
-  the existing generation links — all 0 rows today, so the backfill is
-  trivial), `generation_id` NULLABLE, natural key updated to include the
-  model. Hand-reviewed per the ADR 0009 lesson.
+- A migration: `catalogue_periods` swaps `generation_id` for `model_id`
+  (NOT NULL FK; the table is empty today, so no backfill), natural key
+  updated to include the model; `configurations` gain nullable
+  `generation_id` FK, indexed. Hand-reviewed per the ADR 0009 lesson.
 - ADR 0009's text gets a pointer to this revision; the charter's
-  five-level invariant is amended to name generations an evidence-gated
-  level between models and periods.
+  five-level invariant is amended to state the doctrine: **the hierarchy
+  is a goal per car** — company/model/period/configuration are the
+  mandatory rails, generation is evidence-gated placement on the
+  configuration, rendered when known and degrading gracefully when not.
 - `RECONCILER_VERSION` bumps; two new pass names in `match_decisions`.
 - First configurations exist (~49.5k), which unblocks the configuration
   page work (F2) whenever Gaurav re-opens it — and makes the EAV
