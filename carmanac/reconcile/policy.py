@@ -96,6 +96,18 @@ IDENTITY_MERGES: dict[str, str] = {
     # the marque JLR uses today (Q26777551). One make, one page - the Bugatti
     # rule. Canonical is the fact-bearing company entity.
     "Q26777551": "Q35907",
+    # The JLR "house of brands" wave (ruled 2026-07-31: Range Rover,
+    # Discovery, and Defender are Land Rover model lines, not brands). One
+    # Wikidata editing wave minted bare car-brand entities (Q1406xxxxx,
+    # class Q10429667 only, no inception/country) for JLR's marketing
+    # repositioning; the filings disagree - vPIC files all three under
+    # Make=LAND ROVER, and EPA's Land Rover rows likewise. Their only live
+    # effect was poisoning the cross-badge guard's brand list (ADR 0013 §3):
+    # "Range Rover (1st generation)" wore the artifact brand, the queue's
+    # one false cross-badge alarm.
+    "Q140685136": "Q35907",  # Range Rover (brand artifact) -> Land Rover
+    "Q140645228": "Q35907",  # Discovery (brand artifact)   -> Land Rover
+    "Q140645257": "Q35907",  # Defender (brand artifact)    -> Land Rover
     # Renault: conglomerate (Q6686, the century-old entity model records
     # point at) vs "Renault S.A.S." (Q98584518, the 2020 legal restructure)
     # vs brand (Q125544573). Corporate-era split of one carmaker - the
