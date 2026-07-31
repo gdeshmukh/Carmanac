@@ -131,11 +131,13 @@ def db(engine: Engine) -> Iterator[Session]:
                 """
                 TRUNCATE raw_scrape.raw_records,
                          reconciled_records, reconciliation_flags,
-                         external_ids, field_provenance, countries,
-                         configuration_attributes, configuration_engines,
-                         configuration_transmissions, company_role_assignments,
-                         vehicle_derivations, media_attachments, media_assets,
-                         configurations, catalogue_periods, generations, models,
+                         match_decisions, external_ids, field_provenance,
+                         countries, configuration_attributes,
+                         configuration_engines, configuration_transmissions,
+                         company_role_assignments, vehicle_derivations,
+                         media_attachments, media_assets, configurations,
+                         catalogue_periods, generations,
+                         model_line_members, model_lines, models,
                          engines, transmissions, companies, sources
                 RESTART IDENTITY CASCADE
                 """

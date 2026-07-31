@@ -45,7 +45,11 @@ from __future__ import annotations
 # v8 (2026-07-30): the duplicate-name sweep's approved batch (Gaurav) - 11
 # same-entity pairs from the 105-group exact-name review merge; namesake and
 # ambiguous groups deliberately stay separate pending cross-source checks.
-RECONCILER_VERSION = "8"
+# v9 (2026-07-30): the Wikidata models sweep pass (ADR 0012) - match/enrich
+# only (the global expansion stays tabled), lines + memberships, direct-case
+# generations; the labeled-set capture lands with it (match_decisions log,
+# resolution reasons on every flag close, the negative-match registry).
+RECONCILER_VERSION = "9"
 
 # --- identity --------------------------------------------------------------
 
@@ -206,6 +210,23 @@ VPIC_MATCHES: dict[str, str] = {
     "13766": "Q265465",  # LAND ROVER SANTANA -> Santana Motor (licensee-built)
     "13771": "Q134100360",  # SLATE -> Slate Auto
 }
+
+# Curated Wikidata-model matches (ADR 0012, the ADR 0008 registry precedent
+# one level down): QID -> "company-slug/model-slug", for model entities the
+# mechanical rungs cannot place. Grown exclusively by resolving model-level
+# `match_review` flags; each entry is a recorded human judgment. The slug
+# pair - not a database id - is the natural key, stable across environments
+# and re-materializations.
+WIKIDATA_MODEL_MATCHES: dict[str, str] = {}
+
+# The negative-match registry (2026-07-30 direction review): recorded human
+# judgments that an entity is NOT one of our rows, so a dismissed candidate
+# can never silently re-match on the next run - before this, negative
+# judgments lived only in policy comments and the labeled set had no negative
+# examples. (QID, "company-slug/model-slug") pairs; consulted before any
+# rung-3 accept and when building flag candidates. Grown by flag resolutions,
+# like the positive registry.
+WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
 
 # --- admission (ADR 0007 §3) ------------------------------------------------
 

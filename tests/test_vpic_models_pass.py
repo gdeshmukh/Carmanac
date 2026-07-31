@@ -24,8 +24,8 @@ from carmanac.ingest.landing import content_hash
 from carmanac.reconcile import policy
 from carmanac.reconcile.engine import run_companies_pass
 from carmanac.reconcile.matching import run_vpic_match_pass
-from carmanac.reconcile.models_pass import run_vpic_models_pass
 from carmanac.reconcile.sources import wikidata
+from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
 from tests.test_matching import _land_vpic
 from tests.test_reconcile import _land as _land_wd
 
