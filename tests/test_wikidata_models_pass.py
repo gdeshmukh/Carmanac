@@ -378,6 +378,178 @@ def test_ambiguous_hits_flag_never_guess(db, wikidata_source, vpic_source):  # n
     assert _decision(db, "Q700").outcome == "flagged_ambiguous"
 
 
+# --- name-form evidence ranks (ADR 0013) --------------------------------------
+
+
+def _matched_make_named(db, wikidata_source, vpic_source, qid, wd_name, make_id, make_name):  # noqa: F811
+    """A matched make whose Wikidata company name and vPIC make name differ
+    (the 'Audi AG' vs AUDI shape), pinned through the curated registry."""
+    from carmanac.db.models import Company
+    from carmanac.reconcile.matching import run_vpic_match_pass
+    from tests.test_matching import _land_vpic
+    from tests.test_reconcile import _land as _land_wd
+
+    _land_wd(db, wikidata_source, qid, label=wd_name)
+    run_companies_pass(db, wikidata)
+    _land_vpic(db, vpic_source, make_id, make_name)
+    policy.VPIC_MATCHES[str(make_id)] = qid
+    try:
+        run_vpic_match_pass(db)
+    finally:
+        del policy.VPIC_MATCHES[str(make_id)]
+    return db.scalars(select(Company).where(Company.name == wd_name)).one()
+
+
+def test_make_name_prefix_strips_corporate_name(db, wikidata_source, vpic_source):  # noqa: F811
+    """ADR 0013 §1: 'Audi A3' under company 'Audi AG' is a LABEL hit because
+    the vPIC make name AUDI is a recorded prefix - not an alias-only artifact."""
+    _matched_make_named(db, wikidata_source, vpic_source, "Q23317", "Audi AG", 582, "AUDI")
+    _land_model(db, vpic_source, 20, "A3", 582, "AUDI")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(db, wikidata_source, "Q161880", "Audi A3", makers=["Q23317"])
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 1 and stats.flags_opened == 0
+    decision = _decision(db, "Q161880")
+    assert (decision.method, decision.outcome) == ("prefix_stripped_label", "matched")
+
+
+def test_uncontested_same_brand_alias_attaches(db, wikidata_source, vpic_source):  # noqa: F811
+    """The Echo/LeCar species: the alias IS the as-filed US name of the same
+    car. Uncontested and same-brand, it attaches - with the method logged so
+    every alias-carried attachment stays one audit query."""
+    _matched_make(db, wikidata_source, vpic_source, "Q53268", "Toyota", 448)
+    _land_model(db, vpic_source, 21, "Echo", 448, "TOYOTA")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q106612214",
+        "Toyota Yaris (XP10)",
+        makers=["Q53268"],
+        aliases=["Toyota Echo", "Toyota Platz"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 1 and stats.flags_opened == 0
+    decision = _decision(db, "Q106612214")
+    assert (decision.method, decision.outcome) == ("prefix_stripped_alias", "matched")
+
+    rerun = run_wikidata_models_pass(db)
+    assert rerun.models_refreshed == 1
+    assert _decision(db, "Q106612214").method == "prefix_stripped_alias", (
+        "a refresh must preserve HOW the match was made (ADR 0013 §4)"
+    )
+
+
+def test_cross_badge_alias_never_attaches(db, wikidata_source, vpic_source):  # noqa: F811
+    """The Trailseeker shape: an alias-only hit whose label wears a DIFFERENT
+    held brand never attaches, even uncontested - it flags as a rebadge."""
+    _matched_make(db, wikidata_source, vpic_source, "Q53268", "Toyota", 448)
+    _matched_make(db, wikidata_source, vpic_source, "Q172741", "Subaru", 523)
+    _land_model(db, vpic_source, 22, "bZ Woodland", 448, "TOYOTA")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q133885141",
+        "Subaru Trailseeker",
+        makers=["Q53268"],
+        aliases=["Toyota bZ Woodland"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 0 and stats.market_name_flagged == 1
+    assert db.scalar(select(ExternalId).where(ExternalId.external_id == "Q133885141")) is None
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).one()
+    assert flag.detail["reason"] == "market_name_or_rebadge"
+    assert flag.detail["cross_badge"] is True
+    assert flag.detail["label_brand"] == "subaru"
+    assert _decision(db, "Q133885141").outcome == "flagged_market_name_or_rebadge"
+
+
+def test_label_claimant_beats_alias_claimant(db, wikidata_source, vpic_source):  # noqa: F811
+    """The Highlander/Kluger shape: the label claimant is the 1:1
+    correspondence; the alias claimant flags as a market name instead of
+    forming a cluster."""
+    _matched_make(db, wikidata_source, vpic_source, "Q53268", "Toyota", 448)
+    _land_model(db, vpic_source, 23, "Highlander", 448, "TOYOTA")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(db, wikidata_source, "Q1421661", "Toyota Highlander", makers=["Q53268"])
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q2447150",
+        "Toyota Kluger",
+        makers=["Q53268"],
+        aliases=["Toyota Highlander"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 1 and stats.market_name_flagged == 1
+    attached = db.scalars(
+        select(ExternalId).where(ExternalId.external_id.in_(["Q1421661", "Q2447150"]))
+    ).one()
+    assert attached.external_id == "Q1421661"
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).one()
+    assert flag.detail["reason"] == "market_name_or_rebadge"
+    assert flag.detail["cross_badge"] is False
+    assert flag.detail["co_claimants"] == ["Q1421661"]
+    assert _decision(db, "Q1421661").outcome == "matched"
+
+
+def test_zero_label_claimants_all_flag(db, wikidata_source, vpic_source):  # noqa: F811
+    """The Feroza/Rugger shape: two entities are each 'aka Rocky' by alias
+    and neither wears the name as its label - nobody attaches, both flag,
+    a human picks via the registry."""
+    _matched_make(db, wikidata_source, vpic_source, "Q27511", "Daihatsu", 460)
+    _land_model(db, vpic_source, 24, "Rocky", 460, "DAIHATSU")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q262713",
+        "Daihatsu Feroza",
+        makers=["Q27511"],
+        aliases=["Daihatsu Rocky"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q11012341",
+        "Daihatsu Rugger",
+        makers=["Q27511"],
+        aliases=["Daihatsu Rocky"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 0 and stats.market_name_flagged == 2
+    assert (
+        db.scalar(select(ExternalId).where(ExternalId.external_id.in_(["Q262713", "Q11012341"])))
+        is None
+    )
+    assert _decision(db, "Q262713").detail["co_claimants"] == ["Q11012341"]
+
+
 # --- shared claims: the label-twin cluster (live finding, 2026-07-30) ---------
 
 
