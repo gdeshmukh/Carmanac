@@ -514,6 +514,100 @@ def test_label_claimant_beats_alias_claimant(db, wikidata_source, vpic_source): 
     assert _decision(db, "Q1421661").outcome == "matched"
 
 
+def test_label_brand_respects_word_boundaries(db, wikidata_source, vpic_source):  # noqa: F811
+    """The Ranger/Range Rover shape: normalization strips spacing, so a raw
+    startswith would read the held brand 'Ranger' out of 'Range Rover (1st
+    generation)' and raise a false cross-badge. A brand prefix must end on a
+    word boundary of the label."""
+    _matched_make(db, wikidata_source, vpic_source, "Q35907", "Land Rover", 444)
+    _matched_make(db, wikidata_source, vpic_source, "Q2130910", "Ranger", 999)
+    _land_model(db, vpic_source, 31, "Range Rover", 444, "LAND ROVER")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q5257063",
+        "Range Rover (1st generation)",
+        makers=["Q35907"],
+        aliases=["Range Rover"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q7292685",
+        "Land Rover Range Rover (P38A)",
+        makers=["Q35907"],
+        aliases=["Range Rover"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 0 and stats.market_name_flagged == 2
+    by_qid = {
+        f.detail["qid"]: f.detail
+        for f in db.scalars(
+            select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+        )
+    }
+    assert by_qid["Q5257063"]["cross_badge"] is False
+    assert "label_brand" not in by_qid["Q5257063"], (
+        "'Range Rover (1st generation)' wears no held brand - 'Ranger' is a "
+        "substring across a word boundary, not a prefix the label wears"
+    )
+    assert by_qid["Q7292685"]["cross_badge"] is False
+    assert by_qid["Q7292685"]["label_brand"] == "land-rover"
+
+
+def test_open_flag_detail_refreshes_when_answer_changes(db, wikidata_source, vpic_source):  # noqa: F811
+    """An open flag is the CURRENT question: when the computation behind a
+    same-reason flag changes between runs (a brand-artifact merge flips the
+    cross-badge verdict), the detail refreshes rather than preserving the
+    stale answer. Closes stay immutable."""
+    _matched_make(db, wikidata_source, vpic_source, "Q35907", "Land Rover", 444)
+    _land_model(db, vpic_source, 31, "Range Rover", 444, "LAND ROVER")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+
+    rec = _land_sweep(
+        db,
+        wikidata_source,
+        "Q5257063",
+        "Range Rover (1st generation)",
+        makers=["Q35907"],
+        aliases=["Range Rover"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q7292685",
+        "Land Rover Range Rover (P38A)",
+        makers=["Q35907"],
+        aliases=["Range Rover"],
+    )
+    stale = ReconciliationFlag(
+        kind="match_review",
+        raw_record_id=rec.id,
+        source_id=wikidata_source.id,
+        detail={
+            "reason": "market_name_or_rebadge",
+            "qid": "Q5257063",
+            "cross_badge": True,
+            "label_brand": "range-rover",
+        },
+    )
+    db.add(stale)
+    db.commit()
+
+    run_wikidata_models_pass(db)
+    db.refresh(stale)
+    assert stale.status == "open"
+    assert stale.detail["cross_badge"] is False
+    assert "label_brand" not in stale.detail
+
+
 def test_zero_label_claimants_all_flag(db, wikidata_source, vpic_source):  # noqa: F811
     """The Feroza/Rugger shape: two entities are each 'aka Rocky' by alias
     and neither wears the name as its label - nobody attaches, both flag,

@@ -350,11 +350,12 @@ class _WikidataModelsPass:
         if existing is not None:
             # One open question per record - but the question can CHANGE
             # between runs (a cluster claimant becomes a market-name suspect
-            # once the model's nameplate attaches). An open flag is the
-            # current question, so its reason/detail refresh; only closes are
-            # immutable history.
+            # once the model's nameplate attaches; a cross-badge verdict
+            # flips when the brand list changes). An open flag is the
+            # current question, so its whole detail refreshes whenever the
+            # current computation differs; only closes are immutable history.
             for flag in existing:
-                if (flag.detail or {}).get("reason") != reason:
+                if (flag.detail or {}) != full_detail:
                     flag.detail = full_detail
             return
         flag = ReconciliationFlag(
@@ -584,12 +585,27 @@ class _WikidataModelsPass:
     def _label_brand(self, entity: ModelEntity) -> int | None:
         """The held company whose name the LABEL wears as a prefix, longest
         match - 'Subaru Trailseeker' wears Subaru. None when no held name
-        prefixes the label (or the label IS a company name outright)."""
+        prefixes the label (or the label IS a company name outright). The
+        prefix must end on a word boundary of the label: normalization
+        strips spacing, so a raw startswith would read 'Ranger' out of
+        'Range Rover (1st generation)' - a brand the label does not wear."""
         if not entity.label:
             return None
-        n = normalize_name(entity.label)
+        tokens: list[str] = []
+        current: list[str] = []
+        for ch in entity.label.casefold():
+            if ch.isalnum():
+                current.append(ch)
+            elif current:
+                tokens.append("".join(current))
+                current = []
+        if current:
+            tokens.append("".join(current))
+        # Cumulative whole-token prefixes, excluding the full label: a label
+        # that IS a company name outright wears no brand.
+        prefixes = {"".join(tokens[:k]) for k in range(1, len(tokens))}
         for norm, company_id in self._brand_norms:
-            if len(norm) < len(n) and n.startswith(norm):
+            if norm in prefixes:
                 return company_id
         return None
 
