@@ -18,11 +18,11 @@ not a restatement.
 
 ## Current Focus
 
-Phase 1: **the first cars have identity, and their years + variants are landing.** ADR 0010 and **ADR 0011 accepted** (as-filed leaf models; series are lines, not entities; demo seed retired — every entity row is reconciler-produced). EPA vehicles.csv landed (49,995 per-variant rows, 1984–2027); the vPIC model-years backfill is sweeping (11.6k requests, commit-per-make). **1,735 `models` rows** under 129 companies (the 134 matched makes, minus double-MakeIds), `name` asserted through `field_provenance`; all 3 Santana slug collisions resolved as merges (Gaurav 2026-07-30: one page per wheelbase — 1,738 records reconcile onto 1,735 rows, model queue at zero); 280 model records wait under unmatched makes. 2,018 vPIC model records landed across all 247 makes; **134/247 makes matched** to 7,215 companies; ADR 0009 implemented (`catalogue_periods` live, migration `76cb287dd71c`). 113 make-level `match_review` open (parked no-match pool), admission batch-triage proposals parked for Gaurav's "barely cars" pass. Charter: **the focal point is the individual car's page.** Next: the Wikidata models+generations sweep (the nameplate/generation-asserting source), then year-level vPIC + EPA writes.
+Phase 1: **the first cars have identity, and their years + variants are landing.** ADR 0010 and **ADR 0011 accepted** (as-filed leaf models; series are lines, not entities; demo seed retired — every entity row is reconciler-produced). EPA vehicles.csv landed (49,995 per-variant rows, 1984–2027); the vPIC model-years backfill is COMPLETE (2,018/2,018 models have year lists). **1,735 `models` rows** under 129 companies (the 134 matched makes, minus double-MakeIds), `name` asserted through `field_provenance`; all 3 Santana slug collisions resolved as merges (Gaurav 2026-07-30: one page per wheelbase — 1,738 records reconcile onto 1,735 rows, model queue at zero); 280 model records wait under unmatched makes. 2,018 vPIC model records landed across all 247 makes; **134/247 makes matched** to 7,215 companies; ADR 0009 implemented (`catalogue_periods` live, migration `76cb287dd71c`). 113 make-level `match_review` open (parked no-match pool), admission batch-triage proposals parked for Gaurav's "barely cars" pass. Charter: **the focal point is the individual car's page.** Next: the Wikidata models+generations sweep (the nameplate/generation-asserting source), then year-level vPIC + EPA writes.
 
 ## In Flight
 
-**The vPIC model-years backfill is running** (launched 2026-07-30, ~3.2 h; commit-per-make, so an interrupt loses only the make in progress — resume by re-running `scripts/ingest_vpic_model_years.py`; watch via `scripts/status.py`'s model-years line). PRs #21/#22/#23 all merged 2026-07-30; ADRs 0010/0011 accepted; Santana resolved and applied. Nothing awaiting Gaurav. Next work item: **ADR 0012** (Wikidata models+generations sweep design), starting when the backfill lands or sooner.
+Nothing running. **The model-years backfill COMPLETED 2026-07-30**: 2,018/2,018 passenger models have 1981+ year lists (`modelyears:<id>`), 18,206 non-passenger rows skipped, spot checks validate (the M3's year gaps are its real production gaps). ADR 0012 accepted (PR #24); the duplicate-sweep approved batch applied (v8, 11 merges, companies 7,204). **Next session: implement ADR 0012** (sweep fetcher, `model_lines` migration, enrichment pass with the review's labeled-set capture folded in), then the year-pass/EPA ADR with the quantitative bridge requirements (PROGRESS part 6). Parked for Gaurav: the namesake/ambiguous duplicate groups (cross-source checks first — his ruling), the Mazda chinesische-Automarke twin, TVR's plant twin (needs a deny decision), barely-cars (much later).
 
 ## Next (immediate)
 
@@ -93,6 +93,12 @@ These need decisions before they become blockers. Each should resolve to an ADR 
 End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
+
+### 2026-07-30 (part 7 — the backfill lands whole; the approved merge batch applies; session handoff)
+
+- **Model-years backfill complete**: 11,609 requests, 2,018 records, **100% coverage** (every passenger model has a 1981+ year list; zero missing), 18,206 non-passenger rows skipped by the passenger-set filter. Validation: Accord = unbroken 1981–2027; M3's gaps (1992–94, 2007, 2014, 2019–20) are its real production gaps; 330i shows the E46/G20 two-era shape. Annual top-up from here ≈ 247 requests.
+- **The duplicate-sweep review** (105 exact-name groups, 230 rows) ran as classified proposal → Gaurav approved **the merge bucket only**; namesake and ambiguous groups wait for cross-source checks (his ruling: "need to be checked against other sources before they are brought in"). Applied: 11 same-entity pairs into `IDENTITY_MERGES` (v8), collapsed live (companies 7,215 → 7,204), all three passes re-run as no-ops, 106 tests green. Noted: Techrules' canonical keeps a QID-suffixed slug (slug-ADR wart); TVR's twin is an assembly plant needing a deny, not a merge.
+- Session ends with a handoff prompt to a fresh session (context budget): implement ADR 0012 next.
 
 ### 2026-07-30 (part 6 — the direction review: two independent lenses, one live bug, verdict sound)
 

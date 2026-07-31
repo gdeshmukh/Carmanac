@@ -42,7 +42,10 @@ from __future__ import annotations
 # v7 (2026-07-29): the vPIC models pass (ADR 0010) - the first `models` rows,
 # under matched makes only, name asserted through field_provenance, slug
 # collisions flagged rather than auto-suffixed.
-RECONCILER_VERSION = "7"
+# v8 (2026-07-30): the duplicate-name sweep's approved batch (Gaurav) - 11
+# same-entity pairs from the 105-group exact-name review merge; namesake and
+# ambiguous groups deliberately stay separate pending cross-source checks.
+RECONCILER_VERSION = "8"
 
 # --- identity --------------------------------------------------------------
 
@@ -103,6 +106,31 @@ IDENTITY_MERGES: dict[str, str] = {
     # the 1993 successor, is an era of the same company is a separate open
     # question - not merged.)
     "Q132560783": "Q17812480",  # Consulier (brand) -> Consulier Industries
+    # --- the duplicate-name sweep's approved batch (Gaurav 2026-07-30):
+    # 11 same-entity pairs from the 105-group exact-name review. Each is one
+    # substantive row + a stub whose description identifies the SAME company
+    # (mostly the brand-artifact wave). Namesake groups (Ace, Ajax, Caribe,
+    # Star OH/IL...) and ambiguous stubs (Imperial, Clipper, the Mazda
+    # chinesische-Automarke twin) deliberately stay separate pending
+    # cross-source checks. TVR's twin Q80901538 is an assembly PLANT, not a
+    # merge candidate - it needs a deny decision, parked.
+    "Q135773766": "Q27110",  # Autobianchi (car brand artifact)
+    "Q45144846": "Q27377",  # Borgward (Automobilmarke artifact)
+    "Q22671448": "Q1002164",  # Bufori (same AU/MY maker, second entity)
+    "Q131701890": "Q27460",  # Dacia (brand "owned by Automobile Dacia S.A.")
+    "Q125765830": "Q173085",  # De Tomaso (car brand artifact)
+    "Q125521978": "Q5463055",  # Flxible (bus brand of the same company)
+    "Q3020269": "Q373350",  # Gutbrod (both DE, one company)
+    "Q45101510": "Q463827",  # Hansa (car brand artifact)
+    "Q58773149": "Q40963",  # Oltcit (Rumänische Automarke artifact)
+    "Q1067717": "Q908945",  # Charron-Laycock (one company, two entities)
+    # Techrules, REVERSED substance (the Tesla shape): the slug-holding row
+    # is the sparse "Automobilmarke"; canonical is the substantive Chinese-
+    # manufacturer entity so its facts project. Identity is preserved by the
+    # merge script's canonical-not-materialized path... but both ARE
+    # materialized here, so the normal path applies: the member row (sparse)
+    # collapses into the canonical (substantive).
+    "Q63197612": "Q105334279",  # Techrules (marque stub) -> Techrules (manufacturer)
 }
 
 # A curated merge is a human identity decision about BOTH sides: naming a
