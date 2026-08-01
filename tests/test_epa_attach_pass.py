@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from carmanac.db.models import (
     Configuration,
+    ConfigurationAttribute,
     ExternalId,
     FieldProvenance,
     MatchDecision,
@@ -181,3 +182,119 @@ def test_rerun_converges(db, wikidata_source, vpic_source, epa_source):  # noqa:
     assert rerun.configurations_created == 0 and rerun.configurations_existing == 1
     assert rerun.periods_created == 0 and rerun.external_ids_written == 0
     assert db.scalar(select(Configuration.id)) is not None
+
+
+# --- ADR 0015: powertrain facts, not entities --------------------------------
+
+
+def test_automated_manual_codes_assert_nothing(db, wikidata_source, vpic_source, epa_source):  # noqa: F811
+    """EPA's AM/AM-S codes cannot distinguish a single-clutch automated
+    manual from a dual-clutch - no bucket word may erase that difference
+    (Gaurav's ruling), so the row asserts NO transmission type. AV codes
+    are CVTs and map."""
+    _toyota_4runner(db, wikidata_source, vpic_source)
+    _land_vehicle(db, epa_source, 200, "Toyota", "4Runner", 2020, trany="Automatic (AM-S7)")
+    _land_vehicle(db, epa_source, 201, "Toyota", "4Runner", 2021, trany="Automatic (AV-S6)")
+
+    run_epa_attach_pass(db)
+
+    by_year = {c.catalogue_period.start_year: c for c in db.scalars(select(Configuration)).all()}
+    assert by_year[2020].transmission_type_id is None
+    from carmanac.db.models import TransmissionType
+
+    cvt = db.scalar(select(TransmissionType.id).where(TransmissionType.code == "cvt"))
+    assert by_year[2021].transmission_type_id == cvt
+
+
+def test_sole_source_refresh_corrects_stale_column(db, wikidata_source, vpic_source, epa_source):  # noqa: F811
+    """The live correction (ADR 0015 SS1): a configuration written under the
+    old AM->automatic mapping is corrected on re-run - old assertion
+    superseded by a NULL-observed successor, column NULLed."""
+    _toyota_4runner(db, wikidata_source, vpic_source)
+    rec = _land_vehicle(db, epa_source, 202, "Toyota", "4Runner", 2020, trany="Automatic (AM-S7)")
+    run_epa_attach_pass(db)
+    config = db.scalars(select(Configuration)).one()
+    # Simulate the pre-ADR-0015 state: the old mapping asserted 'automatic'.
+    from carmanac.db.models import TransmissionType
+
+    automatic = db.scalar(select(TransmissionType.id).where(TransmissionType.code == "automatic"))
+    stale = FieldProvenance(
+        configuration_id=config.id,
+        field_name="transmission_type_id",
+        observed_value=str(automatic),
+        source_id=epa_source.id,
+        raw_record_id=rec.id,
+        scraped_at=rec.fetched_at,
+    )
+    db.add(stale)
+    config.transmission_type_id = automatic
+    db.commit()
+
+    stats = run_epa_attach_pass(db)
+
+    db.refresh(config)
+    db.refresh(stale)
+    assert stats.columns_corrected == 1
+    assert config.transmission_type_id is None
+    assert stale.superseded_by is not None and stale.superseded_by != stale.id
+    successor = db.get(FieldProvenance, stale.superseded_by)
+    assert successor.observed_value is None
+
+
+def test_refresh_leaves_other_sources_columns_alone(db, wikidata_source, vpic_source, epa_source):  # noqa: F811
+    """A column another source asserts is reconciliation's contest, never
+    this pass's overwrite."""
+    _toyota_4runner(db, wikidata_source, vpic_source)
+    _land_vehicle(db, epa_source, 203, "Toyota", "4Runner", 2020, trany="Automatic (AM-S7)")
+    run_epa_attach_pass(db)
+    config = db.scalars(select(Configuration)).one()
+    from carmanac.db.models import TransmissionType
+
+    dct = db.scalar(select(TransmissionType.id).where(TransmissionType.code == "dct"))
+    other = FieldProvenance(
+        configuration_id=config.id,
+        field_name="transmission_type_id",
+        observed_value=str(dct),
+        source_id=wikidata_source.id,
+    )
+    db.add(other)
+    config.transmission_type_id = dct
+    db.commit()
+
+    stats = run_epa_attach_pass(db)
+
+    db.refresh(config)
+    assert stats.columns_corrected == 0
+    assert config.transmission_type_id == dct
+
+
+def test_aspiration_and_flex_fuel_land_as_eav(db, wikidata_source, vpic_source, epa_source):  # noqa: F811
+    """tCharger -> aspiration=turbo, FFV -> flex_fuel, with row-level
+    provenance; a twincharged row (both flags) asserts nothing."""
+    _toyota_4runner(db, wikidata_source, vpic_source)
+    _land_vehicle(db, epa_source, 204, "Toyota", "4Runner", 2020, tCharger="T", atvType="FFV")
+    _land_vehicle(db, epa_source, 205, "Toyota", "4Runner", 2021, tCharger="T", sCharger="S")
+
+    stats = run_epa_attach_pass(db)
+
+    assert stats.eav_written == 2  # aspiration + flex_fuel for 2020; nothing for 2021
+    from carmanac.db.models import AttributeDefinition
+
+    keys = {i: k for i, k in db.execute(select(AttributeDefinition.id, AttributeDefinition.key))}
+    rows = db.scalars(select(ConfigurationAttribute)).all()
+    by_key = {keys[r.attribute_id]: r for r in rows}
+    assert by_key["aspiration"].value_text == "turbo"
+    assert by_key["flex_fuel"].value_boolean is True
+    assert all(r.source_id == epa_source.id and r.raw_record_id is not None for r in rows)
+
+
+def test_natural_gas_maps_to_cng(db, wikidata_source, vpic_source, epa_source):  # noqa: F811
+    _toyota_4runner(db, wikidata_source, vpic_source)
+    _land_vehicle(db, epa_source, 206, "Toyota", "4Runner", 1998, fuelType1="Natural Gas")
+
+    run_epa_attach_pass(db)
+
+    from carmanac.db.models import FuelType
+
+    cng = db.scalar(select(FuelType.id).where(FuelType.code == "cng"))
+    assert db.scalars(select(Configuration)).one().fuel_type_id == cng

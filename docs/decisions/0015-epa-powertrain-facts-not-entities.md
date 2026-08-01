@@ -1,6 +1,11 @@
 # ADR 0015 — EPA powertrain data: facts now, entities when a naming source lands
 
-- Status: Proposed
+- Status: Accepted (2026-07-31, as amended in deliberation — no
+  `automated_manual` bucket: AM/AM-S assert nothing, preserving the
+  single-clutch/dual-clutch distinction for a source that can see it;
+  `sequential` added to the lookup, dormant; gear-count EAV dropped
+  (gear count belongs to future transmission entities, not
+  configurations); existing mis-typed configurations corrected)
 - Date: 2026-07-31
 - Depends on: ADR 0002 (entity/fact split), ADR 0011 §4 (external ids are
   1:1 correspondence), ADR 0014 §4 (deferred exactly this question)
@@ -51,18 +56,25 @@ That is the miscategorization machine, one level down. Instead:
 
 ### 1. Transmissions are facts-only from EPA, indefinitely
 
-- `trany` style maps to `configurations.transmission_type_id`, with one
-  correction: EPA's `AM`/`AM-S` codes mean *automated manual* and cannot
-  distinguish single-clutch from dual-clutch (the smart fortwo and the
-  GT-R share a code). The current pass maps them to `automatic`, which
-  is wrong for every DCT. A new `transmission_types` row
-  `automated_manual` ("Automated manual (incl. dual-clutch)") receives
-  them — truthful to what EPA asserts — and the 2,042 affected rows'
-  configurations are refreshed under the corrected mapping (one
-  decisions script, provenance superseded properly, settling re-runs).
-- Gear count lands as EAV (`transmission_gear_count`, integer, registered
-  in `attribute_definitions` first): CVTs have none and EV "1-spd" is a
-  convention, so it fails no-value-for-real-cars honesty as a column.
+- `trany` maps to `configurations.transmission_type_id` **only where EPA
+  is unambiguous** (Gaurav's ruling): plain automatics, shiftable
+  S-codes, and the EV A-codes (all torque-converter-or-EV shapes in
+  EPA's coding) → `automatic`; `variable gear ratios`/AV-codes → `cvt`;
+  manuals → `manual`. **`AM`/`AM-S` codes assert nothing** — EPA cannot
+  distinguish a single-clutch automated manual from a dual-clutch, the
+  driving-dynamics difference is enormous, and no bucket word
+  ("automated manual") may erase it. Those 2,042 rows' configurations
+  carry NULL until a source that names the gearbox lands.
+- The pass gains **sole-source column refresh**: on re-run, a column
+  whose only live assertion is EPA's is recomputed, and a changed answer
+  supersedes the old assertion properly (the "open question refreshes"
+  principle applied to columns). This corrects the ~2,042 rows'
+  configurations already written under the old AM→automatic mapping —
+  and makes every future mapping fix self-applying.
+- `sequential` joins the `transmission_types` lookup (dormant — EPA will
+  likely never file one, but the type exists for sources that do).
+- No gear-count EAV: gear count is a property of a transmission entity,
+  and we hold none to tie it to.
 - The `transmissions` table stays empty until a source that names
   gearboxes lands (Tier 2/3); `configuration_transmissions`' provenance
   columns are ready for that day.
@@ -70,15 +82,14 @@ That is the miscategorization machine, one level down. Instead:
 ### 2. Engine entities wait for the engine-naming source
 
 The structural precedent is the generation question: entity identity
-requires a source that *asserts the entity*, and for engines that source
-is already identified — **vPIC's decode layer carries Engine Model,
-Engine Manufacturer, Engine Configuration, and Engine Power** (live-probed
-2026-07-31, the 144-variable inventory). It is the same "identity from
-the asserting source, specs corroborated by EPA" split that ADR 0012 set
-for generations. The engines-entity ADR follows the vPIC spec-depth
-landing (the full-database download probe, already queued as its own
-design turn). EPA's spec tuples then *corroborate and enrich* named
-engines instead of pre-empting them.
+requires a source that *asserts the entity* — a source class, not one
+source. vPIC's decode layer is the leading candidate (Engine Model,
+Engine Manufacturer, Engine Configuration, Engine Power — live-probed
+2026-07-31), behind its own probe-first design turn; Wikidata engine
+entities and the Tier-3 marque wikis are the others, and none is assumed
+sufficient in advance. Whatever lands first with real engine names gets
+the engines-entity ADR; EPA's spec tuples then *corroborate and enrich*
+named engines instead of pre-empting them.
 
 Explicitly rejected: `engine:<engId>` external ids (not 1:1 in any era);
 spec-cluster entities (above); using the car's company as the engine's
@@ -100,14 +111,17 @@ maker (EPA never asserts the maker — the Supra's engine is not Toyota's).
 
 ## Consequences
 
-- **No migration.** Two lookup-row additions and EAV registrations only.
-- `RECONCILER_VERSION` bumps (the AM mapping is a behavior change); one
-  decisions script refreshes the ~2,042 mis-typed configurations'
-  `transmission_type_id` with proper supersession; double re-run settling
-  verification throughout.
-- The engines-entity ADR (with the vPIC decode landing as its evidence
-  base) and the gear-count-as-column question are explicitly NOT this
-  ADR.
+- **No schema migration.** One seed migration adds the three lookup rows
+  (`transmission_types.sequential`, `fuel_types.cng`,
+  `fuel_types.hydrogen`) and registers the two `attribute_definitions`
+  keys — the de1fcf30fd16 precedent: rows a pass consumes are
+  migration-seeded.
+- `RECONCILER_VERSION` bumps (the AM mapping is a behavior change); the
+  pass's sole-source column refresh applies the correction to the
+  already-written configurations on its first re-run; double re-run
+  settling verification throughout.
+- The engines-entity ADR (whichever engine-naming source lands first)
+  and any future gear-count question are explicitly NOT this ADR.
 - Recorded correction to ADR 0014's Consequences: it estimated "~49.5k
   configurations"; the implemented grouping (rows sharing a natural key
   merge) landed 23,523 — the estimate predated the group design, the

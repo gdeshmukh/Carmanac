@@ -54,7 +54,7 @@ from __future__ import annotations
 # carries "Daihatsu Rocky"); the cross-badge guard; prefix stripping uses
 # the company's vPIC make names too ("Audi AG" strips as AUDI); refreshes
 # preserve the match method in the decision log.
-RECONCILER_VERSION = "11"
+RECONCILER_VERSION = "12"
 
 # --- identity --------------------------------------------------------------
 

@@ -44,9 +44,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
+    AttributeDefinition,
     CataloguePeriod,
     Company,
     Configuration,
+    ConfigurationAttribute,
     ExternalId,
     FieldProvenance,
     MatchDecision,
@@ -59,7 +61,7 @@ from carmanac.ingest.epa.bulk import EPA_SOURCE_NAME
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import _current_records
+from carmanac.reconcile.engine import _current_records, _supersede
 from carmanac.reconcile.matching import normalize_name
 
 log = logging.getLogger(__name__)
@@ -93,7 +95,26 @@ FUEL1_MAP: dict[str, str] = {
     "Premium Gasoline": "gasoline",
     "Diesel": "diesel",
     "Electricity": "bev",
+    "Natural Gas": "cng",
+    "Hydrogen": "hydrogen",
 }
+
+# The spec columns this pass writes and refreshes (ADR 0014 SS4, ADR 0015).
+SPEC_COLUMNS: tuple[str, ...] = (
+    "engine_displacement_cc",
+    "cylinders",
+    "fuel_type_id",
+    "transmission_type_id",
+    "mpg_city",
+    "mpg_highway",
+    "mpg_combined",
+    "mpge_combined",
+    "electric_range_km",
+)
+
+# The EAV keys this pass writes (registered in attribute_definitions by
+# migration ea565b7ea489 before any landing - the charter rule).
+EAV_KEYS: tuple[str, ...] = ("aspiration", "flex_fuel")
 
 _MILES_TO_KM = 1.609344
 
@@ -113,6 +134,8 @@ class EpaAttachStats:
     configurations_existing: int = 0
     external_ids_written: int = 0
     column_conflicts: int = 0
+    columns_corrected: int = 0
+    eav_written: int = 0
     flags_opened: int = 0
 
     def summary(self) -> str:
@@ -127,7 +150,9 @@ class EpaAttachStats:
             f"configs: created={self.configurations_created} "
             f"existing={self.configurations_existing} "
             f"external_ids={self.external_ids_written} "
-            f"column_conflicts={self.column_conflicts} flags={self.flags_opened}"
+            f"column_conflicts={self.column_conflicts} "
+            f"columns_corrected={self.columns_corrected} "
+            f"eav_written={self.eav_written} flags={self.flags_opened}"
         )
 
 
@@ -139,7 +164,7 @@ class _Group:
     year: int
     trim: str | None
     drivetrain_id: int | None
-    members: list[tuple[RawRecord, dict]] = field(default_factory=list)
+    members: list[tuple[RawRecord, dict, dict]] = field(default_factory=list)
 
 
 def _tokens(s: str) -> list[str]:
@@ -274,6 +299,59 @@ class _EpaAttachPass:
             d = flag.detail or {}
             self.open_questions.add((d.get("reason", ""), d.get("make", ""), d.get("model", "")))
 
+        # Sole-source refresh caches (ADR 0015 SS1): this pass may correct a
+        # column it alone asserts; a column any OTHER source asserts is
+        # reconciliation's job, not this pass's.
+        self.config_cols: dict[int, dict] = {}
+        for row in session.execute(
+            select(Configuration.id, *[getattr(Configuration, c) for c in SPEC_COLUMNS])
+        ):
+            self.config_cols[row[0]] = dict(zip(SPEC_COLUMNS, row[1:], strict=True))
+        self.epa_live: dict[tuple[int, str], int] = {}
+        self.other_live: set[tuple[int, str]] = set()
+        for fp_id, cfg_id, fname, src in session.execute(
+            select(
+                FieldProvenance.id,
+                FieldProvenance.configuration_id,
+                FieldProvenance.field_name,
+                FieldProvenance.source_id,
+            ).where(
+                FieldProvenance.configuration_id.isnot(None),
+                FieldProvenance.superseded_by.is_(None),
+            )
+        ):
+            if src == self.source.id:
+                self.epa_live[(cfg_id, fname)] = fp_id
+            else:
+                self.other_live.add((cfg_id, fname))
+        self.attr_ids: dict[str, int] = {
+            key: attr_id
+            for key, attr_id in session.execute(
+                select(AttributeDefinition.key, AttributeDefinition.id).where(
+                    AttributeDefinition.key.in_(EAV_KEYS)
+                )
+            )
+        }
+        missing = set(EAV_KEYS) - set(self.attr_ids)
+        if missing:  # pragma: no cover - migration-seeded registry
+            raise RuntimeError(f"attribute_definitions missing keys: {sorted(missing)}")
+        # (config, attr) -> (row id, current value) for live EPA-written EAV.
+        self.eav_live: dict[tuple[int, int], tuple[int, object]] = {}
+        for ca_id, cfg_id, attr_id, vt, vb in session.execute(
+            select(
+                ConfigurationAttribute.id,
+                ConfigurationAttribute.configuration_id,
+                ConfigurationAttribute.attribute_id,
+                ConfigurationAttribute.value_text,
+                ConfigurationAttribute.value_boolean,
+            ).where(
+                ConfigurationAttribute.attribute_id.in_(list(self.attr_ids.values())),
+                ConfigurationAttribute.superseded_by.is_(None),
+                ConfigurationAttribute.source_id == self.source.id,
+            )
+        ):
+            self.eav_live[(cfg_id, attr_id)] = (ca_id, vt if vt is not None else vb)
+
     # --- resolution ----------------------------------------------------------
 
     def _bridge_make(self, make: str) -> int | None:
@@ -311,8 +389,8 @@ class _EpaAttachPass:
             return model_id, " ".join(tokens[k:]) or None, "model_prefix", "3"
         return None
 
-    def _specs(self, payload: dict) -> dict:
-        """The v1 core-spec columns one EPA row asserts."""
+    def _specs(self, payload: dict) -> tuple[dict, dict]:
+        """(spec columns, EAV facts) one EPA row asserts."""
         specs: dict = {}
         displ = payload.get("displ")
         if displ:
@@ -329,8 +407,14 @@ class _EpaAttachPass:
             specs["fuel_type_id"] = self.fuel_by_code.get(fuel_code)
         trany = payload.get("trany") or ""
         if trany:
-            if "variable gear" in trany.lower():
+            # ADR 0015 SS1 (Gaurav's ruling): only what EPA is unambiguous
+            # about. AV codes are CVTs with simulated ratios; AM/AM-S are
+            # automated manuals whose single-vs-dual-clutch difference EPA
+            # cannot see - they assert NOTHING, no bucket word.
+            if "variable gear" in trany.lower() or trany.startswith("Automatic (AV"):
                 code = "cvt"
+            elif trany.startswith("Automatic (AM"):
+                code = None
             elif trany.startswith("Manual"):
                 code = "manual"
             elif trany.startswith("Automatic"):
@@ -363,7 +447,19 @@ class _EpaAttachPass:
         rng = _num("range")
         if rng:
             specs["electric_range_km"] = round(rng * _MILES_TO_KM)
-        return specs
+
+        eav: dict = {}
+        turbo = (payload.get("tCharger") or "").strip()
+        sup = (payload.get("sCharger") or "").strip()
+        if turbo and sup:
+            pass  # twincharged: EPA's two booleans cannot rank them - assert nothing
+        elif turbo:
+            eav["aspiration"] = "turbo"
+        elif sup:
+            eav["aspiration"] = "supercharged"
+        if payload.get("atvType") == "FFV" or "FFV" in (payload.get("eng_dscr") or ""):
+            eav["flex_fuel"] = True
+        return specs, eav
 
     # --- bookkeeping ---------------------------------------------------------
 
@@ -469,25 +565,23 @@ class _EpaAttachPass:
         cfg_id = self.config_by_key.get(key)
         created = cfg_id is None
 
-        # Column agreement across the group's rows: unanimous or nothing.
+        # Column/EAV agreement across the group's rows: unanimous or nothing.
         agreed: dict = {}
-        for col in (
-            "engine_displacement_cc",
-            "cylinders",
-            "fuel_type_id",
-            "transmission_type_id",
-            "mpg_city",
-            "mpg_highway",
-            "mpg_combined",
-            "mpge_combined",
-            "electric_range_km",
-        ):
-            values = {specs[col] for _, specs in group.members if specs.get(col) is not None}
+        for col in SPEC_COLUMNS:
+            values = {specs[col] for _, specs, _ in group.members if specs.get(col) is not None}
             if len(values) == 1:
                 agreed[col] = values.pop()
             elif len(values) > 1:
                 self.stats.column_conflicts += 1
+        agreed_eav: dict = {}
+        for key in EAV_KEYS:
+            values = {eav[key] for _, _, eav in group.members if eav.get(key) is not None}
+            if len(values) == 1:
+                agreed_eav[key] = values.pop()
+            elif len(values) > 1:
+                self.stats.column_conflicts += 1
 
+        rep = min(group.members, key=lambda m: m[0].id)[0]
         if created:
             config = Configuration(
                 catalogue_period_id=period_id,
@@ -503,23 +597,32 @@ class _EpaAttachPass:
             self.config_by_key[key] = cfg_id
             self.config_slugs.add(config.slug)
             self.stats.configurations_created += 1
+            self.config_cols[cfg_id] = {c: agreed.get(c) for c in SPEC_COLUMNS}
             # Field-level provenance (ADR 0002) from a representative record:
             # the group's first row by EPA id. Every member row's linkage is
             # in the decision log regardless.
-            rep = min(group.members, key=lambda m: m[0].id)[0]
             for col, value in agreed.items():
-                self.session.add(
-                    FieldProvenance(
-                        configuration_id=cfg_id,
-                        field_name=col,
-                        observed_value=str(value),
-                        source_id=self.source.id,
-                        raw_record_id=rep.id,
-                        scraped_at=rep.fetched_at,
-                    )
+                fp = FieldProvenance(
+                    configuration_id=cfg_id,
+                    field_name=col,
+                    observed_value=str(value),
+                    source_id=self.source.id,
+                    raw_record_id=rep.id,
+                    scraped_at=rep.fetched_at,
                 )
+                self.session.add(fp)
+            self.session.flush()
+            for key, value in agreed_eav.items():
+                self._write_eav(cfg_id, key, value, rep)
         else:
             self.stats.configurations_existing += 1
+            self._refresh_columns(cfg_id, agreed, rep)
+            for key, value in agreed_eav.items():
+                current = self.eav_live.get((cfg_id, self.attr_ids[key]))
+                if current is None:
+                    self._write_eav(cfg_id, key, value, rep)
+                elif current[1] != value:
+                    self._correct_eav(cfg_id, key, value, rep)
 
         if len(group.members) == 1:
             record = group.members[0][0]
@@ -533,6 +636,80 @@ class _EpaAttachPass:
                 )
                 self.vehicle_external.add(record.external_id)
                 self.stats.external_ids_written += 1
+
+    @staticmethod
+    def _same(a, b) -> bool:
+        if a is None or b is None:
+            return a is None and b is None
+        try:
+            return float(a) == float(b)
+        except (TypeError, ValueError):
+            return a == b
+
+    def _refresh_columns(self, cfg_id: int, agreed: dict, rep: RawRecord) -> None:
+        """Sole-source column refresh (ADR 0015 SS1): where EPA is the only
+        live asserter of a column and its recomputed answer changed - a
+        mapping correction, a re-landed CSV - the old assertion is
+        superseded and the column follows. A column any other source
+        asserts is left alone; that contest is reconciliation's."""
+        current = self.config_cols.get(cfg_id, {})
+        config = None
+        for col in SPEC_COLUMNS:
+            new = agreed.get(col)
+            if self._same(current.get(col), new):
+                continue
+            if (cfg_id, col) in self.other_live:
+                continue
+            if config is None:
+                config = self.session.get(Configuration, cfg_id)
+            new_values = {
+                "configuration_id": cfg_id,
+                "field_name": col,
+                "observed_value": None if new is None else str(new),
+                "source_id": self.source.id,
+                "raw_record_id": rep.id,
+                "scraped_at": rep.fetched_at,
+            }
+            old_id = self.epa_live.get((cfg_id, col))
+            if old_id is not None:
+                successor = _supersede(
+                    self.session, self.session.get(FieldProvenance, old_id), new_values
+                )
+            else:
+                successor = FieldProvenance(**new_values)
+                self.session.add(successor)
+                self.session.flush()
+            self.epa_live[(cfg_id, col)] = successor.id
+            setattr(config, col, new)
+            current[col] = new
+            self.stats.columns_corrected += 1
+
+    def _write_eav(self, cfg_id: int, key: str, value, rep: RawRecord) -> None:
+        attr_id = self.attr_ids[key]
+        row = ConfigurationAttribute(
+            configuration_id=cfg_id,
+            attribute_id=attr_id,
+            value_text=value if isinstance(value, str) else None,
+            value_boolean=value if isinstance(value, bool) else None,
+            source_id=self.source.id,
+            raw_record_id=rep.id,
+            scraped_at=rep.fetched_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        self.eav_live[(cfg_id, attr_id)] = (row.id, value)
+        self.stats.eav_written += 1
+
+    def _correct_eav(self, cfg_id: int, key: str, value, rep: RawRecord) -> None:
+        """The three-step dance, EAV edition (same live-slot uniqueness)."""
+        attr_id = self.attr_ids[key]
+        old_id, _ = self.eav_live[(cfg_id, attr_id)]
+        old = self.session.get(ConfigurationAttribute, old_id)
+        old.superseded_by = old.id
+        self.session.flush()
+        self._write_eav(cfg_id, key, value, rep)
+        old.superseded_by = self.eav_live[(cfg_id, attr_id)][0]
+        self.session.flush()
 
     # --- run -----------------------------------------------------------------
 
@@ -598,7 +775,8 @@ class _EpaAttachPass:
             gkey = (model_id, year, trim, drive_id)
             if gkey not in groups:
                 groups[gkey] = _Group(model_id, year, trim, drive_id)
-            groups[gkey].members.append((record, self._specs(p)))
+            specs, eav = self._specs(p)
+            groups[gkey].members.append((record, specs, eav))
             self._decide(
                 record,
                 rung,
