@@ -94,6 +94,11 @@ End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
 
+### 2026-07-31 (part 6 — ADR 0015: powertrain facts, not entities; the DCT truth-telling correction)
+
+- **The entities question inverted under investigation** (20-agent parallel sweep, every load-bearing claim adversarially re-derived, all held): EPA cannot name an engine — `engId` is a recycled per-(year,make,model) index with a 25% zero sentinel and an 11-year dead zone; `eng_dscr` is 99% attribute flags (no "B58" in 49,995 rows; the Supra/Z4 twins share specs but no key); `trany` names zero gearboxes. Minting would build spec-bins that split real shared engines and merge distinct ones. **ADR 0015 accepted as amended (Gaurav)**: facts-only from EPA; engine entities wait for whichever engine-naming source lands first (vPIC's decode layer is the leading candidate, not the assumption); **no `automated_manual` bucket** — his ruling: AM/AM-S rows assert *nothing*, because no word may erase the single-clutch/dual-clutch difference; `sequential` seeded dormant; no gear-count EAV (nothing to tie it to).
+- **Implemented same session** (`be5f3f2`, reconciler v12): corrected trany mapping (AM→NULL, AV→cvt), cng/hydrogen fuel rows, aspiration/flex-fuel EAV under migration-registered keys (`ea565b7ea489`), and the pass's new **sole-source column refresh** — where EPA is the only live asserter and the recomputed answer changes, the old assertion is superseded and the column follows; other-source columns untouched. Live: **2,502 columns corrected** (every DCT's false `automatic` now honestly NULL — the GT-R spot-check), **9,761 EAV facts**, run 2 an exact no-op, 145 tests green. Awaiting Gaurav: the PR.
+
 ### 2026-07-31 (part 5 — PR #28 merged; the source inventory for the next data turn)
 
 - **PR #28 merged** (Gaurav); main synced, both new passes double re-ran as exact no-ops, 140 tests green. Gaurav's direction: with real cars in, go get the rest of what vPIC and EPA offer.
