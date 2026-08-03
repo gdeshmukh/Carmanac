@@ -28,12 +28,17 @@ wrong trade.
 
 ## Current Phase
 
-**Phase 1: schema live, first source landing.** All 29 tables are applied and
-reviewed; Wikidata fetch-and-land runs end to end into
-`raw_scrape.raw_records`. See `PROGRESS.md` for live status.
+**Phase 1: three sources landed, six reconciliation passes live, first cars
+materialized.** All 35 tables are applied and reviewed. Wikidata, NHTSA vPIC
+and EPA fetch-and-land end to end into `raw_scrape.raw_records`, and six
+deterministic passes turn those records into companies, models, lines,
+generations, catalogue periods and configurations — every fact carrying
+field-level provenance back to the raw record that asserted it. See
+`PROGRESS.md` for live counts and the open review queues.
 
-Next: the reconciler — turning raw records into `companies` +
-`field_provenance`. NHTSA vPIC and EPA follow.
+Next: the generation-placement pass (the goal level's evidence pass — every
+`configurations.generation_id` is NULL until it exists), then the source
+depth already inventoried on vPIC and EPA.
 
 ## Architecture Invariants
 
@@ -102,13 +107,20 @@ Core tables (Phase 1 target):
   entity, has its own page. Roles via `company_roles` +
   `company_role_assignments`.
 - `models` — nameplates under a company. FK → `companies`.
+- `model_lines`, `model_line_members` — "3 Series" as an aggregation over
+  as-filed models, not a level in the spine (ADR 0011 §2, ADR 0012 §4).
+  Membership is a per-source assertion; lines hold no external ids.
 - `generations` — generation of a model (E46, G80, etc.). FK → `models`. Holds
-  chassis codes.
-- `catalogue_periods` (formerly `model_years`; ADR 0009) — the mandatory 4th
-  level under a generation: a US model year, a production period, or a
-  facelift phase, with `period_kinds` as the closed set. FK → `generations`.
+  chassis codes. The **goal** level, not a mandatory one: placement is a
+  nullable, evidence-gated fact on `configurations` (ADR 0014).
+- `catalogue_periods` (formerly `model_years`; ADR 0009, re-parented by
+  ADR 0014) — pure time under a **model**: a US model year, a production
+  period, or a facelift phase, with `period_kinds` as the closed set.
+  FK → `models`, *not* generations — one model year can hold configurations
+  of two generations at once.
 - `configurations` — atomic unit (period + trim + market + drivetrain
-  combo). FK → `catalogue_periods` + `market_regions`.
+  combo). FK → `catalogue_periods` + `market_regions`, plus the nullable
+  `generation_id` that records placement when a source supplies it.
 - `engines` — engine entities. FK → `companies` (maker of the engine, may
   differ from the car's company).
 - `transmissions` — transmission entities.
@@ -133,15 +145,23 @@ Core tables (Phase 1 target):
 - `field_provenance` — field-level provenance for entity/spec columns
   (ADR 0002).
 - `external_ids` — `(source, external_id)` → entity mapping, incl. Wikidata
-  QIDs (ADR 0003).
+  QIDs (ADR 0003). Written only on one-to-one correspondence (ADR 0011 §4).
+- `reconciled_records`, `reconciliation_flags`, `match_decisions` — the
+  reconciler's own bookkeeping: which raw records a pass has processed at
+  which version, the open review questions with their candidates, and the
+  rung/method/outcome of every match attempt. The decision log is the
+  labeled set a measured matcher will be evaluated against.
+- `period_kinds` — the closed set of catalogue-period conventions
+  (`model_year`, `production_period`, `phase`).
 - `raw_scrape.raw_records` — permanent untransformed scrape landing zone
   (ADR 0003).
 
-Reference DDL lives in `docs/schema_phase1.sql`; rationale in `docs/schema.md`.
-**Note:** the SQLAlchemy models in `carmanac/db/models/` are now the source of
-schema truth (current Alembic head `5cbf6be81036`); `docs/schema_phase1.sql`
-and `docs/schema.md` predate ADR 0002-0006 and are stale (see PROGRESS.md Open
-Questions). Leaf entity renamed `variants` → `configurations` (ADR 0001).
+**The SQLAlchemy models in `carmanac/db/models/` are the source of schema
+truth** (current Alembic head `ea565b7ea489`). `docs/schema_phase1.sql` and
+`docs/schema.md` predate ADR 0002-0006 and are **stale** — read them for
+history only; a rewrite or a generated-from-models DDL is owed (see
+PROGRESS.md Open Questions). Leaf entity renamed `variants` →
+`configurations` (ADR 0001).
 
 ## Source Tiering
 
