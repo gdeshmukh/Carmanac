@@ -99,7 +99,7 @@ FUEL1_MAP: dict[str, str] = {
     "Hydrogen": "hydrogen",
 }
 
-# The spec columns this pass writes and refreshes (ADR 0014 SS4, ADR 0015).
+# The spec columns this pass writes and refreshes (ADR 0014 §4, ADR 0015).
 SPEC_COLUMNS: tuple[str, ...] = (
     "engine_displacement_cc",
     "cylinders",
@@ -299,7 +299,7 @@ class _EpaAttachPass:
             d = flag.detail or {}
             self.open_questions.add((d.get("reason", ""), d.get("make", ""), d.get("model", "")))
 
-        # Sole-source refresh caches (ADR 0015 SS1): this pass may correct a
+        # Sole-source refresh caches (ADR 0015 §1): this pass may correct a
         # column it alone asserts; a column any OTHER source asserts is
         # reconciliation's job, not this pass's.
         self.config_cols: dict[int, dict] = {}
@@ -407,7 +407,7 @@ class _EpaAttachPass:
             specs["fuel_type_id"] = self.fuel_by_code.get(fuel_code)
         trany = payload.get("trany") or ""
         if trany:
-            # ADR 0015 SS1 (Gaurav's ruling): only what EPA is unambiguous
+            # ADR 0015 §1: only what EPA is unambiguous
             # about. AV codes are CVTs with simulated ratios; AM/AM-S are
             # automated manuals whose single-vs-dual-clutch difference EPA
             # cannot see - they assert NOTHING, no bucket word.
@@ -647,7 +647,7 @@ class _EpaAttachPass:
             return a == b
 
     def _refresh_columns(self, cfg_id: int, agreed: dict, rep: RawRecord) -> None:
-        """Sole-source column refresh (ADR 0015 SS1): where EPA is the only
+        """Sole-source column refresh (ADR 0015 §1): where EPA is the only
         live asserter of a column and its recomputed answer changed - a
         mapping correction, a re-landed CSV - the old assertion is
         superseded and the column follows. A column any other source

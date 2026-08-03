@@ -178,7 +178,7 @@ class FieldProvenance(Base):
         # DIFFERENT shape from `uq_configuration_attribute_live`, which omits
         # source_id: EAV rows are projected winners (one displayed value per
         # attribute), while these rows are per-source assertions (ADR 0007
-        # SS8) - one live row per source, disagreement included.
+        # §8) - one live row per source, disagreement included.
         #
         # NULLS NOT DISTINCT: exactly one arc column is set per row and the
         # other six are NULL, so without it every row would look distinct on

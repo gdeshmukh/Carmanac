@@ -15,48 +15,31 @@ models-sweep record (bare QID, `sweep: models` marker), the ladder is:
                                           held company + near-misses exist;
                                           else wait in raw, unflagged
 
-**v1 matches and enriches only** (§3, Gaurav): a model-shaped entity under a
-held company with no as-filed match waits - no row, no flag. The ~9k entities
-under makers we don't hold wait the same way (ADR 0010 §1's posture: one open
-make question must not fan out into thousands of model-shaped copies). The
-raw store is the tabled expansion's stocked warehouse.
+Four rules hold across the ladder, each one a place where guessing was
+available and rejected:
 
-**The P176 gate is the ladder's §2 rung 2**: an entity whose maker we cannot
-resolve waits before any name or structure rung runs - including entities
-with generation-shaped structure. Their evidence is still in raw when the
-maker converts.
+- **Match and enrich only.** A model-shaped entity under a held company with
+  no as-filed match waits - no row, no flag. One open make question must not
+  fan out into thousands of model-shaped copies (ADR 0010 §1).
+- **The P176 maker gate runs before any name or structure rung**, including
+  for entities with generation-shaped structure. Their evidence keeps in raw
+  until the maker converts.
+- **Chain edges (P155/P156) order, they never create.** That edge is
+  level-ambiguous: Ford Model T *follows* Model S (two nameplates) while BMW
+  E21 *follows* the 02 Series (a chain crossing nameplate boundaries), and
+  both look identical to a generation chained to its sibling. Only P179
+  membership in a matched model creates a generation.
+- **Labels outrank aliases** (ADR 0013). A label says what an entity IS;
+  aliases say what it is ALSO called, and Wikidata files rebadges there.
 
-**Chain edges (P155/P156) are ordering, never creation evidence.** The ADR's
-rung-5 wording admits "chained to a matched model", but the sweep data shows
-that edge is level-ambiguous in exactly the way "never guess" forbids: Ford
-Model T *follows* Model S (successor nameplates, two models), while BMW E21
-*follows* the 02 Series (a chain crossing nameplate boundaries) - both are
-structurally identical to a generation chained to its sibling. v1 therefore
-creates generations from the one unambiguous one-hop edge - P179 membership
-in a matched model - and routes chain-only evidence to the decision log as
-waits. The year-pass ADR gets the chains with vPIC's time axis in hand.
+`models.name` stays vPIC's - Wikidata labels prefix the make, and "Toyota
+4Runner" must never rename `4Runner`. Generations are Wikidata's own
+contribution: name, summary, chassis codes, and span years where asserted
+(span-less generations are legal - identity now, time later).
 
-**Name-form evidence ranks (ADR 0013).** A label says what an entity IS;
-aliases list what it is ALSO called - and Wikidata files rebadges and market
-names there (the Raize entity carries "Daihatsu Rocky", "Perodua Ativa" and
-"Subaru Rex" as aliases). Rung-3 claims therefore rank: a lone label
-claimant attaches; alias claimants never cluster - uncontested same-brand
-ones attach (the alias IS the as-filed US name: Echo, LeCar, Sentra), while
-contested or cross-badge ones flag as `market_name_or_rebadge`. Prefix
-stripping uses every recorded name a company wears, including its vPIC make
-names ("Audi AG" strips as AUDI).
-
-**The labeled set is captured from the first run** (2026-07-30 direction
-review): every attempted record upserts a `match_decisions` row (rung /
-method / outcome, the method surviving refreshes), every flag close records
-a resolution reason, and the negative-match registry
-(`policy.WIKIDATA_MODEL_NEGATIVES`) is consulted before any rung-3 accept.
-
-FIELD_AFFINITY in v1 is simple (§3): `models.name` stays vPIC's - Wikidata
-labels prefix the make, and "Toyota 4Runner" must never rename `4Runner` -
-while Wikidata asserts `summary` on every match. Generations are Wikidata's
-own contribution: name, summary, chassis codes, and span years (only when
-the entity asserts dates - span-less generations are legal).
+Every attempted record upserts a `match_decisions` row, so the labeled set
+accumulates from the first run. See `docs/notes/reconciler-incidents.md` for
+the failures behind the alias and cluster rules.
 """
 
 from __future__ import annotations
@@ -692,15 +675,15 @@ class _WikidataModelsPass:
                 continue
 
             # Rung 3: exact-normalized name/alias match, never fuzzy. A unique
-            # hit is only a CLAIM here - live data showed 51 models claimed by
-            # several entities at once (generation entities carrying the bare
-            # nameplate label: four "BMW X5"s, four "Honda Accord"s - the
-            # 3-Series lesson at nameplate level), so correspondence is decided
-            # per MODEL in _resolve_claims, after every claim is known. The
-            # entity claims only at its BEST evidence rank (ADR 0013 §2):
+            # hit is only a CLAIM: generation entities carry the bare nameplate
+            # label, so one model can be claimed by several entities at once.
+            # Correspondence is decided per MODEL in _resolve_claims, once
+            # every claim is known.
+            #
+            # An entity claims only at its BEST evidence rank (ADR 0013 §2), so
             # a label hit plus an alias hit on another model is one claim on
-            # the label's model, not an ambiguity - the alias is the entity
-            # listing its other names.
+            # the label's model - not an ambiguity. The alias is just the
+            # entity listing its other names.
             hits = self._name_hits(subject)
             best_rank = min((rank for _, rank in hits.values()), default=None)
             best = {m: meth for m, (meth, rank) in hits.items() if rank == best_rank}

@@ -93,8 +93,7 @@ class _VpicModelsPass:
 
         # `make:<id>` -> company_id: the matched makes, and the gate on §1.
         # `model:<id>` -> models.id: the identity ladder's rung 1. Both live in
-        # `external_ids` under this one source, told apart by the kind prefix -
-        # which is what the 2026-07-29 re-key bought.
+        # `external_ids` under this one source, told apart by the kind prefix.
         self.company_by_make: dict[str, int] = {}
         self.model_by_external: dict[str, int] = {}
         for external_id, company_id, model_id in self.session.execute(
@@ -152,10 +151,9 @@ class _VpicModelsPass:
 
     def _dismiss_flags(self, record: RawRecord) -> None:
         """A record that now resolves to a row has outgrown its question - a
-        human merged the nameplates, or the payload changed. Dismissal records
-        that no decision was needed in the end - and WHY, so the close feeds
-        the labeled set (2026-07-30 review: 61/64 dismissals carried no
-        resolution and taught nothing)."""
+        human merged the nameplates, or the payload changed. The recorded
+        reason is what keeps the close usable as a labeled-set example; a
+        dismissal with no reason teaches nothing."""
         for flag in self.open_flags.pop(record.external_id, []):
             flag.status = "dismissed"
             flag.resolved_at = func.now()
@@ -271,15 +269,11 @@ class _VpicModelsPass:
     def _is_model_record(record: RawRecord) -> bool:
         """MODEL records only, selected by the external id's KIND PREFIX.
 
-        This pass shipped selecting by payload shape ("model_id" in payload)
-        - the exact defect class the match pass had already fixed and PROGRESS
-        recorded as a lesson. The model-years fetch then landed
-        `modelyears:<id>` payloads carrying model_id + make_id + make_name,
-        which this test read as model records: every one under a matched make
-        would have slug-collided with its real model row and opened a
-        spurious flag (~1,500 of them). Caught by the 2026-07-30 direction
-        review before any pass re-ran. Kinds share fields legitimately; only
-        the namespaced id says what a record IS.
+        Payload shape must NOT be used: `modelyears:<id>` payloads carry
+        model_id, make_id and make_name too, and a shape test reads them as
+        model records. Kinds share fields legitimately; only the namespaced id
+        says what a record IS. (Same defect as the match pass - see
+        docs/notes/reconciler-incidents.md.)
         """
         return (record.external_id or "").startswith("model:")
 

@@ -108,7 +108,7 @@ class ConfigurationAttribute(Base, ProvenanceMixin):
         # than deleted, so the uniqueness must exclude superseded rows.
         #
         # source_id is deliberately NOT in this key (unlike the association
-        # tables, ADR 0007 SS8): an EAV row is the PROJECTED WINNER - a
+        # tables, ADR 0007 §8): an EAV row is the PROJECTED WINNER - a
         # value-shaped fact needs one displayed answer - and the per-source
         # assertions behind it live in field_provenance under the attribute
         # key, resolved by the normal tier/affinity/recency machinery.

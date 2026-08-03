@@ -85,7 +85,7 @@ def test_label_service_has_fallback_chain():
 
 
 def test_full_class_set_is_selected():
-    """Admission (ADR 0007 SS3) classifies on everything an entity IS - the
+    """Admission (ADR 0007 §3) classifies on everything an entity IS - the
     unconstrained `?item wdt:P31 ?class` triple is what lands the co-classes
     ("mobility service") that exclude KINTO-shaped entities. OPTIONAL, so a
     pinned entity with no P31 at all still lands (and quarantines on its

@@ -1,21 +1,12 @@
 """SQLAlchemy declarative base and the mixins shared across the schema.
 
-Provenance attaches to *facts*, not to *identity*. See ADR 0002: a row in an
-entity table (a make, a model, a configuration) is identity - it exists or it
-does not - and carries no provenance. Facts about those entities (a source's
-assertion about a field, a sparse EAV value, a configuration<->engine link)
-carry provenance and supersession, at field/row granularity.
+Provenance attaches to facts, not identity (ADR 0002), and the mixins split
+along that line: `TimestampMixin` on every table, `ProvenanceMixin` only on
+fact-bearing rows (the EAV table and the association tables).
 
-So the mixins split by role:
-
-- `TimestampMixin`  - row lifecycle timestamps. Every table.
-- `ProvenanceMixin` - `source_id` / `scraped_at` / `confidence_score` /
-  `raw_record_id`. Only fact-bearing rows (the EAV table and the association
-  tables). NOT entity tables.
-
-`field_provenance` (see models/provenance.py) is the field-level provenance
-store for the entity tables' columns; it defines its columns explicitly rather
-than via `ProvenanceMixin` because its `source_id` is NOT NULL.
+`field_provenance` (models/provenance.py) covers the entity tables' columns.
+It declares its columns explicitly instead of using `ProvenanceMixin` because
+its `source_id` is NOT NULL.
 """
 
 from __future__ import annotations
@@ -27,11 +18,9 @@ from sqlalchemy import CheckConstraint, ForeignKey, MetaData, Numeric, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 from sqlalchemy.types import TIMESTAMP
 
-# Deterministic constraint and index names. Without an explicit convention,
-# Alembic autogenerate emits server-assigned names that differ between
-# environments, which makes migration diffs unstable and hard to review. The
-# `ix` pattern deliberately mirrors the `idx_<table>_<column>` names already
-# used in docs/schema_phase1.sql so the two stay readable side by side.
+# Without an explicit convention, Alembic autogenerate emits server-assigned
+# constraint names that differ between environments, which makes migration
+# diffs unstable and hard to review.
 NAMING_CONVENTION = {
     "ix": "idx_%(table_name)s_%(column_0_name)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",
@@ -42,22 +31,19 @@ NAMING_CONVENTION = {
 
 
 class Base(DeclarativeBase):
-    """Declarative base. All models inherit from this."""
-
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
 class TimestampMixin:
-    """Row lifecycle timestamps. Distinct from `scraped_at`, which is when the
-    *source* was read; these are when *our* row was written.
+    """When OUR row was written - distinct from `scraped_at`, which is when the
+    source was read.
 
-    NOTE: `updated_at`'s `onupdate` fires on ORM updates only. Bulk ingestion
-    paths (COPY, INSERT ... ON CONFLICT) bypass the ORM, so the rule also lives
-    in the database as a BEFORE UPDATE trigger (migration `a1c4e7b93f20`), which
-    is what actually holds during ingestion. The trigger skips no-op updates
-    (`NEW IS DISTINCT FROM OLD`) so an idempotent re-scrape that changes nothing
-    does not bump the timestamp. `onupdate` is kept as a harmless duplicate so
-    ORM objects see a fresh value within the same session."""
+    `onupdate` fires on ORM updates only. Bulk ingestion (COPY, INSERT ... ON
+    CONFLICT) bypasses the ORM, so the rule also lives in the database as a
+    BEFORE UPDATE trigger (migration `a1c4e7b93f20`) - that is what actually
+    holds during ingestion. The trigger skips no-op updates, so an idempotent
+    re-scrape that changes nothing does not bump the timestamp.
+    """
 
     @declared_attr
     @classmethod
@@ -77,7 +63,7 @@ class TimestampMixin:
 
 class ProvenanceMixin:
     """`source_id` / `scraped_at` / `confidence_score` / `raw_record_id` for
-    fact-bearing rows: the EAV table and the association tables.
+    fact-bearing rows.
 
     Each column is built inside `declared_attr` so every subclass gets its own
     Column and CheckConstraint objects rather than sharing one instance.
@@ -86,16 +72,14 @@ class ProvenanceMixin:
     @declared_attr
     @classmethod
     def source_id(cls) -> Mapped[int | None]:
-        # Indexed because the charter requires every FK column to be indexed, and
-        # because "show me everything this source told us" is a core query for
-        # the reconciliation and review workflows.
+        # "Show me everything this source told us" is a core review query.
         return mapped_column(ForeignKey("sources.id"), index=True)
 
     @declared_attr
     @classmethod
     def raw_record_id(cls) -> Mapped[int | None]:
-        # Links a fact back to the exact scrape that produced it (ADR 0003), so
-        # facts can be re-derived when matching logic improves.
+        # Back to the exact scrape (ADR 0003), so facts can be re-derived
+        # when matching logic improves.
         from sqlalchemy import BigInteger
 
         return mapped_column(BigInteger, ForeignKey("raw_scrape.raw_records.id"), index=True)
@@ -108,21 +92,17 @@ class ProvenanceMixin:
     @declared_attr
     @classmethod
     def confidence_score(cls) -> Mapped[Decimal | None]:
-        # The 0-1 range CHECK lives in provenance_table_args(), not inline
-        # here - see that function for why it has to be table-level.
+        # The 0-1 range CHECK is table-level, in provenance_table_args().
         return mapped_column(Numeric(3, 2))
 
 
 def provenance_table_args() -> tuple[CheckConstraint, ...]:
     """Table-level constraints that must accompany `ProvenanceMixin`.
 
-    Deliberately table-level rather than attached inline to the column.
-    SQLAlchemy renders an inline column CheckConstraint fine via
-    `metadata.create_all()`, but Alembic autogenerate only inspects
-    `Table.constraints` - so an inline constraint is silently dropped from
-    generated migrations and would never reach the real database.
-
-    Every model using ProvenanceMixin must spread this into its table args:
+    Table-level rather than inline on the column: Alembic autogenerate only
+    inspects `Table.constraints`, so an inline column CheckConstraint renders
+    fine under `metadata.create_all()` but is silently dropped from generated
+    migrations and never reaches the real database.
 
         __table_args__ = (*provenance_table_args(), UniqueConstraint(...))
     """

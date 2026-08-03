@@ -145,10 +145,11 @@ def _supersede(
     old: FieldProvenance,
     new_values: dict,
 ) -> FieldProvenance:
-    """The three-step dance (§1, discovered by the test suite): retire the old
-    row by pointing `superseded_by` at itself (frees the live slot under
-    `uq_field_provenance_live`), insert the successor, repoint the old row.
-    One flush per step so the partial unique index sees each state."""
+    """The three-step dance (§1): retire the old row by pointing
+    `superseded_by` at ITSELF (which frees the live slot under
+    `uq_field_provenance_live`), insert the successor, then repoint the old
+    row at it. One flush per step, so the partial unique index sees each
+    state. The obvious order does not work - see docs/notes/schema-traps.md."""
     old.superseded_by = old.id
     session.flush()
     successor = FieldProvenance(**new_values)
@@ -223,9 +224,8 @@ class _Pass:
 
     def _dismiss_admission_flags(self, record: RawRecord) -> None:
         """An entity that admits has outgrown its quarantine question: the
-        situation resolved itself (a payload or policy change), and dismissal
-        records that no human decision was needed - plus WHY, so the close
-        feeds the labeled set (2026-07-30 review)."""
+        situation resolved itself (a payload or policy change), and the
+        recorded reason keeps it usable as a labeled-set example."""
         for flag in self.open_admission.pop(record.external_id, []):
             flag.status = "dismissed"
             flag.resolved_at = func.now()

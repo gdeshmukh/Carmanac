@@ -1,13 +1,13 @@
 """Retire the demo seed, artifacts included (ADR 0011 §3).
 
-Two phases, both idempotent — a second run finds nothing:
+Two phases, both idempotent - a second run finds nothing:
 
 1. The entity chain the old seed_demo.py created: the `3-series` model,
    its E46 → 2002 → 330i-us-sedan chain, the demo engine/transmission,
    and every row hanging off them (joins, EAV, provenance, external ids,
    flags).
 2. The raw-side artifacts: the three fabricated `/demo` raw records
-   (ADR 0004's own-artifacts clause — fabrications are not evidence and
+   (ADR 0004's own-artifacts clause - fabrications are not evidence and
    are deletable at any tier), the superseded company-arc provenance
    history that attributed demo content to real sources, the seed's
    raw-less Wikidata role row on BMW, and the demo record's
@@ -20,7 +20,7 @@ After a run that deletes the role row, re-run the companies pass
 BMW is re-asserted from the real Q26678 record.
 
 What stays: the BMW company row and its Q26678 mapping (substantively
-real — the reconciler upserts by natural key and adopted them), and the
+real - the reconciler upserts by natural key and adopted them), and the
 reference data the seed also created (lookups, `sources`,
 `attribute_definitions`).
 """

@@ -84,12 +84,12 @@ class ReconciledRecord(Base):
 
 class MatchDecision(Base):
     """The match-decision log: what the matcher did with one source record,
-    per pass (2026-07-30 direction review; folded into ADR 0012's build).
+    per pass.
 
-    The review's finding was that the labeled set was not being captured -
-    rung-2 auto-matches recorded no method, and the charter's Tier-2/3 gate
-    ("matcher precision measured on a labeled set") was uncomputable. Every
-    pass now upserts one row per attempted record: which RUNG decided, by
+    This exists because the charter gates Tier-2/3 sources on "matcher
+    precision measured on a labeled set", which was uncomputable while
+    auto-matches recorded no method. Every pass upserts one row per
+    attempted record: which RUNG decided, by
     which METHOD, with what OUTCOME, so precision is a query instead of an
     archaeology dig.
 

@@ -176,7 +176,6 @@ class _MatchPass:
         for flag in self.open_match_flags.pop(record.external_id, []):
             flag.status = "dismissed"
             flag.resolved_at = func.now()
-            # The close reason feeds the labeled set (2026-07-30 review).
             flag.detail = {**(flag.detail or {}), "resolution": "record_resolves_to_company"}
             self.stats.match_flags_dismissed += 1
 
@@ -234,17 +233,12 @@ class _MatchPass:
 
     @staticmethod
     def _is_make_record(record: RawRecord) -> bool:
-        """This pass reconciles MAKE records only, selected by the external
-        id's KIND PREFIX.
+        """MAKE records only, selected by the external id's KIND PREFIX.
 
-        Payload shape is no longer sufficient, and the fix is load-bearing:
-        a MODEL payload carries `make_id` and `make_name` too - deliberately,
-        since that link is how a nameplate finds its make - so the original
-        shape test read all 2,018 landed model records as makes and attached
-        `model:<id>` external ids to *companies*. Caught by ADR 0010's tests
-        before the next match run, so no live rows were affected. The kind
-        prefix (the 2026-07-29 re-key) is the durable record-kind marker;
-        payload shape is not, because record kinds legitimately share fields.
+        Payload shape must NOT be used for this: a model payload carries
+        `make_id` and `make_name` too, since that link is how a nameplate
+        finds its make. Record kinds legitimately share fields, so only the
+        prefix is a durable kind marker.
         """
         return (record.external_id or "").startswith("make:")
 

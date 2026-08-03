@@ -25,7 +25,7 @@ check, not a constraint.
 
 Platform sharing (Urus/SQ8/Cayenne on MLB Evo) is deliberately NOT here: no
 builder, no donor, no direction. It resolves to a future `platforms` entity
-with `evolved_from` lineage (ADR 0005 SS5).
+with `evolved_from` lineage (ADR 0005 §5).
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ class VehicleDerivation(Base, ProvenanceMixin):
             name="derived_not_base",
         ),
         # One LIVE claim per (base, company, type, derived, source) - the
-        # per-source assertion-store shape (ADR 0007 SS8, F7): two sources may
+        # per-source assertion-store shape (ADR 0007 §8, F7): two sources may
         # both assert "Singer restomods the 964", and each may retract
         # independently via supersession. NULLS NOT DISTINCT is load-bearing
         # twice over: the common case (derived side NULL - Ruf conversions,
