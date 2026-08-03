@@ -1,10 +1,10 @@
 """One-time re-key: vPIC external ids gain a `make:` kind prefix.
 
 vPIC's MakeId and ModelId are separate integer namespaces, but `external_ids`
-is unique on `(source_id, external_id)` — with bare integers, MakeId 440
+is unique on `(source_id, external_id)` - with bare integers, MakeId 440
 (Aston Martin) and ModelId 440 (whatever model draws it) would collide the
-day the models fetch lands. Decided 2026-07-29 (Gaurav): kind-prefix both —
-`make:440` now, `model:<id>` from the models fetch's first run — while the
+day the models fetch lands. Decided 2026-07-29: kind-prefix both  -
+`make:440` now, `model:<id>` from the models fetch's first run - while the
 change costs one small script instead of a data migration.
 
 Re-keys the vPIC rows in `raw_scrape.raw_records` and `external_ids` whose

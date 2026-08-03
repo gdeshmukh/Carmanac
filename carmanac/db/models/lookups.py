@@ -99,7 +99,7 @@ class DerivationType(_CodeNameLookup):
     All deliberately directional - there is a donor and a result.
     `platform_shared` was considered and dropped: platform siblings have no
     builder, no donor and no direction, so that relation belongs to a future
-    `platforms` entity (ADR 0005 SS5), not this lookup.
+    `platforms` entity (ADR 0005 §5), not this lookup.
     """
 
     __tablename__ = "derivation_types"

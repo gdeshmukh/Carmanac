@@ -1,4 +1,4 @@
-"""Apply the Santana model-collision verdict (Gaurav, 2026-07-30).
+"""Apply the Santana model-collision verdict (2026-07-30).
 
 Both vPIC makes SANTANA (13765) and LAND ROVER SANTANA (13766) are one
 company (Santana Motor, pinned in the approved no-match batch), and each

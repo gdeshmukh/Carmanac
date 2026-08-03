@@ -1,81 +1,48 @@
 """Reviewed policy registries for the reconciler (ADR 0007 §3-§6).
 
-Everything here is a *decision*, version-controlled and changed via PR; a
+Everything here is a *decision*, version-controlled and changed via PR. A
 policy edit is applied by re-running the reconciler over the raw records
-already on disk (re-reconciliation is the normal case, not the exception).
+already on disk - re-reconciliation is the normal case, not the exception.
 
-The admission lists were drafted 2026-07-28 from the live class survey: all
-255 distinct P31 classes across the 9,883 current Wikidata records, each
-resolved to its English label and classified by hand. QID keys, labels as
-values - the labels are documentation, never matched against.
+The admission lists were drafted from a live class survey: every distinct P31
+class across the landed Wikidata records, resolved to its English label and
+classified by hand. QID keys, labels as values - **the labels are
+documentation and are never matched against.**
 
-The deliberate polarity (ADR 0007 §3, tightened 2026-07-29 per Gaurav's
-review): admission requires AFFIRMATIVE car evidence - a target class, a
-builder-type class, or a hand-vetted pin. Version 1 admitted any entity whose
-classes were all generic corporate boilerplate, and the first live pass showed
-what that lets in: 2,175 roleless companies including seatbelt suppliers,
-parts makers, dealerships and glass-repair chains - exactly the "supporting
-cast at the expense of the cars" the charter forbids. Boilerplate-only sets
-now QUARANTINE. Under-admission stays the cheap error (edit a list, re-run,
-the entity appears); over-admission means unwinding entity rows other data
-may reference.
+The polarity is deliberate: admission requires AFFIRMATIVE car evidence - a
+target class, a builder-type class, or a hand-vetted pin. Under-admission is
+the cheap error (edit a list, re-run, the entity appears); over-admission
+means unwinding entity rows that other data may already reference.
+
+Version history is in the git log.
 """
 
 from __future__ import annotations
 
 # Bump when a policy/mapper/engine change alters what the reconciler would
-# produce; `reconciled_records.reconciler_version` records which version
+# produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-# v2 (2026-07-29): admission requires affirmative evidence (target class,
-# builder class, or pin); boilerplate-only class sets quarantine.
-# v3 (2026-07-29): plausibility rules at projection open implausible_value
-# flags (the AMG-founded-1812 lesson: a single wrong claim has no
-# disagreement for multi_value to catch).
-# v4 (2026-07-29): the vPIC match pass (ADR 0008) - cross-source identity,
-# corroboration-admission, vPIC-sourced roles.
-# v5 (2026-07-29): the match-queue review - company/brand duplicate merges
-# into IDENTITY_MERGES, first VPIC_MATCHES judgments, PINNED_DENY, merge
-# members admit through their canonical entity.
-# v6 (2026-07-29): the no-match review batch (Gaurav-approved) - 37 more
-# VPIC_MATCHES judgments, Consulier brand->Industries merge, Moke
-# International admit pin; vPIC external ids gain the make: prefix.
-# v7 (2026-07-29): the vPIC models pass (ADR 0010) - the first `models` rows,
-# under matched makes only, name asserted through field_provenance, slug
-# collisions flagged rather than auto-suffixed.
-# v8 (2026-07-30): the duplicate-name sweep's approved batch (Gaurav) - 11
-# same-entity pairs from the 105-group exact-name review merge; namesake and
-# ambiguous groups deliberately stay separate pending cross-source checks.
-# v9 (2026-07-30): the Wikidata models sweep pass (ADR 0012) - match/enrich
-# only (the global expansion stays tabled), lines + memberships, direct-case
-# generations; the labeled-set capture lands with it (match_decisions log,
-# resolution reasons on every flag close, the negative-match registry).
-# v10 (2026-07-31): name-form evidence ranks (ADR 0013) - labels outrank
-# aliases (Wikidata records rebadges and market names as aliases: the Raize
-# carries "Daihatsu Rocky"); the cross-badge guard; prefix stripping uses
-# the company's vPIC make names too ("Audi AG" strips as AUDI); refreshes
-# preserve the match method in the decision log.
 RECONCILER_VERSION = "12"
 
 # --- identity --------------------------------------------------------------
 
 # Curated identity merges (ADR 0007 §5, amended): source entities that are one
-# real-world company. Maps member QID -> canonical QID; the canonical entity's
-# record creates the company, members attach their external ids to it.
-# Merges are curated and deterministic, never inferred.
+# real-world company. Member QID -> canonical QID; the canonical entity's
+# record creates the company, members attach their external ids to it. Curated
+# and deterministic, never inferred.
 #
-# Bugatti is the precedent (decided 2026-07-28): Wikidata models three
-# corporate eras as three entities, but an EB110 is as much a Bugatti as a
-# Type 35 or a Chiron - one company, one page.
+# Bugatti is the precedent: Wikidata models three corporate eras as three
+# entities, but an EB110 is as much a Bugatti as a Type 35 or a Chiron.
+# One company, one page.
 IDENTITY_MERGES: dict[str, str] = {
     "Q1002267": "Q27401",  # Bugatti Automobili S.p.A. (EB110 era) -> Bugatti (Molsheim)
     "Q2308012": "Q27401",  # Bugatti Automobiles S.A.S. (VW era)   -> Bugatti (Molsheim)
-    # --- the company/brand split, batch-resolved 2026-07-29 from the vPIC
-    # match queue. Wikidata grew bare "<marque> (car brand)" entities (mostly
-    # Q124-125xxx, one editing wave) alongside the long-standing company
-    # entities; both admitted, giving one real marque two company rows and
-    # blocking exact-name matching. Canonical = the substantive company-side
-    # entity (it holds the facts and is what model records point at); the
-    # brand artifact is a member.
+    # --- the company/brand split. One Wikidata editing wave minted bare
+    # "<marque> (car brand)" entities (mostly Q124-125xxx) beside the
+    # long-standing company entities, giving one real marque two company rows
+    # and blocking exact-name matching. Canonical is the substantive
+    # company-side entity - it holds the facts and is what model records point
+    # at; the brand artifact is the member.
     "Q124982078": "Q26921",  # Alfa Romeo (brand)   -> Alfa Romeo
     "Q124983953": "Q23317",  # Audi (brand)         -> Audi AG
     "Q136368837": "Q23317",  # Audi (Deutsche Automarke artifact) -> Audi AG
@@ -96,15 +63,13 @@ IDENTITY_MERGES: dict[str, str] = {
     # the marque JLR uses today (Q26777551). One make, one page - the Bugatti
     # rule. Canonical is the fact-bearing company entity.
     "Q26777551": "Q35907",
-    # The JLR "house of brands" wave (ruled 2026-07-31: Range Rover,
-    # Discovery, and Defender are Land Rover model lines, not brands). One
-    # Wikidata editing wave minted bare car-brand entities (Q1406xxxxx,
-    # class Q10429667 only, no inception/country) for JLR's marketing
-    # repositioning; the filings disagree - vPIC files all three under
-    # Make=LAND ROVER, and EPA's Land Rover rows likewise. Their only live
-    # effect was poisoning the cross-badge guard's brand list (ADR 0013 §3):
-    # "Range Rover (1st generation)" wore the artifact brand, the queue's
-    # one false cross-badge alarm.
+    # The JLR "house of brands" wave: Range Rover, Discovery and Defender are
+    # Land Rover model lines, not brands. One Wikidata editing wave minted
+    # bare car-brand entities for JLR's marketing repositioning (Q1406xxxxx,
+    # class Q10429667 only, no inception/country); the filings disagree  -
+    # vPIC files all three under Make=LAND ROVER, EPA likewise. Their only
+    # live effect was poisoning the cross-badge guard's brand list
+    # (ADR 0013 §3).
     "Q140685136": "Q35907",  # Range Rover (brand artifact) -> Land Rover
     "Q140645228": "Q35907",  # Discovery (brand artifact)   -> Land Rover
     "Q140645257": "Q35907",  # Defender (brand artifact)    -> Land Rover
@@ -121,13 +86,12 @@ IDENTITY_MERGES: dict[str, str] = {
     # project; the brand row's identity (slug, company id) is preserved by
     # the merge script.
     "Q124981765": "Q478214",
-    # Consulier (2026-07-29, from the no-match review): Wikidata splits the
-    # brand from Consulier Industries, Warren Mosler's company. Same
-    # company/brand shape as the batch above. (Whether Mosler Automotive,
-    # the 1993 successor, is an era of the same company is a separate open
-    # question - not merged.)
+    # Consulier: Wikidata splits the brand from Consulier Industries, Warren
+    # Mosler's company - the same company/brand shape as the batch above.
+    # (Whether Mosler Automotive, the 1993 successor, is an era of the same
+    # company is a separate open question - not merged.)
     "Q132560783": "Q17812480",  # Consulier (brand) -> Consulier Industries
-    # --- the duplicate-name sweep's approved batch (Gaurav 2026-07-30):
+    # --- the duplicate-name sweep's approved batch:
     # 11 same-entity pairs from the 105-group exact-name review. Each is one
     # substantive row + a stub whose description identifies the SAME company
     # (mostly the brand-artifact wave). Namesake groups (Ace, Ajax, Caribe,
@@ -165,7 +129,7 @@ MERGE_CANONICALS: frozenset[str] = frozenset(IDENTITY_MERGES.values())
 # `match_review` flags - each entry is a recorded human judgment, and
 # collectively they are the matcher's labeled set.
 VPIC_MATCHES: dict[str, str] = {
-    # 2026-07-29, from the ambiguous-match review. Namesake companies are
+    # From the ambiguous-match review. Namesake companies are
     # real and stay separate; the pin records which one the vPIC make IS.
     "448": "Q53268",  # TOYOTA -> Toyota Motor (not the Chinese-market brand entity)
     "465": "Q613883",  # MERCURY -> Ford's marque (not the 1914 cyclecar maker)
@@ -182,7 +146,7 @@ VPIC_MATCHES: dict[str, str] = {
     # separate make) - a wrong unique match this pin preempts.
     "582": "Q23317",
     "12642": "Q112077124",  # SCOUT -> Scout Motors (VW), not the 1900s UK Scout
-    # --- the no-match review batch, approved by Gaurav 2026-07-29. Four
+    # --- the no-match review batch. Four
     # recurring miss shapes: names trigram cannot see (RUF vs "Ruf
     # Automobile"), quarantined records the candidate search never surfaces
     # (KARMA, KANDI - these corroborate-create on match), wrong-namesake
@@ -245,7 +209,7 @@ EPA_MAKE_MATCHES: dict[str, str] = {}
 # and re-materializations.
 WIKIDATA_MODEL_MATCHES: dict[str, str] = {}
 
-# The negative-match registry (2026-07-30 direction review): recorded human
+# The negative-match registry: recorded human
 # judgments that an entity is NOT one of our rows, so a dismissed candidate
 # can never silently re-match on the next run - before this, negative
 # judgments lived only in policy comments and the labeled set had no negative
@@ -267,7 +231,7 @@ TARGET_CLASSES: dict[str, str] = {
     "Q112865922": "historical car manufacturer",
 }
 
-# Builder-type classes (Gaurav 2026-07-29): the door deliberately left open
+# Builder-type classes: the door deliberately left open
 # for company types that build on other marques' cars - they admit WITHOUT a
 # manufacturer role (ADR 0005: builders are companies, roles come from VIN
 # evidence). Kept intentionally tiny; grows only by explicit review, one or
@@ -276,11 +240,10 @@ BUILDER_CLASSES: dict[str, str] = {
     "Q1734300": "coachbuilder",
 }
 
-# Hand-vetted entity pins: marques verified during the coverage-fixture review
-# (2026-07-28) whose Wikidata classes are pure corporate boilerplate - real
-# car companies the class-based rule cannot see. Admission only; NO role is
-# pinned (Gaurav 2026-07-29: roles come from source evidence - vPIC supplies
-# these, not curation).
+# Hand-vetted entity pins: marques whose Wikidata classes are pure corporate
+# boilerplate - real car companies the class-based rule cannot see. Admission
+# only; NO role is pinned, because roles come from source evidence (vPIC
+# supplies these, not curation).
 PINNED_ADMIT: dict[str, str] = {
     "Q6742": "Peugeot",
     "Q55633247": "Singer Vehicle Design",
@@ -292,7 +255,7 @@ PINNED_ADMIT: dict[str, str] = {
     "Q758549": "Auburn",
     "Q59186515": "Automobili Pininfarina",
     "Q694506": "Wiesmann",
-    # Moke International (2026-07-29): a stray `P31: automotive industry`
+    # Moke International: a stray `P31: automotive industry`
     # claim puts a DENY class on a real revival manufacturer - the same
     # misclass shape as the Peugeot plant, opposite direction.
     "Q57079249": "Moke International",
@@ -583,24 +546,16 @@ QUARANTINE = "quarantine"
 def classify(classes: frozenset[str] | set[str], external_id: str | None = None) -> str:
     """Apply the admission rule to an entity's full P31 class set.
 
-    Precedence, each step paid for by a live pass:
+    Two orderings below are load-bearing rather than arbitrary:
 
-    1. A hand-vetted PIN admits or denies absolutely - it encodes a human
-       review that outranks whatever classes the source holds today (the
-       deny direction exists because a misclassed target-class entity - the
-       Peugeot plant - is unfixable by list edits).
-    2. A TARGET class admits. The deny list exists to exclude entities that
-       are ONLY services/facilities/etc., not to veto a marque: Ford is
-       `automobile manufacturer` + `holding company` (both true - it holds
-       Lincoln). Deny-first excluded it on the first pass. If Wikidata
-       misclasses a non-marque as a target class, the wrong tentative role is
-       the accepted KINTO risk and vPIC arbitrates (ADR 0007 §4).
-    3. Any deny class excludes: a dealership that is also a "business" is
-       still a dealership.
-    4. A BUILDER class admits, rolelessly - the tuner/coachbuilder door.
-    5. Everything else waits in quarantine - including boilerplate-only sets
-       (v1 admitted those; the seatbelt suppliers taught us better) and the
-       empty set, which is zero evidence, not vacuous truth.
+    - **Pins outrank classes**, in both directions. A misclassed target-class
+      entity (the Peugeot assembly plant) is otherwise unfixable by list edits,
+      since its target class would keep re-admitting it.
+    - **Target beats deny.** Ford is `automobile manufacturer` + `holding
+      company`, both true - it holds Lincoln. Deny-first excluded it outright.
+
+    Everything unmatched quarantines, including the empty class set: that is
+    zero evidence, not vacuous truth.
     """
     if external_id is not None and external_id in PINNED_ADMIT:
         return ADMIT
@@ -615,13 +570,11 @@ def classify(classes: frozenset[str] | set[str], external_id: str | None = None)
     return QUARANTINE
 
 
-# --- plausibility (2026-07-29, the AMG lesson) --------------------------------
+# --- plausibility -----------------------------------------------------------
 
-# Benz Patent-Motorwagen. A car company founded earlier is not impossible -
-# Peugeot (1810, coffee mills) and ZAZ (1863) are real - but it is always
-# worth a human look, and vandalized single claims (Mercedes-AMG "1812") are
-# indistinguishable from those without one. Review confirms or corrects;
-# either way the decision feeds the labeled set.
+# Benz Patent-Motorwagen. An earlier founding is not impossible - Peugeot
+# (1810, coffee mills) and ZAZ (1863) are real - so this flags for review
+# rather than rejecting.
 FIRST_AUTOMOBILE_YEAR = 1886
 
 
@@ -630,9 +583,9 @@ def plausibility_issues(
 ) -> list[tuple[str, str]]:
     """Sanity-check projected values. Returns (field_name, reason) per issue.
 
-    Flags suspicion; never blocks projection (§6.4 - pages always show data,
-    tentatively). Only cross-field and bounds checks that hold regardless of
-    source belong here; single-source value policy stays in the mappers.
+    Flags suspicion, never blocks projection (§6.4). Only bounds and
+    cross-field checks that hold regardless of source belong here  -
+    single-source value policy stays in the mappers.
     """
     issues: list[tuple[str, str]] = []
     if founded_year is not None:
@@ -651,16 +604,14 @@ def plausibility_issues(
 # --- conflict resolution (ADR 0007 §6) ---------------------------------------
 
 # Field affinity: same-tier conflicts resolve to the field's registered
-# authoritative source domain. Keyed by assertion field name; values are
-# `sources.name`. Inert while Wikidata is the only source, but §6.2 requires
-# the registry to exist so vPIC/EPA registration is an edit here, not logic.
+# authoritative source. Keyed by field name, valued by `sources.name`. Inert
+# while Wikidata is the only asserter, but the registry exists so registering
+# vPIC/EPA is an edit here rather than a logic change.
 #
-# The keys are bare field names, which conflates `companies.name` with
-# `models.name` (ADR 0010 §3 asserts the latter). Harmless while vPIC is the
-# only source of model names - there is nothing to arbitrate - but the registry
-# owes an entity qualification before a second source asserts on the same
-# field name at a different level. Deferred deliberately: inventing the
-# qualified shape now would be designing against an imagined conflict.
+# KNOWN GAP: bare field names conflate `companies.name` with `models.name`.
+# Harmless while vPIC is the only source of model names, but this owes an
+# entity qualification before a second source asserts on the same field name
+# at a different level.
 FIELD_AFFINITY: dict[str, str] = {
     "name": "Wikidata",
     "summary": "Wikidata",

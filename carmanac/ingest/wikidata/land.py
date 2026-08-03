@@ -1,27 +1,16 @@
 """Land Wikidata SPARQL results in `raw_scrape.raw_records`.
 
-This is step one of two. It fetches and stores; it does **not** create
-companies, resolve entities, or write `field_provenance`. That is the
-reconciler's job, and keeping the two apart is deliberate:
+Fetch and store only - no companies, no entity resolution, no
+`field_provenance`. That separation is what lets an improved matcher re-run
+over records already on disk instead of re-scraping.
 
-    fetch + land   ->  raw_scrape.raw_records       (this module)
-    reconcile      ->  companies / field_provenance (carmanac/reconcile/)
+One raw record per entity, keyed by QID. The SPARQL binding is stored as-is,
+keeping `{"type": ..., "datatype": ..., "value": ...}` rather than flattening
+to plain strings: the datatype and language tags are part of what the source
+said, and flattening is a transformation that belongs downstream.
 
-The split is what makes the architecture invariant "raw scrape data is never
-discarded ... for re-reconciliation when matching logic improves" actually
-usable. Because the raw payload is stored before anything interprets it, an
-improved matcher can be re-run over records already on disk - no re-scraping,
-no dependence on Wikidata looking the same as it did today.
-
-**One record per entity.** A raw record is one manufacturer, keyed by its QID in
-`external_id`, with that entity's full SPARQL binding as the JSONB payload. The
-binding is stored as-is - keeping `{"type": "literal", "datatype": ...,
-"value": ...}` rather than flattening to plain strings - because the datatype
-and language tags are part of what the source said, and flattening is a
-transformation that belongs downstream.
-
-Idempotency-by-hash and the `last_seen_at` revert semantics live in
-`carmanac.ingest.landing`, shared with every source.
+Idempotency-by-hash and the `last_seen_at` revert semantics are shared across
+sources, in `carmanac.ingest.landing`.
 """
 
 from __future__ import annotations
@@ -47,21 +36,10 @@ log = logging.getLogger(__name__)
 WIKIDATA_SOURCE_NAME = "Wikidata"
 _ENTITY_PREFIX = "http://www.wikidata.org/entity/"
 
-# SPARQL does not promise a stable order within a GROUP_CONCAT group - the
-# order follows the query plan. Observed live: "KINTO Europe" (Q127773218) came
-# back with the same 18 countries in a rotated order after the query was
-# widened, hashing differently and re-landing as a spurious "change".
-#
-# Left alone, every multi-valued entity would re-land whenever the plan shifted
-# (a query edit, server load, an index change), inflating the raw store and
-# filling the change history with non-changes. Sorting loses nothing: the order
-# was never meaningful - Wikidata holds an unordered set, and the delimited
+# GROUP_CONCAT order follows the query plan, not a promise, so the same
+# content can hash differently between runs and re-land as a spurious change.
+# Sorting loses nothing - Wikidata holds an unordered set, and the delimited
 # string is an artifact of our own aggregation.
-#
-# The variable set comes from queries.py, derived from the query text itself.
-# It used to be a hand-maintained parallel list here, which is how the SAMPLE()
-# nondeterminism (foundation review F4) slipped past: this file canonicalized
-# what was listed, not what the query aggregated.
 _MULTI_VALUE_SEPARATOR = "|"
 
 
@@ -80,14 +58,12 @@ def canonicalize(
 ) -> dict[str, Any]:
     """Sort the GROUP_CONCAT lists in a binding so equal content compares equal.
 
-    Applied to the payload itself, not merely to the hash input: a stored record
-    that reorders between runs would look changed to a human reading it too, and
-    the two would not diff cleanly. Canonical on the way in is simpler than
-    canonical at every read.
+    Applied to the payload itself, not just the hash input: a stored record
+    that reorders between runs looks changed to a human reading it too, and the
+    two would not diff cleanly.
 
-    `multi_vars` is the query's own GROUP_CONCAT alias set (queries.py derives
-    it from the query text); the makes sweep's is the default, the models sweep
-    passes its own.
+    `multi_vars` defaults to the makes sweep's aliases; the models sweep passes
+    its own.
     """
     canonical: dict[str, Any] = {}
     for var, cell in binding.items():

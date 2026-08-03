@@ -8,7 +8,7 @@ vPIC which makes have PASSENGER vehicles: `GetMakesForVehicleType/car` plus
 admitting strictly stays the reconciler's polarity; this simply doesn't haul
 in vehicle types the charter rules out of scope.
 
-**One record per make.** `external_id` is `make:<MakeId>` — vPIC's stable key,
+**One record per make.** `external_id` is `make:<MakeId>` - vPIC's stable key,
 kind-prefixed because vPIC's MakeId and ModelId are separate integer
 namespaces while `external_ids` is unique on `(source_id, external_id)`:
 bare integers would let MakeId 440 and ModelId 440 collide (decided

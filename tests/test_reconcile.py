@@ -154,7 +154,7 @@ def test_unknown_class_quarantines():
 
 
 def test_boilerplate_only_quarantines():
-    """Policy v2, from Gaurav's review of the first live pass: 'business' +
+    """Policy v2, from the first live pass: 'business' +
     'enterprise' is zero CAR evidence - the seatbelt-supplier shape. v1
     admitted 2,175 of these."""
     assert policy.classify({"Q4830453", "Q6881511"}) == policy.QUARANTINE

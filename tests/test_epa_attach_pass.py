@@ -190,7 +190,7 @@ def test_rerun_converges(db, wikidata_source, vpic_source, epa_source):  # noqa:
 def test_automated_manual_codes_assert_nothing(db, wikidata_source, vpic_source, epa_source):  # noqa: F811
     """EPA's AM/AM-S codes cannot distinguish a single-clutch automated
     manual from a dual-clutch - no bucket word may erase that difference
-    (Gaurav's ruling), so the row asserts NO transmission type. AV codes
+    so the row asserts NO transmission type. AV codes
     are CVTs and map."""
     _toyota_4runner(db, wikidata_source, vpic_source)
     _land_vehicle(db, epa_source, 200, "Toyota", "4Runner", 2020, trany="Automatic (AM-S7)")
@@ -207,7 +207,7 @@ def test_automated_manual_codes_assert_nothing(db, wikidata_source, vpic_source,
 
 
 def test_sole_source_refresh_corrects_stale_column(db, wikidata_source, vpic_source, epa_source):  # noqa: F811
-    """The live correction (ADR 0015 SS1): a configuration written under the
+    """The live correction (ADR 0015 §1): a configuration written under the
     old AM->automatic mapping is corrected on re-run - old assertion
     superseded by a NULL-observed successor, column NULLed."""
     _toyota_4runner(db, wikidata_source, vpic_source)
