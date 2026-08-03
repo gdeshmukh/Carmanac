@@ -18,6 +18,7 @@ the ADR wins and the note is stale.
 
 | Note | Covers |
 | --- | --- |
-| [wikidata-fetch.md](wikidata-fetch.md) | SPARQL basics, the three fetch axes, why the queries aggregate |
+| [reconciler.md](reconciler.md) | How the reconciler works — start here |
 | [schema-traps.md](schema-traps.md) | Supersession, partial unique indexes, `NULLS NOT DISTINCT`, Alembic gotchas |
+| [wikidata-fetch.md](wikidata-fetch.md) | SPARQL basics, the three fetch axes, why the queries aggregate |
 | [reconciler-incidents.md](reconciler-incidents.md) | Live failures that each put a guard in the code |
