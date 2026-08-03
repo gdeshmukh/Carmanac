@@ -38,8 +38,7 @@ contribution: name, summary, chassis codes, and span years where asserted
 (span-less generations are legal - identity now, time later).
 
 Every attempted record upserts a `match_decisions` row, so the labeled set
-accumulates from the first run. See `docs/notes/reconciler-incidents.md` for
-the failures behind the alias and cluster rules.
+accumulates from the first run.
 """
 
 from __future__ import annotations

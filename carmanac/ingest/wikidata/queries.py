@@ -14,8 +14,8 @@ Two rules hold across every query here, both paid for by live failures:
    Aggregation is also what keeps one entity to one row: unaggregated, the
    OPTIONAL blocks multiply into 360 rows for a single company.
 
-Background, measurements and the incidents behind both rules:
-`docs/notes/wikidata-fetch.md`. `tests/test_query_contract.py` pins them.
+Both rules are pinned by `tests/test_query_contract.py`, which records what
+each one cost when it was missing.
 """
 
 from __future__ import annotations

@@ -149,7 +149,8 @@ def _supersede(
     `superseded_by` at ITSELF (which frees the live slot under
     `uq_field_provenance_live`), insert the successor, then repoint the old
     row at it. One flush per step, so the partial unique index sees each
-    state. The obvious order does not work - see docs/notes/schema-traps.md."""
+    state. The obvious order (insert, then repoint) cannot work: the live
+    index rejects the second row before the first can be retired."""
     old.superseded_by = old.id
     session.flush()
     successor = FieldProvenance(**new_values)

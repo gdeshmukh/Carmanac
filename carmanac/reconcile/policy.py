@@ -14,8 +14,7 @@ target class, a builder-type class, or a hand-vetted pin. Under-admission is
 the cheap error (edit a list, re-run, the entity appears); over-admission
 means unwinding entity rows that other data may already reference.
 
-Version history is in the git log; the incident that set the polarity is in
-`docs/notes/reconciler-incidents.md`.
+Version history is in the git log.
 """
 
 from __future__ import annotations

@@ -272,8 +272,7 @@ class _VpicModelsPass:
         Payload shape must NOT be used: `modelyears:<id>` payloads carry
         model_id, make_id and make_name too, and a shape test reads them as
         model records. Kinds share fields legitimately; only the namespaced id
-        says what a record IS. (Same defect as the match pass - see
-        docs/notes/reconciler-incidents.md.)
+        says what a record IS - the same reason the match pass keys on it.
         """
         return (record.external_id or "").startswith("model:")
 
