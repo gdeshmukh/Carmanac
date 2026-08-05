@@ -34,7 +34,6 @@ import logging
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
@@ -42,13 +41,13 @@ from carmanac.db.models import (
     FieldProvenance,
     Model,
     RawRecord,
-    ReconciledRecord,
     ReconciliationFlag,
 )
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import _current_records, _supersede, slugify
+from carmanac.reconcile.bookkeeping import mark_reconciled
+from carmanac.reconcile.engine import current_records, slugify, supersede
 
 log = logging.getLogger(__name__)
 
@@ -243,7 +242,7 @@ class _VpicModelsPass:
             self.session.add(FieldProvenance(**values))
             self.stats.assertions_inserted += 1
         elif live.observed_value != name:
-            _supersede(self.session, live, values)
+            supersede(self.session, live, values)
             self.stats.assertions_inserted += 1
             self.stats.assertions_superseded += 1
         # equal observed value -> no-op: idempotency.
@@ -251,19 +250,6 @@ class _VpicModelsPass:
         model.name = name
 
     # --- the pass ------------------------------------------------------------
-
-    def _mark(self, record: RawRecord) -> None:
-        self.session.execute(
-            pg_insert(ReconciledRecord)
-            .values(raw_record_id=record.id, reconciler_version=policy.RECONCILER_VERSION)
-            .on_conflict_do_update(
-                index_elements=["raw_record_id"],
-                set_={
-                    "reconciled_at": func.now(),
-                    "reconciler_version": policy.RECONCILER_VERSION,
-                },
-            )
-        )
 
     @staticmethod
     def _is_model_record(record: RawRecord) -> bool:
@@ -278,7 +264,7 @@ class _VpicModelsPass:
 
     def run(self) -> VpicModelsPassStats:
         records = [
-            r for r in _current_records(self.session, self.source.id) if self._is_model_record(r)
+            r for r in current_records(self.session, self.source.id) if self._is_model_record(r)
         ]
         records.sort(key=lambda r: int(r.payload["model_id"]))  # ascending ModelId
         log.info(
@@ -294,13 +280,13 @@ class _VpicModelsPass:
                 # §1: the make is unmatched. Reconciled-seen, nothing created,
                 # no flag - the make's own match_review flag is the question.
                 self.stats.skipped_unmatched_make += 1
-                self._mark(record)
+                mark_reconciled(self.session, record)
                 continue
 
             model = self._resolve_model(record, company_id)
             if model is not None:
                 self._assert_name(model, record)
-            self._mark(record)
+            mark_reconciled(self.session, record)
             if i % 500 == 0:
                 log.info("  ... %d/%d", i, len(records))
 

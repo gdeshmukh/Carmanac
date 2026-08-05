@@ -47,7 +47,6 @@ import logging
 from dataclasses import dataclass, field
 
 from sqlalchemy import func, select, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
@@ -60,13 +59,13 @@ from carmanac.db.models import (
     ModelLine,
     ModelLineMember,
     RawRecord,
-    ReconciledRecord,
     ReconciliationFlag,
 )
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikidata.models import SWEEP_MARKER
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import _current_records, _supersede, slugify
+from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled, trigram_candidates
+from carmanac.reconcile.engine import current_records, slugify, supersede
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata_models
 from carmanac.reconcile.sources.wikidata_models import (
@@ -88,8 +87,6 @@ GENERATION_COVERAGE: tuple[str, ...] = (
     "start_year",
     "end_year",
 )
-
-_DECISION_CHUNK = 500
 
 
 @dataclass
@@ -149,8 +146,20 @@ class _WikidataModelsPass:
         self.session = session
         self.stats = WikidataModelsStats()
         self.source = get_source(session, wikidata_models.SOURCE_NAME)
-        self.decisions: dict[str, dict] = {}
+        self.decisions = DecisionLog(session, self.source.id, PASS_NAME)
 
+        self._load_external_ids()
+        self._load_companies()
+        self._load_models()
+        self._load_structure()
+        self._load_open_flags()
+        self._load_subjects()
+
+    # --- per-run caches ------------------------------------------------------
+
+    def _load_external_ids(self) -> None:
+        """Which of our rows each swept QID already corresponds to."""
+        session = self.session
         # QID -> entity id, partitioned by arc. One QID corresponds to at most
         # one row of one kind (ADR 0011 §4); the maps say which.
         self.company_by_qid: dict[str, int] = {}
@@ -171,8 +180,10 @@ class _WikidataModelsPass:
             elif generation_id is not None:
                 self.generation_by_qid[external_id] = generation_id
 
-        # Held companies and their models: the rung-3 name index is per
-        # company, keyed by normalized model name.
+    def _load_companies(self) -> None:
+        """Held companies, plus every name form they wear - what rung 3
+        strips prefixes against and the cross-badge guard reads brands from."""
+        session = self.session
         self.companies: dict[int, Company] = {c.id: c for c in session.scalars(select(Company))}
         self.company_norm: dict[int, str] = {
             cid: normalize_name(c.name) for cid, c in self.companies.items()
@@ -206,6 +217,10 @@ class _WikidataModelsPass:
             reverse=True,
         )
         self.company_by_slug: dict[str, int] = {c.slug: c.id for c in self.companies.values()}
+
+    def _load_models(self) -> None:
+        """As-filed models, indexed for rung 3, plus each model's anchor QID."""
+        session = self.session
         self.models: dict[int, Model] = {m.id: m for m in session.scalars(select(Model))}
         self.models_by_name: dict[int, dict[str, list[int]]] = {}
         self.model_by_company_slug: dict[tuple[int, str], int] = {}
@@ -241,6 +256,10 @@ class _WikidataModelsPass:
             )
         }
 
+    def _load_structure(self) -> None:
+        """Lines, memberships and generation slugs - the structure rungs 4-5
+        resolve against."""
+        session = self.session
         # Lines resolve by natural key - they hold no external ids (§4).
         self.line_by_key: dict[tuple[int, str], int] = {
             (line.company_id, line.slug): line.id for line in session.scalars(select(ModelLine))
@@ -263,6 +282,9 @@ class _WikidataModelsPass:
             (g.model_id, g.slug): g.id for g in session.scalars(select(Generation))
         }
 
+    def _load_open_flags(self) -> None:
+        """Questions already open, so a re-run does not ask them twice."""
+        session = self.session
         # Open flags: record-scoped match_review on this sweep's records
         # (keyed by QID - a changed payload lands a new raw row and the open
         # question must not be asked twice), and entity-scoped multi_value
@@ -289,10 +311,11 @@ class _WikidataModelsPass:
             )
         }
 
-        # The subjects: current record per QID within the models sweep, parsed
-        # once, in ascending-QID order (the engine's determinism rule).
+    def _load_subjects(self) -> None:
+        """Current record per QID within the models sweep, parsed once."""
+        session = self.session
         self.subjects: dict[str, _Subject] = {}
-        for record in _current_records(session, self.source.id, sweep=SWEEP_MARKER):
+        for record in current_records(session, self.source.id, sweep=SWEEP_MARKER):
             entity = wikidata_models.map_record(record.payload)
             if entity is not None:
                 self.subjects[entity.qid] = _Subject(record=record, entity=entity)
@@ -313,18 +336,10 @@ class _WikidataModelsPass:
         outcome: str,
         detail: dict | None = None,
     ) -> None:
+        """Log the decision and mark the subject settled, so the later phases
+        skip it. This pass revisits entities across phases, unlike the others."""
         subject.decided = True
-        self.decisions[subject.entity.qid] = {
-            "source_id": self.source.id,
-            "pass_name": PASS_NAME,
-            "external_id": subject.entity.qid,
-            "raw_record_id": subject.record.id,
-            "rung": rung,
-            "method": method,
-            "outcome": outcome,
-            "detail": detail,
-            "reconciler_version": policy.RECONCILER_VERSION,
-        }
+        self.decisions.record(subject.record, outcome, rung=rung, method=method, detail=detail)
 
     def _flag(self, subject: _Subject, reason: str, detail: dict) -> None:
         full_detail = {"reason": reason, "qid": subject.entity.qid, **detail}
@@ -359,19 +374,6 @@ class _WikidataModelsPass:
             flag.detail = {**(flag.detail or {}), "resolution": resolution}
             self.stats.flags_dismissed += 1
 
-    def _mark(self, record: RawRecord) -> None:
-        self.session.execute(
-            pg_insert(ReconciledRecord)
-            .values(raw_record_id=record.id, reconciler_version=policy.RECONCILER_VERSION)
-            .on_conflict_do_update(
-                index_elements=["raw_record_id"],
-                set_={
-                    "reconciled_at": func.now(),
-                    "reconciler_version": policy.RECONCILER_VERSION,
-                },
-            )
-        )
-
     # --- facts ---------------------------------------------------------------
 
     def _assert_facts(
@@ -404,7 +406,7 @@ class _WikidataModelsPass:
             row = live.get(field_name)
             if fact is None:
                 if row is not None and row.observed_value is not None:
-                    _supersede(
+                    supersede(
                         self.session,
                         row,
                         {
@@ -431,7 +433,7 @@ class _WikidataModelsPass:
                 self.session.add(FieldProvenance(**values))
                 self.stats.assertions_inserted += 1
             elif row.observed_value != observed:
-                _supersede(self.session, row, values)
+                supersede(self.session, row, values)
                 self.stats.assertions_inserted += 1
                 self.stats.assertions_superseded += 1
             setattr(target, field_name, projected)
@@ -929,17 +931,6 @@ class _WikidataModelsPass:
 
     # --- rung 5-6: generations and the rest ----------------------------------
 
-    def _trigram_candidates(self, name: str, company_id: int) -> list[dict]:
-        rows = self.session.execute(
-            text(
-                """SELECT name, slug, round(similarity(name, :n)::numeric, 2) AS sim
-                   FROM models WHERE company_id = :c AND similarity(name, :n) > 0.3
-                   ORDER BY sim DESC, slug LIMIT 5"""
-            ),
-            {"n": name, "c": company_id},
-        ).all()
-        return [{"name": r.name, "slug": r.slug, "similarity": float(r.sim)} for r in rows]
-
     def _refresh_generation(self, subject: _Subject) -> None:
         generation = self.session.get(Generation, self.generation_by_qid[subject.entity.qid])
         model = self.models[generation.model_id]
@@ -1066,7 +1057,9 @@ class _WikidataModelsPass:
             if subject.held_companies and entity.label:
                 for company_id in subject.held_companies:
                     stripped = self._strip(entity.label, company_id)
-                    candidates = self._trigram_candidates(stripped, company_id)
+                    candidates = trigram_candidates(
+                        self.session, "models", stripped, company_id=company_id
+                    )
                     if candidates:
                         break
             if candidates:
@@ -1094,26 +1087,6 @@ class _WikidataModelsPass:
 
     # --- the pass ------------------------------------------------------------
 
-    def _write_decisions(self) -> None:
-        rows = [self.decisions[qid] for qid in sorted(self.decisions, key=lambda q: int(q[1:]))]
-        for start in range(0, len(rows), _DECISION_CHUNK):
-            chunk = rows[start : start + _DECISION_CHUNK]
-            stmt = pg_insert(MatchDecision).values(chunk)
-            self.session.execute(
-                stmt.on_conflict_do_update(
-                    constraint="uq_match_decisions_source_id_pass_name_external_id",
-                    set_={
-                        "raw_record_id": stmt.excluded.raw_record_id,
-                        "rung": stmt.excluded.rung,
-                        "method": stmt.excluded.method,
-                        "outcome": stmt.excluded.outcome,
-                        "detail": stmt.excluded.detail,
-                        "reconciler_version": stmt.excluded.reconciler_version,
-                        "decided_at": func.now(),
-                    },
-                )
-            )
-
     def run(self) -> WikidataModelsStats:
         log.info(
             "wikidata models pass: %d current sweep records (reconciler v%s)",
@@ -1125,9 +1098,9 @@ class _WikidataModelsPass:
         self._line_phase()
         self._membership_phase()
         self._structure_phase()
-        self._write_decisions()
+        self.decisions.flush()
         for subject in self.subjects.values():
-            self._mark(subject.record)
+            mark_reconciled(self.session, subject.record)
         return self.stats
 
 
