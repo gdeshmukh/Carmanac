@@ -38,7 +38,6 @@ from datetime import UTC, datetime
 from types import ModuleType
 
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
@@ -49,11 +48,11 @@ from carmanac.db.models import (
     ExternalId,
     FieldProvenance,
     RawRecord,
-    ReconciledRecord,
     ReconciliationFlag,
     Source,
 )
 from carmanac.reconcile import policy
+from carmanac.reconcile.bookkeeping import mark_reconciled
 from carmanac.reconcile.types import Assertion, MappedRecord
 
 log = logging.getLogger(__name__)
@@ -110,7 +109,7 @@ def _sort_key(external_id: str) -> tuple[int, int | str]:
     return (0, int(m.group(1))) if m else (1, external_id)
 
 
-def _current_records(session: Session, source_id: int, sweep: str | None = None) -> list[RawRecord]:
+def current_records(session: Session, source_id: int, sweep: str | None = None) -> list[RawRecord]:
     """The reconciliation units: current record per external_id (§1).
 
     `sweep` partitions a source's records by the landing-stamped payload
@@ -140,7 +139,7 @@ def _current_records(session: Session, source_id: int, sweep: str | None = None)
     return records
 
 
-def _supersede(
+def supersede(
     session: Session,
     old: FieldProvenance,
     new_values: dict,
@@ -161,9 +160,12 @@ def _supersede(
     return successor
 
 
-class _Pass:
-    """One run of the companies pass. Holds the per-run caches; `run()` is the
-    entry point. Deliberately not reusable across runs."""
+class CompaniesPass:
+    """One run of the companies pass over a source's records.
+
+    `run()` is the whole pass. `admit_entity()` / `apply_facts()` are the
+    pieces other passes reuse when they admit an entity on their own evidence.
+    Holds per-run caches, so it is not reusable across runs."""
 
     def __init__(self, session: Session, mapper: ModuleType):
         self.session = session
@@ -344,7 +346,7 @@ class _Pass:
                 self.session.add(FieldProvenance(**values))
                 self.stats.assertions_inserted += 1
             elif row.observed_value != assertion.observed_value:
-                _supersede(self.session, row, values)
+                supersede(self.session, row, values)
                 self.stats.assertions_inserted += 1
                 self.stats.assertions_superseded += 1
             # equal observed value -> no-op: idempotency.
@@ -355,7 +357,7 @@ class _Pass:
         # retraction. A live tombstone is not re-tombstoned.
         for field_name, row in live.items():
             if current[field_name] is None and row.observed_value is not None:
-                _supersede(
+                supersede(
                     self.session,
                     row,
                     dict(
@@ -447,27 +449,54 @@ class _Pass:
                 record,
             )
 
+    # --- the public entry points ---------------------------------------------
+
+    def apply_facts(self, company: Company, mapped: MappedRecord, record: RawRecord) -> None:
+        """Assert this record's facts onto `company`, then project the winners.
+
+        The four steps always travel together: an assertion nobody projects is
+        invisible, and a projection nobody plausibility-checks is how AMG got a
+        founding year of 1812.
+        """
+        current = self._write_assertions(company, mapped, record)
+        self._write_role(company, mapped, record)
+        self._project(company, current)
+        self._check_plausibility(company, record)
+
+    def admit_entity(self, record: RawRecord) -> Company | None:
+        """Resolve `record` to a company and apply its facts. None if it cannot
+        be resolved (unnameable, or a merge member whose canonical is missing).
+
+        For passes that admit an entity on evidence this pass cannot see - the
+        vPIC match pass corroborating a quarantined Wikidata entity - so that
+        admission goes through exactly the same assertions, projection and
+        plausibility checks as a class-based one.
+        """
+        mapped = self.mapper.map_record(record.payload)
+        if mapped is None:
+            return None
+        company = self._resolve_company(mapped, record)
+        if company is None:
+            return None
+        self.apply_facts(company, mapped, record)
+        return company
+
+    def resolve_admission_flags(self, external_id: str, resolution: str) -> int:
+        """Close this entity's open admission questions with a stated reason.
+        Returns how many were closed."""
+        closed = 0
+        for flag in self.open_admission.pop(external_id, []):
+            flag.status = "resolved"
+            flag.resolved_at = func.now()
+            flag.detail = {**(flag.detail or {}), "resolution": resolution}
+            closed += 1
+        self.open_flags.discard(("record", external_id, "admission_review"))
+        return closed
+
     # --- the pass ------------------------------------------------------------
 
-    def _mark(self, record: RawRecord) -> None:
-        stmt = (
-            pg_insert(ReconciledRecord)
-            .values(
-                raw_record_id=record.id,
-                reconciler_version=policy.RECONCILER_VERSION,
-            )
-            .on_conflict_do_update(
-                index_elements=["raw_record_id"],
-                set_={
-                    "reconciled_at": func.now(),
-                    "reconciler_version": policy.RECONCILER_VERSION,
-                },
-            )
-        )
-        self.session.execute(stmt)
-
     def run(self) -> PassStats:
-        records = _current_records(self.session, self.source.id)
+        records = current_records(self.session, self.source.id)
         log.info(
             "companies pass: %d current records from %s (reconciler v%s)",
             len(records),
@@ -478,7 +507,7 @@ class _Pass:
         for i, record in enumerate(records, 1):
             mapped = self.mapper.map_record(record.payload)
             if mapped is None:
-                self._mark(record)
+                mark_reconciled(self.session, record)
                 continue
 
             verdict = policy.classify(mapped.classes, mapped.external_id)
@@ -530,16 +559,13 @@ class _Pass:
                         != mapped.external_id
                     )
                     if not is_merge_member:
-                        current = self._write_assertions(company, mapped, record)
-                        self._write_role(company, mapped, record)
-                        self._project(company, current)
-                        self._check_plausibility(company, record)
+                        self.apply_facts(company, mapped, record)
                         for req in mapped.flag_requests:
                             self._open_company_flag(
                                 company.id, req.kind, req.field_name, req.detail, record
                             )
 
-            self._mark(record)
+            mark_reconciled(self.session, record)
             if i % 1000 == 0:
                 log.info("  ... %d/%d", i, len(records))
 
@@ -548,7 +574,7 @@ class _Pass:
 
 def run_companies_pass(session: Session, mapper: ModuleType) -> PassStats:
     """Run the full companies pass for one source's mapper. Commits on success."""
-    stats = _Pass(session, mapper).run()
+    stats = CompaniesPass(session, mapper).run()
     session.commit()
     log.info("companies pass done: %s", stats.summary())
     return stats

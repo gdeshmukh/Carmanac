@@ -27,8 +27,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
@@ -36,13 +35,13 @@ from carmanac.db.models import (
     CompanyRoleAssignment,
     ExternalId,
     RawRecord,
-    ReconciledRecord,
     ReconciliationFlag,
 )
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import _current_records, _Pass
+from carmanac.reconcile.bookkeeping import mark_reconciled, trigram_candidates
+from carmanac.reconcile.engine import CompaniesPass, current_records
 from carmanac.reconcile.sources import wikidata
 
 log = logging.getLogger(__name__)
@@ -82,10 +81,9 @@ class _MatchPass:
         self.stats = MatchStats()
         self.vpic = get_source(session, VPIC_SOURCE_NAME)
 
-        # The Wikidata engine pass provides identity plumbing (resolve/create,
-        # assertions, projection, plausibility) plus the wikidata external-id
-        # map and the open admission flags keyed by QID.
-        self.wp = _Pass(session, wikidata)
+        # The Wikidata companies pass supplies the identity plumbing, plus its
+        # external-id map and open admission flags keyed by QID.
+        self.wp = CompaniesPass(session, wikidata)
 
         # vPIC MakeId -> company, rung 0 (already matched on a prior run).
         self.vpic_ids: dict[str, int] = dict(
@@ -105,7 +103,7 @@ class _MatchPass:
         # Quarantined Wikidata entities by normalized label: current records
         # with no company, a usable label, and a QUARANTINE verdict.
         self.quarantined: dict[str, list[RawRecord]] = {}
-        for record in _current_records(session, self.wp.source.id):
+        for record in current_records(session, self.wp.source.id):
             if record.external_id in self.wp.external_ids:
                 continue
             mapped = wikidata.map_record(record.payload)
@@ -128,17 +126,6 @@ class _MatchPass:
             self.open_match_flags.setdefault(external_id, []).append(flag)
 
     # -- helpers ---------------------------------------------------------------
-
-    def _trigram_candidates(self, name: str) -> list[dict]:
-        rows = self.session.execute(
-            text(
-                """SELECT name, slug, round(similarity(name, :n)::numeric, 2) AS sim
-                   FROM companies WHERE similarity(name, :n) > 0.3
-                   ORDER BY sim DESC, slug LIMIT 5"""
-            ),
-            {"n": name},
-        ).all()
-        return [{"name": r.name, "slug": r.slug, "similarity": float(r.sim)} for r in rows]
 
     def _assert_role(self, company_id: int, record: RawRecord) -> None:
         live = self.session.scalars(
@@ -180,26 +167,18 @@ class _MatchPass:
             self.stats.match_flags_dismissed += 1
 
     def _corroborate_create(self, wd_record: RawRecord, vpic_record: RawRecord) -> int | None:
-        """Admit a quarantined Wikidata entity on vPIC evidence: create its
-        company through the engine internals (same assertions, projection and
-        plausibility as a class-based admission), then resolve its admission
-        flags as corroborated - a machine decision, marked as one."""
-        mapped = wikidata.map_record(wd_record.payload)
-        company = self.wp._resolve_company(mapped, wd_record)
+        """Admit a quarantined Wikidata entity on vPIC evidence.
+
+        Goes through the companies pass so the entity gets exactly the same
+        assertions, projection and plausibility checks a class-based admission
+        would have given it. The flags close as corroborated - a machine
+        decision, marked as one."""
+        company = self.wp.admit_entity(wd_record)
         if company is None:
             return None
-        current = self.wp._write_assertions(company, mapped, wd_record)
-        self.wp._write_role(company, mapped, wd_record)
-        self.wp._project(company, current)
-        self.wp._check_plausibility(company, wd_record)
-
-        for flag in self.wp.open_admission.pop(wd_record.external_id, []):
-            flag.status = "resolved"
-            flag.resolved_at = func.now()
-            flag.detail = {**(flag.detail or {}), "resolution": "corroborated_by_vpic"}
-            self.stats.admission_flags_resolved += 1
-        self.wp.open_flags.discard(("record", wd_record.external_id, "admission_review"))
-
+        self.stats.admission_flags_resolved += self.wp.resolve_admission_flags(
+            wd_record.external_id, "corroborated_by_vpic"
+        )
         self.stats.corroborated_created += 1
         return company.id
 
@@ -216,19 +195,6 @@ class _MatchPass:
         self.open_match_flags[record.external_id] = [flag]
         self.stats.flagged += 1
 
-    def _mark(self, record: RawRecord) -> None:
-        self.session.execute(
-            pg_insert(ReconciledRecord)
-            .values(raw_record_id=record.id, reconciler_version=policy.RECONCILER_VERSION)
-            .on_conflict_do_update(
-                index_elements=["raw_record_id"],
-                set_={
-                    "reconciled_at": func.now(),
-                    "reconciler_version": policy.RECONCILER_VERSION,
-                },
-            )
-        )
-
     # -- the pass --------------------------------------------------------------
 
     @staticmethod
@@ -244,7 +210,7 @@ class _MatchPass:
 
     def run(self) -> MatchStats:
         records = [
-            r for r in _current_records(self.session, self.vpic.id) if self._is_make_record(r)
+            r for r in current_records(self.session, self.vpic.id) if self._is_make_record(r)
         ]
         records.sort(key=lambda r: int(r.payload["make_id"]))  # ascending MakeId
         log.info(
@@ -259,7 +225,7 @@ class _MatchPass:
                 # Matched on a prior run; keep the role assertion current.
                 self.stats.already_matched += 1
                 self._assert_role(self.vpic_ids[record.external_id], record)
-                self._mark(record)
+                mark_reconciled(self.session, record)
                 continue
 
             # The registry is keyed by the human-readable MakeId (what a
@@ -283,7 +249,7 @@ class _MatchPass:
                 else:
                     self._attach(company_id, record)
                     self.stats.matched_existing += 1
-                self._mark(record)
+                mark_reconciled(self.session, record)
                 continue
 
             norm = normalize_name(make_name)
@@ -300,7 +266,12 @@ class _MatchPass:
                 else:
                     self._flag(record, make_name, [], "quarantined candidate unnameable")
             elif not company_hits and not quarantine_hits:
-                self._flag(record, make_name, self._trigram_candidates(make_name), "no match")
+                self._flag(
+                    record,
+                    make_name,
+                    trigram_candidates(self.session, "companies", make_name),
+                    "no match",
+                )
             else:
                 # Ambiguity is usually OUR duplicate identity (company/brand
                 # splits - the Mazda x3 shape), so the reviewer needs enough
@@ -321,7 +292,7 @@ class _MatchPass:
                     for cid in company_hits
                 ] + [{"kind": "quarantined", "qid": r.external_id} for r in quarantine_hits]
                 self._flag(record, make_name, candidates, "ambiguous")
-            self._mark(record)
+            mark_reconciled(self.session, record)
 
         return self.stats
 

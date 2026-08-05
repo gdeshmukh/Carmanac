@@ -24,22 +24,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from carmanac.db.models import CataloguePeriod, ExternalId, MatchDecision, PeriodKind, RawRecord
+from carmanac.db.models import CataloguePeriod, ExternalId, PeriodKind
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import _current_records
+from carmanac.reconcile.bookkeeping import DecisionLog
+from carmanac.reconcile.engine import current_records
 
 log = logging.getLogger(__name__)
 
 PASS_NAME = "vpic_years"
 _PREFIX = "modelyears:"
 _COMMIT_CHUNK = 500
-_DECISION_CHUNK = 500
 
 
 @dataclass
@@ -67,7 +66,7 @@ class _VpicYearsPass:
         self.session = session
         self.stats = VpicYearsPassStats()
         self.source = get_source(session, VPIC_SOURCE_NAME)
-        self.decisions: list[dict] = []
+        self.decisions = DecisionLog(session, self.source.id, PASS_NAME)
 
         kind = session.scalar(select(PeriodKind).where(PeriodKind.code == "model_year"))
         if kind is None:  # pragma: no cover - migration-seeded lookup
@@ -97,44 +96,10 @@ class _VpicYearsPass:
             )
         }
 
-    def _decide(self, record: RawRecord, outcome: str, detail: dict | None = None) -> None:
-        self.decisions.append(
-            {
-                "source_id": self.source.id,
-                "pass_name": PASS_NAME,
-                "external_id": record.external_id,
-                "raw_record_id": record.id,
-                "rung": "1",
-                "method": "external_id",
-                "outcome": outcome,
-                "detail": detail,
-                "reconciler_version": policy.RECONCILER_VERSION,
-            }
-        )
-
-    def _flush_decisions(self) -> None:
-        for start in range(0, len(self.decisions), _DECISION_CHUNK):
-            chunk = self.decisions[start : start + _DECISION_CHUNK]
-            stmt = pg_insert(MatchDecision).values(chunk)
-            self.session.execute(
-                stmt.on_conflict_do_update(
-                    constraint="uq_match_decisions_source_id_pass_name_external_id",
-                    set_={
-                        "raw_record_id": stmt.excluded.raw_record_id,
-                        "rung": stmt.excluded.rung,
-                        "method": stmt.excluded.method,
-                        "outcome": stmt.excluded.outcome,
-                        "detail": stmt.excluded.detail,
-                        "reconciler_version": stmt.excluded.reconciler_version,
-                        "decided_at": func.now(),
-                    },
-                )
-            )
-
     def run(self) -> VpicYearsPassStats:
         records = [
             r
-            for r in _current_records(self.session, self.source.id)
+            for r in current_records(self.session, self.source.id)
             if r.external_id.startswith(_PREFIX)
         ]
         log.info(
@@ -150,7 +115,9 @@ class _VpicYearsPass:
             model_id = self.model_by_external.get(model_key)
             if model_id is None:
                 self.stats.waits_unmatched_model += 1
-                self._decide(record, "waits_unmatched_model")
+                self.decisions.record(
+                    record, "waits_unmatched_model", rung="1", method="external_id"
+                )
                 continue
 
             created = 0
@@ -169,10 +136,12 @@ class _VpicYearsPass:
                 self.existing.add((model_id, year))
                 self.stats.periods_created += 1
                 created += 1
-            self._decide(
+            self.decisions.record(
                 record,
                 "periods_written",
-                {"years": len(record.payload.get("years") or []), "created": created},
+                rung="1",
+                method="external_id",
+                detail={"years": len(record.payload.get("years") or []), "created": created},
             )
 
             since_commit += 1
@@ -180,7 +149,7 @@ class _VpicYearsPass:
                 self.session.commit()
                 since_commit = 0
 
-        self._flush_decisions()
+        self.decisions.flush()
         self.session.commit()
         log.info("vPIC year pass done: %s", self.stats.summary())
         return self.stats

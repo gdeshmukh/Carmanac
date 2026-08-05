@@ -39,8 +39,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
@@ -49,19 +48,23 @@ from carmanac.db.models import (
     Company,
     Configuration,
     ConfigurationAttribute,
+    Drivetrain,
     ExternalId,
     FieldProvenance,
-    MatchDecision,
+    FuelType,
+    MarketRegion,
     Model,
     PeriodKind,
     RawRecord,
     ReconciliationFlag,
+    TransmissionType,
 )
 from carmanac.ingest.epa.bulk import EPA_SOURCE_NAME
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import _current_records, _supersede
+from carmanac.reconcile.bookkeeping import DecisionLog
+from carmanac.reconcile.engine import current_records, supersede
 from carmanac.reconcile.matching import normalize_name
 
 log = logging.getLogger(__name__)
@@ -69,7 +72,6 @@ log = logging.getLogger(__name__)
 PASS_NAME = "epa_attach"
 _PREFIX = "vehicle:"
 _COMMIT_CHUNK = 250  # groups per commit
-_DECISION_CHUNK = 500
 
 US_MARKET_CODE = "US"
 
@@ -117,6 +119,12 @@ SPEC_COLUMNS: tuple[str, ...] = (
 EAV_KEYS: tuple[str, ...] = ("aspiration", "flex_fuel")
 
 _MILES_TO_KM = 1.609344
+
+# Candidate generation for the review queue. Loose on purpose: nothing here is
+# ever auto-accepted, so a near-miss shown to a reviewer costs nothing while a
+# missing one costs a manual search.
+_DIFFLIB_CUTOFF = 0.6
+_CANDIDATE_LIMIT = 5
 
 
 @dataclass
@@ -167,6 +175,15 @@ class _Group:
     members: list[tuple[RawRecord, dict, dict]] = field(default_factory=list)
 
 
+def _require_seed(session: Session, model: type, code: str) -> int:
+    """A migration-seeded lookup row's id. Missing means the schema is wrong,
+    not that data is absent, so this raises rather than returning None."""
+    row = session.scalar(select(model).where(model.code == code))
+    if row is None:  # pragma: no cover - migration-seeded lookup
+        raise RuntimeError(f"{model.__tablename__} seed row {code!r} missing")
+    return row.id
+
+
 def _tokens(s: str) -> list[str]:
     """Whitespace tokens; normalization of their prefix-joins matches
     normalize_name of the corresponding substring (both strip non-alnum)."""
@@ -182,24 +199,30 @@ class _EpaAttachPass:
         self.stats = EpaAttachStats()
         self.source = get_source(session, EPA_SOURCE_NAME)
         self.vpic_source = get_source(session, VPIC_SOURCE_NAME)
-        self.decisions: list[dict] = []
+        self.decisions = DecisionLog(session, self.source.id, PASS_NAME)
 
-        kind = session.scalar(select(PeriodKind).where(PeriodKind.code == "model_year"))
-        if kind is None:  # pragma: no cover - migration-seeded lookup
-            raise RuntimeError("period_kinds seed row 'model_year' missing")
-        self.model_year_kind_id: int = kind.id
+        self._load_lookups()
+        self._load_make_bridge()
+        self._load_models()
+        self._load_occupancy()
+        self._load_fact_state()
 
-        from carmanac.db.models import Drivetrain, MarketRegion
+    # --- per-run caches ------------------------------------------------------
 
-        market = session.scalar(select(MarketRegion).where(MarketRegion.code == US_MARKET_CODE))
-        if market is None:  # pragma: no cover - migration-seeded lookup
-            raise RuntimeError("market_regions seed row 'US' missing")
-        self.us_market_id: int = market.id
+    def _load_lookups(self) -> None:
+        """Dimension rows the pass maps EPA strings onto. All migration-seeded,
+        so a missing one is a broken schema rather than missing data."""
+        session = self.session
+        self.model_year_kind_id = _require_seed(session, PeriodKind, "model_year")
+        self.us_market_id = _require_seed(session, MarketRegion, US_MARKET_CODE)
         self.drivetrain_by_code: dict[str, int] = {
             code: dt_id for dt_id, code in session.execute(select(Drivetrain.id, Drivetrain.code))
         }
-        from carmanac.db.models import FuelType, TransmissionType
-
+        # Reverse of the above, built once - the slug builder needs code-by-id
+        # for every configuration it names.
+        self.drivetrain_code_by_id: dict[int, str] = {
+            dt_id: code for code, dt_id in self.drivetrain_by_code.items()
+        }
         self.fuel_by_code: dict[str, int] = {
             code: ft_id for ft_id, code in session.execute(select(FuelType.id, FuelType.code))
         }
@@ -208,6 +231,9 @@ class _EpaAttachPass:
             for tt_id, code in session.execute(select(TransmissionType.id, TransmissionType.code))
         }
 
+    def _load_make_bridge(self) -> None:
+        """EPA make string -> company, via vPIC make names and the registry."""
+        session = self.session
         # The make bridge: normalized vPIC make name -> matched company id.
         self.company_by_make_norm: dict[str, int] = {}
         make_external = {
@@ -220,7 +246,7 @@ class _EpaAttachPass:
                 )
             )
         }
-        for record in _current_records(session, self.vpic_source.id):
+        for record in current_records(session, self.vpic_source.id):
             if not record.external_id.startswith("make:"):
                 continue
             company_id = make_external.get(record.external_id)
@@ -244,15 +270,19 @@ class _EpaAttachPass:
             if company_id is not None:
                 self.registry_company[make_norm] = company_id
 
-        # As-filed models per company: normalized name -> model id, plus the
-        # company/model rows for slugs and candidates.
+    def _load_models(self) -> None:
+        """As-filed models per company, plus the rows slugs and candidates
+        need."""
+        session = self.session
         self.models: dict[int, Model] = {m.id: m for m in session.scalars(select(Model))}
         self.companies: dict[int, Company] = {c.id: c for c in session.scalars(select(Company))}
         self.models_by_company: dict[int, dict[str, int]] = defaultdict(dict)
         for m in self.models.values():
             self.models_by_company[m.company_id][normalize_name(m.name)] = m.id
 
-        # Occupancy caches - what makes re-runs converge.
+    def _load_occupancy(self) -> None:
+        """What already exists, so a re-run matches instead of duplicating."""
+        session = self.session
         self.period_by_key: dict[tuple[int, int], int] = {
             (model_id, start): pid
             for pid, model_id, start in session.execute(
@@ -299,9 +329,11 @@ class _EpaAttachPass:
             d = flag.detail or {}
             self.open_questions.add((d.get("reason", ""), d.get("make", ""), d.get("model", "")))
 
-        # Sole-source refresh caches (ADR 0015 §1): this pass may correct a
-        # column it alone asserts; a column any OTHER source asserts is
-        # reconciliation's job, not this pass's.
+    def _load_fact_state(self) -> None:
+        """Live column and EAV state, for the sole-source refresh (ADR 0015
+        §1): this pass may correct a column it alone asserts, but a column
+        any OTHER source asserts is reconciliation's job, not this pass's."""
+        session = self.session
         self.config_cols: dict[int, dict] = {}
         for row in session.execute(
             select(Configuration.id, *[getattr(Configuration, c) for c in SPEC_COLUMNS])
@@ -463,47 +495,6 @@ class _EpaAttachPass:
 
     # --- bookkeeping ---------------------------------------------------------
 
-    def _decide(
-        self,
-        record: RawRecord,
-        rung: str | None,
-        method: str | None,
-        outcome: str,
-        detail: dict | None = None,
-    ) -> None:
-        self.decisions.append(
-            {
-                "source_id": self.source.id,
-                "pass_name": PASS_NAME,
-                "external_id": record.external_id,
-                "raw_record_id": record.id,
-                "rung": rung,
-                "method": method,
-                "outcome": outcome,
-                "detail": detail,
-                "reconciler_version": policy.RECONCILER_VERSION,
-            }
-        )
-
-    def _flush_decisions(self) -> None:
-        for start in range(0, len(self.decisions), _DECISION_CHUNK):
-            chunk = self.decisions[start : start + _DECISION_CHUNK]
-            stmt = pg_insert(MatchDecision).values(chunk)
-            self.session.execute(
-                stmt.on_conflict_do_update(
-                    constraint="uq_match_decisions_source_id_pass_name_external_id",
-                    set_={
-                        "raw_record_id": stmt.excluded.raw_record_id,
-                        "rung": stmt.excluded.rung,
-                        "method": stmt.excluded.method,
-                        "outcome": stmt.excluded.outcome,
-                        "detail": stmt.excluded.detail,
-                        "reconciler_version": stmt.excluded.reconciler_version,
-                        "decided_at": func.now(),
-                    },
-                )
-            )
-
     def _flag(self, record: RawRecord, reason: str, make: str, model: str, detail: dict) -> None:
         key = (reason, make, model)
         if key in self.open_questions:
@@ -547,9 +538,7 @@ class _EpaAttachPass:
             ).strip("-")
             if trim_slug:
                 parts.append(trim_slug)
-        code = next(
-            (c for c, i in self.drivetrain_by_code.items() if i == group.drivetrain_id), None
-        )
+        code = self.drivetrain_code_by_id.get(group.drivetrain_id)
         if code:
             parts.append(code)
         base = "-".join(p for p in parts if p)
@@ -672,7 +661,7 @@ class _EpaAttachPass:
             }
             old_id = self.epa_live.get((cfg_id, col))
             if old_id is not None:
-                successor = _supersede(
+                successor = supersede(
                     self.session, self.session.get(FieldProvenance, old_id), new_values
                 )
             else:
@@ -716,7 +705,7 @@ class _EpaAttachPass:
     def run(self) -> EpaAttachStats:
         records = [
             r
-            for r in _current_records(self.session, self.source.id)
+            for r in current_records(self.session, self.source.id)
             if r.external_id.startswith(_PREFIX)
         ]
         log.info(
@@ -741,7 +730,7 @@ class _EpaAttachPass:
                 self.stats.waits_unbridged_make += 1
                 unbridged[make] += 1
                 self._flag(record, "unbridged_make", make, "", {})
-                self._decide(record, None, None, "waits_unbridged_make", {"make": make})
+                self.decisions.record(record, "waits_unbridged_make", detail={"make": make})
                 continue
 
             base = (p.get("baseModel") or "").strip()
@@ -751,7 +740,9 @@ class _EpaAttachPass:
                 our_names = [
                     self.models[mid].name for mid in self.models_by_company[company_id].values()
                 ]
-                candidates = difflib.get_close_matches(model_str, our_names, n=5, cutoff=0.6)
+                candidates = difflib.get_close_matches(
+                    model_str, our_names, n=_CANDIDATE_LIMIT, cutoff=_DIFFLIB_CUTOFF
+                )
                 self._flag(
                     record,
                     "no_model_match",
@@ -759,7 +750,7 @@ class _EpaAttachPass:
                     model_str,
                     {"baseModel": p.get("baseModel"), "candidates": candidates},
                 )
-                self._decide(record, None, None, "flagged_no_model_match", {"model": model_str})
+                self.decisions.record(record, "flagged_no_model_match", detail={"model": model_str})
                 continue
 
             model_id, trim, method, rung = resolved
@@ -767,8 +758,12 @@ class _EpaAttachPass:
             try:
                 year = int(p.get("year"))
             except (TypeError, ValueError):
-                self._decide(
-                    record, rung, method, "flagged_no_model_match", {"bad_year": p.get("year")}
+                self.decisions.record(
+                    record,
+                    "flagged_no_model_match",
+                    rung=rung,
+                    method=method,
+                    detail={"bad_year": p.get("year")},
                 )
                 continue
             drive_id = self.drivetrain_by_code.get(DRIVE_MAP.get(p.get("drive") or "", ""))
@@ -777,12 +772,12 @@ class _EpaAttachPass:
                 groups[gkey] = _Group(model_id, year, trim, drive_id)
             specs, eav = self._specs(p)
             groups[gkey].members.append((record, specs, eav))
-            self._decide(
+            self.decisions.record(
                 record,
-                rung,
-                method,
                 "attached",
-                {"model": self.models[model_id].slug, "year": year, "trim": trim},
+                rung=rung,
+                method=method,
+                detail={"model": self.models[model_id].slug, "year": year, "trim": trim},
             )
 
         since_commit = 0
@@ -793,7 +788,7 @@ class _EpaAttachPass:
                 self.session.commit()
                 since_commit = 0
 
-        self._flush_decisions()
+        self.decisions.flush()
         self.session.commit()
         if unbridged:
             top = sorted(unbridged.items(), key=lambda t: -t[1])[:10]
