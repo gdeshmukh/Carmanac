@@ -22,6 +22,10 @@ from __future__ import annotations
 
 import re
 
+# Direct `wdt:P31` only, never the transitive `wdt:P31/wdt:P279*`: measured,
+# the transitive form widens Q786820 alone from 6,514 to 9,960 entities by
+# walking subclass chains into general industrial companies. Widening later
+# is a query edit plus a re-run; the content hash makes the re-land additive.
 MAKES_QUERY = """
 SELECT ?item ?itemLabel ?itemDescription
        (GROUP_CONCAT(DISTINCT ?inception; separator="|") AS ?inceptions)

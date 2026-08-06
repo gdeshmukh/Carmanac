@@ -550,8 +550,8 @@ class _EpaAttachPass:
 
     def _materialize(self, group: _Group) -> None:
         period_id = self._period_id(group.model_id, group.year)
-        key = (period_id, group.trim, self.us_market_id, group.drivetrain_id, None)
-        cfg_id = self.config_by_key.get(key)
+        natural_key = (period_id, group.trim, self.us_market_id, group.drivetrain_id, None)
+        cfg_id = self.config_by_key.get(natural_key)
         created = cfg_id is None
 
         # Column/EAV agreement across the group's rows: unanimous or nothing.
@@ -563,10 +563,10 @@ class _EpaAttachPass:
             elif len(values) > 1:
                 self.stats.column_conflicts += 1
         agreed_eav: dict = {}
-        for key in EAV_KEYS:
-            values = {eav[key] for _, _, eav in group.members if eav.get(key) is not None}
+        for eav_key in EAV_KEYS:
+            values = {eav[eav_key] for _, _, eav in group.members if eav.get(eav_key) is not None}
             if len(values) == 1:
-                agreed_eav[key] = values.pop()
+                agreed_eav[eav_key] = values.pop()
             elif len(values) > 1:
                 self.stats.column_conflicts += 1
 
@@ -583,7 +583,7 @@ class _EpaAttachPass:
             self.session.add(config)
             self.session.flush()
             cfg_id = config.id
-            self.config_by_key[key] = cfg_id
+            self.config_by_key[natural_key] = cfg_id
             self.config_slugs.add(config.slug)
             self.stats.configurations_created += 1
             self.config_cols[cfg_id] = {c: agreed.get(c) for c in SPEC_COLUMNS}
