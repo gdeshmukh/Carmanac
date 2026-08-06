@@ -1,4 +1,4 @@
-"""The Wikipedia infobox pass (ADR 0016 §4): generation time and codes.
+"""The Wikipedia infobox pass (ADR 0017 §2): generation time and codes.
 
 Consumes the landed `infobox:<QID>` records and asserts onto the generation
 the QID is already attached to:
@@ -17,7 +17,7 @@ waits - the line-case articles are archival until line membership
 materializes their generations.
 
 Tier 2 writes facts directly - queues are for identity ambiguity, not source
-rank (Gaurav's ruling, in the ADR). Precedence has teeth on the other side:
+rank (Gaurav's ruling, ADR 0017 §1). Precedence has teeth on the other side:
 the wd-models pass skips projecting fields this pass asserts (its
 label-derived values stay in `field_provenance`, outranked on the column).
 A span that does not reduce to exactly one range flags `implausible_value`

@@ -176,7 +176,7 @@ def assert_field_facts(
     onto the entity columns. Returns (inserted, superseded).
 
     `skip_projection` is how a field-scoped precedence ruling gets mechanical
-    teeth (ADR 0016 §4: infobox assertions outrank label-derived ones): the
+    teeth (ADR 0017 §2: infobox assertions outrank label-derived ones): the
     outranked pass still keeps its assertion current in `field_provenance` -
     the evidence trail must not thin out - but leaves the entity column to
     the source that outranks it.

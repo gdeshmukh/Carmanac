@@ -1,4 +1,4 @@
-"""Mapper for landed `infobox:<QID>` wikitext records (ADR 0016 §4).
+"""Mapper for landed `infobox:<QID>` wikitext records (ADR 0017 §2).
 
 Parsing is deliberately narrow: the pass wants two year spans (`production`,
 `model_years`) and the title's code parenthetical - not a wikitext AST. The
@@ -41,7 +41,7 @@ class Span:
 
     def contains(self, year_start: int, year_end: int | None, *, end_slack: int = 0) -> bool:
         """Whole-period containment, closed start, `end_slack` extra years on
-        the end (the model-year-outruns-production allowance, ADR 0016 §5)."""
+        the end (the model-year-outruns-production allowance, ADR 0017 §3)."""
         if year_start < self.start:
             return False
         if self.end is None:

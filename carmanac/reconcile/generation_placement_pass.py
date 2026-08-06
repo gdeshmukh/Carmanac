@@ -1,4 +1,4 @@
-"""The generation-placement pass (ADR 0016 §5): unique dated overlap.
+"""The generation-placement pass (ADR 0017 §3): unique dated overlap.
 
 For every configuration, the candidates are the generations linked to its
 model (`generation_model_links` - source assertions, never inference) whose
@@ -60,7 +60,7 @@ log = logging.getLogger(__name__)
 
 PASS_NAME = "generation_placement"
 
-# The model-year-outruns-production allowance (ADR 0016 §5, accepted as the
+# The model-year-outruns-production allowance (ADR 0017 §3, accepted as the
 # general rule; exceptions get dedicated decision passes, not a looser rule).
 END_SLACK = 1
 

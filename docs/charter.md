@@ -36,11 +36,13 @@ generations, catalogue periods and configurations — every fact carrying
 field-level provenance back to the raw record that asserted it. See
 `PROGRESS.md` for live counts and the open review queues.
 
-The generation-placement pass is live (ADR 0016): generations re-anchored
-to companies, Wikipedia infoboxes supply generation time via sitelinks, and
-the first configurations are placed by unique dated overlap — everything
-ambiguous or under-evidenced waits with a logged reason. Next: growing
-placement coverage (line membership, dating the generation inventory), then
+The generation-placement pass is live (ADR 0016 restructured generations;
+ADR 0017 owns the evidence): generations re-anchored to companies,
+Wikipedia infoboxes supply generation time via sitelinks, and the first
+configurations are placed by unique dated overlap — everything ambiguous or
+under-evidenced waits with a logged reason. Next: ADR 0017 §4's proposed
+answer to the existence bottleneck (section-minted generations from
+nameplate articles; Wikidata demoted from gatekeeper to contributor), then
 the source depth already inventoried on vPIC and EPA.
 
 ## Architecture Invariants

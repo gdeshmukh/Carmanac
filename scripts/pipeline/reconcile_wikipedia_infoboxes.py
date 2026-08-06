@@ -1,4 +1,4 @@
-"""Assert generation time and chassis codes from landed infoboxes (ADR 0016 §4).
+"""Assert generation time and chassis codes from landed infoboxes (ADR 0017 §2).
 
     .venv/bin/python scripts/pipeline/reconcile_wikipedia_infoboxes.py
 

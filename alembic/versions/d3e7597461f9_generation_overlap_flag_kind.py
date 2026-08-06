@@ -4,7 +4,7 @@ Adds `generation_overlap` to the reconciliation_flags kind CHECK
 (hand-written - CHECK changes are an autogenerate blind spot, the
 f3c645b9cb6f lesson).
 
-Why the kind exists (ADR 0016 §5): a configuration whose period sits inside
+Why the kind exists (ADR 0017 §3): a configuration whose period sits inside
 TWO linked generations' spans must not be placed by the year alone - the
 2019 AMG GT holds C190 coupes beside X290 4-doors. The flag carries the
 candidates; placement stays NULL until finer evidence (body style, chassis

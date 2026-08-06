@@ -1,4 +1,4 @@
-"""Place configurations into generations by unique dated overlap (ADR 0016 §5).
+"""Place configurations into generations by unique dated overlap (ADR 0017 §3).
 
     .venv/bin/python scripts/pipeline/reconcile_generation_placement.py
 

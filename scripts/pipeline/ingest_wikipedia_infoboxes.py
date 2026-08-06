@@ -1,4 +1,4 @@
-"""Fetch generation-article infoboxes from English Wikipedia (ADR 0016 §3).
+"""Fetch generation-article infoboxes from English Wikipedia (ADR 0017 §1).
 
     .venv/bin/python scripts/pipeline/ingest_wikipedia_infoboxes.py [--refresh]
 

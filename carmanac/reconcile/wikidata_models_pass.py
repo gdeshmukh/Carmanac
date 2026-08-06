@@ -313,7 +313,7 @@ class _WikidataModelsPass:
                 self.anonymous_links[(generation_id, model_id)] = link_id
 
     def _load_wikipedia_precedence(self) -> None:
-        """Generation fields the infobox pass asserts live (ADR 0016 §4):
+        """Generation fields the infobox pass asserts live (ADR 0017 §2):
         infobox assertions outrank label-derived ones, so this pass keeps its
         assertions current but leaves those columns alone."""
         self.wikipedia_generation_fields: dict[int, frozenset[str]] = {}

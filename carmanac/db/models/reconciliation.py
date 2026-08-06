@@ -55,7 +55,7 @@ FLAG_KINDS = (
     # one grows the curated match registry and the matcher's labeled set.
     "match_review",
     # A configuration whose period sits inside TWO linked generations' spans
-    # (ADR 0016 §5): the year alone must not choose - the 2019 AMG GT holds
+    # (ADR 0017 §3): the year alone must not choose - the 2019 AMG GT holds
     # C190 coupes beside X290 4-doors. Candidates in `detail`; placement
     # stays NULL until body style or chassis codes discriminate.
     "generation_overlap",

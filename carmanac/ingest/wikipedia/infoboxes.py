@@ -1,4 +1,4 @@
-"""Fetch section-0 wikitext for generation-shaped articles (ADR 0016 §3).
+"""Fetch section-0 wikitext for generation-shaped articles (ADR 0017 §1).
 
 Targets are QIDs from the landed models sweep whose payload carries an
 enwiki sitelink and which are generation-relevant: either already attached

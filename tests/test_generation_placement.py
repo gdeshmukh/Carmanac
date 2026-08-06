@@ -1,4 +1,4 @@
-"""ADR 0016 tests: the infobox parser, the time-and-codes pass, and the
+"""ADR 0016/0017 tests: the infobox parser, the time-and-codes pass, and the
 placement pass.
 
 Parser tests are pure. The integration cast is one company with two dated
@@ -407,7 +407,7 @@ def test_redirected_article_asserts_nothing(db, wikidata_source, wikipedia_sourc
     assert spine["e46"].start_year is None
 
 
-# --- precedence (ADR 0016 §4) -------------------------------------------------
+# --- precedence (ADR 0017 §2) -------------------------------------------------
 
 
 @pytest.mark.integration
