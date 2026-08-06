@@ -15,8 +15,13 @@ placement span contains the configuration's catalogue period:
 
 Slack applies BEFORE the uniqueness test, so it can only ever add a flag,
 never force a placement between two known generations. Exactly one
-candidate places, with field-level provenance to the raw record whose span
-decided it. Two or more flag `generation_overlap` per (model, period)
+candidate places - and only when EVERY generation linked to the model
+carries a span: an undated sibling makes "unique among the dated" mean
+nothing (the first live run placed a 1991 Celica convertible into
+`celica-gt-four` because the GT-Four page was the only dated one), so
+undated competitors hold the configuration in `waits_undated_competitor`
+until their spans land. Placement cites the raw record whose span decided
+it. Two or more candidates flag `generation_overlap` per (model, period)
 cluster - the 2019 AMG GT lands there by design. Zero is the normal state,
 logged, unflagged.
 
@@ -66,6 +71,7 @@ class GenerationPlacementStats:
     placed: int = 0
     already_placed: int = 0
     unplaced_no_candidate: int = 0
+    undated_competitor: int = 0
     overlap_flagged: int = 0
     withdrawn: int = 0
     flags_opened: int = 0
@@ -75,6 +81,7 @@ class GenerationPlacementStats:
         return (
             f"configurations={self.configurations} placed={self.placed} "
             f"already={self.already_placed} no_candidate={self.unplaced_no_candidate} "
+            f"undated_competitor={self.undated_competitor} "
             f"overlap={self.overlap_flagged} withdrawn={self.withdrawn} | "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
         )
@@ -185,8 +192,16 @@ class _PlacementPass:
             )
         }
 
-    def _candidates(self, model_id: int, period: CataloguePeriod, kind: str) -> list[_Candidate]:
+    def _candidates(
+        self, model_id: int, period: CataloguePeriod, kind: str
+    ) -> tuple[list[_Candidate], int]:
+        """(matching candidates, undated linked generations). An undated
+        competitor makes 'unique among the dated' mean nothing - the 1991
+        Celica convertible must not land in `celica-gt-four` just because the
+        GT-Four page is the only one with a production span - so the caller
+        treats undated > 0 as unplaceable, not as a smaller field."""
         found: list[_Candidate] = []
+        undated = 0
         for generation_id in self.links.get(model_id, ()):
             model_years = self.model_year_spans.get(generation_id)
             if kind == "model_year" and model_years is not None:
@@ -196,13 +211,14 @@ class _PlacementPass:
                 continue
             generation = self.generations[generation_id]
             if generation.start_year is None:
+                undated += 1
                 continue
             span = Span(generation.start_year, generation.end_year)
             if span.contains(period.start_year, period.end_year, end_slack=END_SLACK):
                 found.append(
                     _Candidate(generation_id, span, False, self.span_records.get(generation_id))
                 )
-        return sorted(found, key=lambda c: c.generation_id)
+        return sorted(found, key=lambda c: c.generation_id), undated
 
     def _assert_placement(self, configuration: Configuration, candidate: _Candidate | None) -> None:
         """Write/refresh/withdraw the placement assertion + column. The pass
@@ -276,9 +292,28 @@ class _PlacementPass:
         for configuration, period in rows:
             self.stats.configurations += 1
             key = f"configuration:{configuration.id}"
-            candidates = self._candidates(
+            candidates, undated = self._candidates(
                 period.model_id, period, kind_by_id[period.period_kind_id]
             )
+
+            if len(candidates) == 1 and undated:
+                # One dated match beside undated siblings is not uniqueness -
+                # the honest state is unknowable-yet. Resolves mechanically as
+                # the siblings gain spans.
+                if configuration.generation_id is not None:
+                    self.stats.withdrawn += 1
+                self._assert_placement(configuration, None)
+                self._dismiss_flag(configuration.id, "waiting_on_undated_competitors")
+                self.stats.undated_competitor += 1
+                self.decisions.record_key(
+                    key,
+                    "waits_undated_competitor",
+                    detail={
+                        "dated_match": self.generations[candidates[0].generation_id].slug,
+                        "undated_siblings": undated,
+                    },
+                )
+                continue
 
             if len(candidates) == 1:
                 candidate = candidates[0]
@@ -304,6 +339,7 @@ class _PlacementPass:
                 self._assert_placement(configuration, None)
                 detail = {
                     "period": f"{period.start_year}–{period.end_year}",
+                    "undated_siblings": undated,
                     "candidates": [
                         {
                             "generation": self.generations[c.generation_id].slug,

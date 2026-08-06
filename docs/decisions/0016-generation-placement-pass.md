@@ -201,7 +201,19 @@ span:
   configuration flags instead of placing.
 - **Exactly one candidate** → write `configurations.generation_id`,
   with field-level provenance to the raw record whose span decided it;
-  decision logged (`placed_dated_overlap`).
+  decision logged (`placed_dated_overlap`). **Amendment from the first
+  live run (2026-08-06)**: uniqueness counts only when *every*
+  generation linked to the model carries a span. One dated match beside
+  undated siblings placed a 1991 Celica convertible into
+  `celica-gt-four` (the GT-Four page was the only dated candidate) —
+  so undated competitors hold the configuration in
+  `waits_undated_competitor`, resolving mechanically as spans land.
+- **Redirected articles assert nothing** (same live-run amendment): the
+  "Honda Civic Hybrid" sitelink resolves to the whole-nameplate "Honda
+  Civic" page, whose 1972–present span must not land on one generation.
+  A resolved title that differs from the requested one beyond
+  case/underscore wobble is a subject change; the record waits and any
+  earlier assertion tombstones back to NULL.
 - **Zero candidates** → stays NULL, decision logged
   (`waits_no_dated_generation`). Not a flag — it is the normal state
   for the 89% of configurations whose models have no linked generations

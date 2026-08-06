@@ -363,6 +363,50 @@ def test_moved_evidence_withdraws_placement(db, wikidata_source, wikipedia_sourc
     assert superseded, "the withdrawn placement stays in the trail"
 
 
+@pytest.mark.integration
+def test_undated_competitor_bars_placement(db, wikidata_source, wikipedia_source, spine):
+    """The Celica lesson: one dated match beside an undated sibling is not
+    uniqueness - the configuration waits until the sibling gains a span."""
+    _land_infobox(
+        db,
+        wikipedia_source,
+        "Q1",
+        "BMW 3 Series (E46)",
+        "{{Infobox automobile\n| production = 1997–2006\n}}",
+    )
+    run_wikipedia_infobox_pass(db)  # e90 stays undated
+    config = _configuration(db, spine, 2000, "330i-2000")
+    stats = run_generation_placement_pass(db)
+
+    db.refresh(config)
+    assert config.generation_id is None and stats.undated_competitor == 1
+    decision = db.scalars(
+        select(MatchDecision).where(MatchDecision.external_id == f"configuration:{config.id}")
+    ).one()
+    assert decision.outcome == "waits_undated_competitor"
+
+
+@pytest.mark.integration
+def test_redirected_article_asserts_nothing(db, wikidata_source, wikipedia_source, spine):
+    """The Civic Hybrid lesson: a sitelink that redirects to a different
+    page changed subject - the whole-nameplate span must not land, and one
+    that already landed heals back to NULL."""
+    rec = _land_infobox(
+        db,
+        wikipedia_source,
+        "Q1",
+        "BMW 3 Series",  # resolved title != requested: a real redirect
+        "{{Infobox automobile\n| production = 1975–present\n}}",
+    )
+    rec.payload = {**rec.payload, "requested_title": "BMW 3 Series (E46)"}
+    rec.content_hash = content_hash(rec.payload)
+    db.commit()
+    stats = run_wikipedia_infobox_pass(db)
+    assert stats.redirected == 1 and stats.generations_timed == 0
+    db.refresh(spine["e46"])
+    assert spine["e46"].start_year is None
+
+
 # --- precedence (ADR 0016 §4) -------------------------------------------------
 
 

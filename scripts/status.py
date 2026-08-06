@@ -55,6 +55,7 @@ def main() -> int:
                             WHEN rr.external_id LIKE 'model:%' THEN 'models'
                             WHEN rr.external_id LIKE 'modelyears:%' THEN 'model-years'
                             WHEN rr.external_id LIKE 'vehicle:%' THEN 'vehicles'
+                            WHEN rr.external_id LIKE 'infobox:%' THEN 'infoboxes'
                             -- bare QIDs split by the landing-stamped sweep
                             -- marker (ADR 0012 §1), never by payload shape
                             WHEN rr.external_id LIKE 'Q%'
@@ -153,6 +154,21 @@ def main() -> int:
         ).one()
         print(f"Wikidata model QIDs -> models : {wd_models}/{wd_swept} swept")
         print(f"Wikidata QIDs -> generations  : {wd_gens}")
+
+        placed, total, timed, gens, links = s.execute(
+            text(
+                """
+                SELECT
+                  (SELECT count(*) FROM configurations WHERE generation_id IS NOT NULL),
+                  (SELECT count(*) FROM configurations),
+                  (SELECT count(*) FROM generations WHERE start_year IS NOT NULL),
+                  (SELECT count(*) FROM generations),
+                  (SELECT count(*) FROM generation_model_links WHERE superseded_by IS NULL)
+                """
+            )
+        ).one()
+        print(f"configurations placed         : {placed}/{total}")
+        print(f"generations with spans        : {timed}/{gens} ({links} model links)")
 
         print("match decisions by outcome:")
         for pass_name, outcome, n in s.execute(

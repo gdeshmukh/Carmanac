@@ -40,7 +40,7 @@ Every one of those spec values carries a `field_provenance` row naming EPA as th
 
 ### What is deliberately not there yet
 
-- **Generation placement is NULL on every configuration.** Placement is evidence-gated (ADR 0014) — it gets written only when a source places *that individual car*, never inferred from the model year, because one model year routinely contains two generations at once. The 2019 AMG GT is exactly that case: C190 coupes beside X290 4-doors. The evidence pass is the next design turn.
+- **Generation placement is NULL on most configurations.** Placement is evidence-gated (ADR 0014/0016) — it gets written only when the evidence places *that individual car*, never inferred from the model year, because one model year routinely contains two generations at once. The 2019 AMG GT is exactly that case: C190 coupes beside X290 4-doors. The first placement pass (Wikipedia infobox spans, unique dated overlap) has placed the 197 configurations whose model's generation inventory is fully dated — the Camry's whole eight-generation run among them; everything ambiguous or under-evidenced waits with a logged reason.
 - **Engine and transmission entities are empty.** EPA cannot name an engine (ADR 0015), so powertrain data lands as facts on the configuration and the entities wait for a source that actually names hardware.
 - **Coverage is partial and the residue is queued, not hidden.** 134 of 247 vPIC makes are matched to companies; 42,920 of 49,995 EPA rows are attached; 477 of 14,524 swept Wikidata model entities correspond to a model. 4,188 open review flags carry the rest, each one a specific question with candidates attached.
 - **No read API, no frontend.** `status.py` and SQL are the only query surfaces.
@@ -132,6 +132,10 @@ $P scripts/pipeline/ingest_vpic_model_years.py && $P scripts/pipeline/reconcile_
 
 # configurations, from the EPA bulk CSV (one request, ~50k rows)
 $P scripts/pipeline/ingest_epa_vehicles.py     && $P scripts/pipeline/reconcile_epa_vehicles.py
+
+# generation time from Wikipedia infoboxes, then placement by dated overlap
+$P scripts/pipeline/ingest_wikipedia_infoboxes.py && $P scripts/pipeline/reconcile_wikipedia_infoboxes.py
+$P scripts/pipeline/reconcile_generation_placement.py
 ```
 
 `scripts/pipeline/` holds these re-runnable steps. `scripts/decisions/` holds the applied-judgment scripts — the executable half of an ADR, run once against live data and kept as the record of what was done.

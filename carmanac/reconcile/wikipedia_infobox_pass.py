@@ -52,6 +52,7 @@ class WikipediaInfoboxStats:
     processed: int = 0
     generations_timed: int = 0
     waits_unattached: int = 0
+    redirected: int = 0
     no_facts_found: int = 0
     assertions_inserted: int = 0
     assertions_superseded: int = 0
@@ -60,10 +61,20 @@ class WikipediaInfoboxStats:
     def summary(self) -> str:
         return (
             f"processed={self.processed} timed={self.generations_timed} "
-            f"waits_unattached={self.waits_unattached} no_facts={self.no_facts_found} | "
+            f"waits_unattached={self.waits_unattached} redirected={self.redirected} "
+            f"no_facts={self.no_facts_found} | "
             f"assertions={self.assertions_inserted} "
             f"(superseded={self.assertions_superseded}) flags={self.flags_opened}"
         )
+
+
+def _same_subject(requested: str, resolved: str) -> bool:
+    """Underscore/space and case wobble is a rename; anything more is a
+    REDIRECT that may have changed the article's grain - the 'Honda Civic
+    Hybrid' sitelink resolves to the whole-nameplate 'Honda Civic' page,
+    whose 1972-present span must never land on one generation."""
+    normalize = lambda t: t.replace("_", " ").strip().casefold()  # noqa: E731
+    return normalize(requested) == normalize(resolved)
 
 
 def run_wikipedia_infobox_pass(session: Session) -> WikipediaInfoboxStats:
@@ -107,6 +118,32 @@ def run_wikipedia_infobox_pass(session: Session) -> WikipediaInfoboxStats:
             mark_reconciled(session, record)
             continue
         generation = session.get(Generation, generation_id)
+
+        if not _same_subject(record.payload.get("requested_title", ""), record.payload["title"]):
+            # Empty facts still run the tombstone: a span this record asserted
+            # before the redirect was recognised heals back to NULL.
+            inserted, superseded = assert_field_facts(
+                session,
+                arc_col="generation_id",
+                entity=generation,
+                coverage=COVERAGE,
+                facts={},
+                source_id=source.id,
+                record=record,
+            )
+            stats.assertions_inserted += inserted
+            stats.assertions_superseded += superseded
+            stats.redirected += 1
+            decisions.record(
+                record,
+                "waits_redirected_article",
+                detail={
+                    "requested": record.payload.get("requested_title"),
+                    "resolved": record.payload["title"],
+                },
+            )
+            mark_reconciled(session, record)
+            continue
 
         parsed = parse_infobox(record.payload["title"], record.payload.get("wikitext", ""))
         facts: dict[str, tuple[str, object]] = {}
