@@ -8,7 +8,7 @@ The engine consumes them without ever inspecting a payload.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -47,5 +47,3 @@ class MappedRecord:
     name: str | None
     assertions: tuple[Assertion, ...] = ()
     flag_requests: tuple[FlagRequest, ...] = ()
-    asserts_manufacturer_role: bool = False
-    role_evidence: dict = field(default_factory=dict)
