@@ -22,8 +22,8 @@ ladder. That changes when Wikidata models land; this ADR deliberately does
 not design that matcher.
 
 Second, **models under unmatched makes have no company to attach to.**
-Creating companies from vPIC evidence alone is a decision Gaurav has
-explicitly deferred (the parked no-match pool), so their models must wait
+Creating companies from vPIC evidence alone is a decision explicitly
+deferred in review (the parked no-match pool), so their models must wait
 without blocking anything.
 
 ## Decision

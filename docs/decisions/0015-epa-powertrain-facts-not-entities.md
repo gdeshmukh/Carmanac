@@ -57,7 +57,7 @@ That is the miscategorization machine, one level down. Instead:
 ### 1. Transmissions are facts-only from EPA, indefinitely
 
 - `trany` maps to `configurations.transmission_type_id` **only where EPA
-  is unambiguous** (Gaurav's ruling): plain automatics, shiftable
+  is unambiguous** (ruled in deliberation): plain automatics, shiftable
   S-codes, and the EV A-codes (all torque-converter-or-EV shapes in
   EPA's coding) → `automatic`; `variable gear ratios`/AV-codes → `cvt`;
   manuals → `manual`. **`AM`/`AM-S` codes assert nothing** — EPA cannot

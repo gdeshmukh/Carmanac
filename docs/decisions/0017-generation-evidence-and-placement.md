@@ -42,7 +42,7 @@ answer them very unevenly, measured live (2026-08-06):
 - autoevolution.com was evaluated as a segmentation source and is
   **parked**: robots.txt walls off AI/data crawlers wholesale and its
   terms page refuses programmatic fetches; a human read of the terms
-  (Gaurav) found them social-layer only, so the route back is a
+  found them social-layer only, so the route back is a
   permission ask, not a differently-named crawler. It also has no QID
   join, so ingesting it would open the name-matching surface the
   Tier-2/3 gate guards. Manual reference use in flag review stays
@@ -67,7 +67,7 @@ Tier 2 archival record (a revision is not re-fetchable once the page
 moves on). v1 scope: the 446 generation-relevant sitelinks (all landed,
 zero dead links).
 
-**Tier standing (Gaurav's ruling): tier never quarantines facts.**
+**Tier standing (ruled in review): tier never quarantines facts.**
 Review queues exist for identity ambiguity, not source rank. Identity
 here is settled by the sitelink, so infobox assertions write directly
 through `field_provenance` — no review gate. For generation coding there
@@ -129,7 +129,7 @@ configuration's catalogue period:
   `generation_overlap` flag carrying the candidates. Zero → the normal
   waiting state, logged, unflagged.
 - **Body evidence is a candidate VETO, not an overlap tiebreaker**
-  (Gaurav's ruling, 2026-08-06). The C190 and X290 are vastly different
+  (ruled in review, 2026-08-06). The C190 and X290 are vastly different
   cars sharing a badge — the 4-Door is not a coupe — and the overlap
   flag was only ever the fallback under year-only evidence, never the
   goal state. Where a generation's infobox asserts body styles and the
@@ -168,8 +168,8 @@ creates a generation**:
   generation entities keep minting where they exist (their QIDs remain
   the best join keys), its P179/chain structure becomes corroborating
   evidence, and Wikipedia sections mint where Wikidata is silent.
-- **Conflated filings and link completeness** (the AMG GT, ruled by
-  Gaurav): vPIC files ONE `AMG GT` whose catalogue holds two genuinely
+- **Conflated filings and link completeness** (the AMG GT ruling):
+  vPIC files ONE `AMG GT` whose catalogue holds two genuinely
   different cars — the C190/C192 sports car and the X290 4-Door — an
   artifact of Mercedes' naming, not of the sources: Wikipedia and
   Wikidata keep them fully separate (own articles, own entities;

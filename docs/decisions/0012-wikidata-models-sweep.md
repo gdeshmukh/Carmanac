@@ -81,7 +81,7 @@ id map), then descends:
 
 The mission is every production car globally, and Wikidata's ~11k
 manufacturer-linked model entities are the road there. **Approved in
-principle, deliberately not in v1** (Gaurav, 2026-07-30): the vPIC+EPA
+principle, deliberately not in v1** (ruled 2026-07-30): the vPIC+EPA
 base gives the US cars deep, multi-source data the reconciler can prove
 itself on; single-source global creation would mint thousands of rows
 with exactly one assertion behind each. The pass therefore **matches and
@@ -128,7 +128,7 @@ superseded, flagged, never unique-constrained across sources.
   would guess. Chains (P155/P156) order generations even where dates
   are absent.
 - **The shared "all E46 cars" page is a view, not an entity** — the same
-  species as a line, one level down (Gaurav's framing: membership-shaped
+  species as a line, one level down (the review's framing: membership-shaped
   and far less load-bearing than the FK spine). Under as-filed models
   the E46 concept spans several per-model generation rows (`330i`/E46,
   `M3`/E46, …), and the page renders over `generations.chassis_codes @>
