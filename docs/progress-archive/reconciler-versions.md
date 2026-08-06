@@ -19,3 +19,4 @@ it lived as a comment block in `carmanac/reconcile/policy.py` until the
 | 10 | 2026-07-31 | Name-form evidence ranks (ADR 0013): labels outrank aliases, the cross-badge guard, prefix stripping uses vPIC make names, refreshes preserve the match method in the decision log. |
 | 11 | 2026-07-31 | The year pass and the EPA attach (ADR 0014): catalogue periods under models, the first configurations, generation placement NULL and evidence-gated. |
 | 12 | 2026-07-31 | EPA powertrain facts, not entities (ADR 0015): corrected `trany` mapping (AM → NULL, AV → cvt), cng/hydrogen fuels, aspiration/flex-fuel EAV, the sole-source column refresh. |
+| 13 | 2026-08-06 | Generations company-anchored (ADR 0016): `generation_model_links` replaces the parent FK, the wd-models pass asserts links with provenance and adopts the migration's sourceless seeds by supersession. |

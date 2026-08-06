@@ -153,7 +153,6 @@ class Model(Base, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text)
 
     company: Mapped[Company] = relationship(back_populates="models")
-    generations: Mapped[list[Generation]] = relationship(back_populates="model")
 
     __table_args__ = (
         # Slug is unique *within* a company, so two companies may both have a
@@ -242,7 +241,11 @@ class ModelLineMember(Base, ProvenanceMixin):
 
 
 class Generation(Base, TimestampMixin):
-    """A generation of a model - E46, G80, XV70.
+    """A generation - E46, G80, XV70. Company-anchored index entity, not a
+    hierarchy level (ADR 0016): one E46 covers 325i/330i/M3, so a generation
+    cannot be a child of one model. Which models it spans is derived - from
+    `generation_model_links` (what sources assert) and from placed
+    configurations (what the evidence proved).
 
     This is the level enthusiasts actually search by, which is why it carries
     `chassis_codes`.
@@ -251,7 +254,7 @@ class Generation(Base, TimestampMixin):
     __tablename__ = "generations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    model_id: Mapped[int] = mapped_column(ForeignKey("models.id"), nullable=False, index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
     # One generation routinely spans several codes (E46 sedan/coupe/touring
@@ -261,14 +264,15 @@ class Generation(Base, TimestampMixin):
     end_year: Mapped[int | None] = mapped_column(SmallInteger)  # null = still in production
     summary: Mapped[str | None] = mapped_column(Text)
 
-    model: Mapped[Model] = relationship(back_populates="generations")
+    company: Mapped[Company] = relationship()
+    model_links: Mapped[list[GenerationModelLink]] = relationship(back_populates="generation")
     # Placed configurations (ADR 0014: placement is configuration-level,
     # evidence-gated). Generation pages render over these plus the
     # chassis-code views.
     configurations: Mapped[list[Configuration]] = relationship(back_populates="generation")
 
     __table_args__ = (
-        UniqueConstraint("model_id", "slug", name="uq_generations_model_id_slug"),
+        UniqueConstraint("company_id", "slug", name="uq_generations_company_id_slug"),
         # GIN on the array: "show me every E46" is the search this column exists
         # for, and `text[] @> ARRAY['E46']` cannot use a btree.
         Index("idx_generations_chassis_codes", "chassis_codes", postgresql_using="gin"),
@@ -280,6 +284,51 @@ class Generation(Base, TimestampMixin):
             "name",
             postgresql_using="gin",
             postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+    )
+
+
+class GenerationModelLink(Base, ProvenanceMixin):
+    """One source's assertion that a generation belongs to a model's history
+    (ADR 0016) - the candidate gate for placement, replacing the parent FK
+    generations used to carry.
+
+    The `model_line_members` shape: membership holds if ANY live row says so,
+    corroboration is a second live row, withdrawal is supersession. Sourceless
+    rows are migration seeds awaiting the pass's provenance-carrying
+    re-assertion.
+    """
+
+    __tablename__ = "generation_model_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    generation_id: Mapped[int] = mapped_column(
+        ForeignKey("generations.id"), nullable=False, index=True
+    )
+    model_id: Mapped[int] = mapped_column(ForeignKey("models.id"), nullable=False, index=True)
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("generation_model_links.id", name="fk_generation_model_links_superseded_by"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    generation: Mapped[Generation] = relationship(back_populates="model_links")
+    model: Mapped[Model] = relationship()
+
+    __table_args__ = (
+        *provenance_table_args(),
+        # One LIVE link assertion per (generation, model, source). NULLS NOT
+        # DISTINCT so sourceless seed rows count as one anonymous asserter.
+        Index(
+            "uq_generation_model_links_live",
+            "generation_id",
+            "model_id",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
         ),
     )
 

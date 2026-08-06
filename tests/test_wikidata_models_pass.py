@@ -23,6 +23,7 @@ from carmanac.db.models import (
     ExternalId,
     FieldProvenance,
     Generation,
+    GenerationModelLink,
     MatchDecision,
     Model,
     ModelLine,
@@ -184,7 +185,10 @@ def test_series_classed_entity_is_a_model_when_the_filing_says_so(
 
     model = db.scalars(select(Model)).one()
     generation = db.scalars(select(Generation)).one()
-    assert generation.model_id == model.id
+    assert generation.company_id == model.company_id
+    link = db.scalars(select(GenerationModelLink)).one()
+    assert (link.generation_id, link.model_id) == (generation.id, model.id)
+    assert link.source_id == wikidata_source.id and link.raw_record_id is not None
     assert (generation.slug, generation.name) == ("w205", "W205")
     assert generation.chassis_codes == ["W205"]
     assert (generation.start_year, generation.end_year) == (2014, 2021)
@@ -732,7 +736,9 @@ def test_claimant_with_p179_to_claimant_defers_to_generation(
         "the nameplate entity, not its generation, is the model's QID"
     )
     generation = db.scalars(select(Generation)).one()
-    assert generation.model_id == model.id
+    assert generation.company_id == model.company_id
+    link = db.scalars(select(GenerationModelLink)).one()
+    assert (link.generation_id, link.model_id) == (generation.id, model.id)
     assert generation.chassis_codes == ["W205"], "code extracted from the alias parenthetical"
     assert _decision(db, "Q200").outcome == "generation_created"
 

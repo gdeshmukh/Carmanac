@@ -9,8 +9,10 @@ models-sweep record (bare QID, `sweep: models` marker), the ladder is:
        match under the P176 company       make-prefix-stripped form; unique
                                           hits only, never fuzzy)
     4. line evidence (P179 members)    -> a `model_lines` row, never a model
-    5. generation evidence (P179 to a  -> a `generations` row under it
-       matched model)
+    5. generation evidence (P179 to a  -> a `generations` row under the
+       matched model)                     model's company, linked to the
+                                          model via `generation_model_links`
+                                          (ADR 0016: company-anchored)
     6. otherwise                       -> flag with candidates only when a
                                           held company + near-misses exist;
                                           else wait in raw, unflagged
@@ -54,6 +56,7 @@ from carmanac.db.models import (
     ExternalId,
     FieldProvenance,
     Generation,
+    GenerationModelLink,
     MatchDecision,
     Model,
     ModelLine,
@@ -98,6 +101,8 @@ class WikidataModelsStats:
     models_matched: int = 0
     generations_created: int = 0
     generations_refreshed: int = 0
+    generation_links_asserted: int = 0
+    generation_links_adopted: int = 0
     lines_created: int = 0
     lines_matched: int = 0
     memberships_inserted: int = 0
@@ -118,6 +123,8 @@ class WikidataModelsStats:
             f"matched={self.lines_matched} memberships={self.memberships_inserted} | "
             f"generations: created={self.generations_created} "
             f"refreshed={self.generations_refreshed} "
+            f"links={self.generation_links_asserted} "
+            f"(adopted={self.generation_links_adopted}) "
             f"line_case_waiting={self.line_generations_waiting} | "
             f"market_name_flags={self.market_name_flagged} "
             f"waits: no_held_maker={self.waits_no_held_maker} "
@@ -277,10 +284,30 @@ class _WikidataModelsPass:
             )
         }
 
-        # Generation slugs per model, for collision detection before INSERT.
-        self.generation_by_model_slug: dict[tuple[int, str], int] = {
-            (g.model_id, g.slug): g.id for g in session.scalars(select(Generation))
+        # Generation slugs per company (ADR 0016 anchoring), for collision
+        # detection before INSERT.
+        self.generation_by_company_slug: dict[tuple[int, str], int] = {
+            (g.company_id, g.slug): g.id for g in session.scalars(select(Generation))
         }
+
+        # Live generation-model links: this source's own (for idempotent
+        # re-runs) and the sourceless migration seeds (to adopt - a sourced
+        # re-assertion supersedes the anonymous row rather than sitting
+        # beside it forever).
+        self.live_generation_links: set[tuple[int, int]] = set()
+        self.anonymous_links: dict[tuple[int, int], int] = {}
+        for link_id, generation_id, model_id, source_id in session.execute(
+            select(
+                GenerationModelLink.id,
+                GenerationModelLink.generation_id,
+                GenerationModelLink.model_id,
+                GenerationModelLink.source_id,
+            ).where(GenerationModelLink.superseded_by.is_(None))
+        ):
+            if source_id == self.source.id:
+                self.live_generation_links.add((generation_id, model_id))
+            elif source_id is None:
+                self.anonymous_links[(generation_id, model_id)] = link_id
 
     def _load_open_flags(self) -> None:
         """Questions already open, so a re-run does not ask them twice."""
@@ -931,15 +958,41 @@ class _WikidataModelsPass:
 
     # --- rung 5-6: generations and the rest ----------------------------------
 
+    def _assert_generation_link(self, generation_id: int, model_id: int, subject: _Subject) -> None:
+        """One live sourced link per (generation, model). A sourced assertion
+        supersedes the pair's anonymous migration seed - the seed said only
+        "the old FK pointed here"; this row says who asserts it and from
+        which record."""
+        if (generation_id, model_id) in self.live_generation_links:
+            return
+        link = GenerationModelLink(
+            generation_id=generation_id,
+            model_id=model_id,
+            source_id=self.source.id,
+            raw_record_id=subject.record.id,
+            scraped_at=subject.record.last_seen_at,
+        )
+        self.session.add(link)
+        anonymous_id = self.anonymous_links.pop((generation_id, model_id), None)
+        if anonymous_id is not None:
+            self.session.flush()
+            self.session.get(GenerationModelLink, anonymous_id).superseded_by = link.id
+            self.stats.generation_links_adopted += 1
+        self.live_generation_links.add((generation_id, model_id))
+        self.stats.generation_links_asserted += 1
+
     def _refresh_generation(self, subject: _Subject) -> None:
         generation = self.session.get(Generation, self.generation_by_qid[subject.entity.qid])
-        model = self.models[generation.model_id]
         display = (
-            self._strip(subject.entity.label, model.company_id)
+            self._strip(subject.entity.label, generation.company_id)
             if subject.entity.label
             else generation.name
         )
         self._generation_facts(generation, subject, display)
+        for target in subject.entity.series_of:
+            model_id = self.model_by_qid.get(target)
+            if model_id is not None:
+                self._assert_generation_link(generation.id, model_id, subject)
         self.stats.generations_refreshed += 1
         self._dismiss_flags(subject.entity.qid, "resolves_to_existing_generation")
         self._decide(
@@ -954,7 +1007,7 @@ class _WikidataModelsPass:
         model = self.models[model_id]
         display = self._strip(entity.label, model.company_id)
         slug = slugify(display, entity.qid)
-        occupant = self.generation_by_model_slug.get((model_id, slug))
+        occupant = self.generation_by_company_slug.get((model.company_id, slug))
         if occupant is not None:
             # Two source entities, one slug, one model: usually Wikidata's
             # duplicate-entity disease. Flag - the models-pass rule: never
@@ -977,10 +1030,10 @@ class _WikidataModelsPass:
                 {"model": self._slug_pair(model_id), "slug": slug},
             )
             return
-        generation = Generation(model_id=model_id, slug=slug, name=display)
+        generation = Generation(company_id=model.company_id, slug=slug, name=display)
         self.session.add(generation)
         self.session.flush()
-        self.generation_by_model_slug[(model_id, slug)] = generation.id
+        self.generation_by_company_slug[(model.company_id, slug)] = generation.id
         self.session.add(
             ExternalId(
                 generation_id=generation.id,
@@ -990,6 +1043,7 @@ class _WikidataModelsPass:
         )
         self.session.flush()
         self.generation_by_qid[entity.qid] = generation.id
+        self._assert_generation_link(generation.id, model_id, subject)
         self._generation_facts(generation, subject, display)
         self.stats.generations_created += 1
         self._dismiss_flags(entity.qid, f"generation_created:{self._slug_pair(model_id)}/{slug}")
