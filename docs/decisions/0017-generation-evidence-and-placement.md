@@ -2,8 +2,12 @@
 
 - Status: §1–3 Accepted and implemented (2026-08-06, same branch as
   ADR 0016 — the machinery ran live and its first run's two lessons are
-  folded in as amendments); **§4 Proposed** — it revises ADR 0012's
-  minting rule and awaits review before any implementation.
+  folded in as amendments); **§4 approved in principle**
+  (review, 2026-08-06 — the ADR 0012 "approved in principle,
+  deliberately not in v1" pattern): the direction stands, and its own
+  implementation branch proves it out — probe-first on the full-article
+  fetch and the section parse, with the keying/dedup/naming questions
+  settled against real pages before any generation is minted.
 - Date: 2026-08-06
 - Depends on: ADR 0016 (company-anchored generations,
   `generation_model_links` as the candidate gate), ADR 0014 (placement
