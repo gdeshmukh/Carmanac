@@ -54,6 +54,11 @@ FLAG_KINDS = (
     # trigram-generated candidates in `detail` for the reviewer. Resolving
     # one grows the curated match registry and the matcher's labeled set.
     "match_review",
+    # A configuration whose period sits inside TWO linked generations' spans
+    # (ADR 0016 §5): the year alone must not choose - the 2019 AMG GT holds
+    # C190 coupes beside X290 4-doors. Candidates in `detail`; placement
+    # stays NULL until body style or chassis codes discriminate.
+    "generation_overlap",
 )
 
 # Kinds that attach to a raw record rather than an entity (the arc is empty).

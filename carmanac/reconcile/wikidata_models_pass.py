@@ -63,12 +63,14 @@ from carmanac.db.models import (
     ModelLineMember,
     RawRecord,
     ReconciliationFlag,
+    Source,
 )
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikidata.models import SWEEP_MARKER
+from carmanac.ingest.wikipedia import SOURCE_NAME as WIKIPEDIA_SOURCE_NAME
 from carmanac.reconcile import policy
 from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled, trigram_candidates
-from carmanac.reconcile.engine import current_records, slugify, supersede
+from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata_models
 from carmanac.reconcile.sources.wikidata_models import (
@@ -159,6 +161,7 @@ class _WikidataModelsPass:
         self._load_companies()
         self._load_models()
         self._load_structure()
+        self._load_wikipedia_precedence()
         self._load_open_flags()
         self._load_subjects()
 
@@ -309,6 +312,28 @@ class _WikidataModelsPass:
             elif source_id is None:
                 self.anonymous_links[(generation_id, model_id)] = link_id
 
+    def _load_wikipedia_precedence(self) -> None:
+        """Generation fields the infobox pass asserts live (ADR 0016 §4):
+        infobox assertions outrank label-derived ones, so this pass keeps its
+        assertions current but leaves those columns alone."""
+        self.wikipedia_generation_fields: dict[int, frozenset[str]] = {}
+        wikipedia_id = self.session.scalar(
+            select(Source.id).where(Source.name == WIKIPEDIA_SOURCE_NAME)
+        )
+        if wikipedia_id is None:
+            return
+        rows: dict[int, set[str]] = {}
+        for generation_id, field_name in self.session.execute(
+            select(FieldProvenance.generation_id, FieldProvenance.field_name).where(
+                FieldProvenance.generation_id.isnot(None),
+                FieldProvenance.source_id == wikipedia_id,
+                FieldProvenance.superseded_by.is_(None),
+                FieldProvenance.observed_value.isnot(None),
+            )
+        ):
+            rows.setdefault(generation_id, set()).add(field_name)
+        self.wikipedia_generation_fields = {k: frozenset(v) for k, v in rows.items()}
+
     def _load_open_flags(self) -> None:
         """Questions already open, so a re-run does not ask them twice."""
         session = self.session
@@ -410,60 +435,23 @@ class _WikidataModelsPass:
         coverage: tuple[str, ...],
         facts: dict[str, tuple[str, object]],
         record: RawRecord,
+        skip_projection: frozenset[str] = frozenset(),
     ) -> None:
-        """Upsert this record's assertions for one entity into
-        `field_provenance` (the engine's supersede semantics), tombstone
-        coverage fields the source went quiet on, and project winners onto
-        the entity columns. Single-source projection, like the models pass:
-        §6's full ladder becomes exercisable when a second source asserts at
-        this level."""
-        live: dict[str, FieldProvenance] = {
-            row.field_name: row
-            for row in self.session.scalars(
-                select(FieldProvenance).where(
-                    getattr(FieldProvenance, arc_col) == target.id,
-                    FieldProvenance.source_id == self.source.id,
-                    FieldProvenance.superseded_by.is_(None),
-                    FieldProvenance.field_name.in_(coverage),
-                )
-            )
-        }
-        for field_name in coverage:
-            fact = facts.get(field_name)
-            row = live.get(field_name)
-            if fact is None:
-                if row is not None and row.observed_value is not None:
-                    supersede(
-                        self.session,
-                        row,
-                        {
-                            arc_col: target.id,
-                            "field_name": field_name,
-                            "observed_value": None,
-                            "source_id": self.source.id,
-                            "raw_record_id": record.id,
-                            "scraped_at": record.last_seen_at,
-                        },
-                    )
-                    setattr(target, field_name, None)
-                continue
-            observed, projected = fact
-            values = {
-                arc_col: target.id,
-                "field_name": field_name,
-                "observed_value": observed,
-                "source_id": self.source.id,
-                "raw_record_id": record.id,
-                "scraped_at": record.last_seen_at,
-            }
-            if row is None:
-                self.session.add(FieldProvenance(**values))
-                self.stats.assertions_inserted += 1
-            elif row.observed_value != observed:
-                supersede(self.session, row, values)
-                self.stats.assertions_inserted += 1
-                self.stats.assertions_superseded += 1
-            setattr(target, field_name, projected)
+        """The engine's shared upsert-tombstone-project (single-source
+        projection, like the models pass: §6's full ladder becomes
+        exercisable when a second source asserts at this level)."""
+        inserted, superseded = assert_field_facts(
+            self.session,
+            arc_col=arc_col,
+            entity=target,
+            coverage=coverage,
+            facts=facts,
+            source_id=self.source.id,
+            record=record,
+            skip_projection=skip_projection,
+        )
+        self.stats.assertions_inserted += inserted
+        self.stats.assertions_superseded += superseded
 
     def _enrich_model(self, model_id: int, subject: _Subject) -> None:
         model = self.models[model_id]
@@ -538,7 +526,14 @@ class _WikidataModelsPass:
                     subject.record,
                 )
 
-        self._assert_facts("generation_id", generation, GENERATION_COVERAGE, facts, subject.record)
+        self._assert_facts(
+            "generation_id",
+            generation,
+            GENERATION_COVERAGE,
+            facts,
+            subject.record,
+            skip_projection=self.wikipedia_generation_fields.get(generation.id, frozenset()),
+        )
 
     # --- rungs 1-3: match ----------------------------------------------------
 
