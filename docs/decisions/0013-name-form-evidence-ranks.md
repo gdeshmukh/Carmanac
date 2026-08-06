@@ -22,7 +22,7 @@ and market names as *aliases* on one entity — measured live:
   extra claimants only via *aliases* — rebadges (Raize, FR-S, GR86, Solterra,
   Lexus LX) and market names (Hilux Surf, Kluger, Navara, Harrier).
 
-The ruling (Gaurav, 2026-07-31): rebadges are **different cars** — same
+The ruling (review, 2026-07-31): rebadges are **different cars** — same
 underneath, sold under another badge (the VW-group shape) — and must resolve
 into their own brand's model buckets, with the relationship recorded as a
 `vehicle_derivations` `rebadged` fact once both sides exist, never as a

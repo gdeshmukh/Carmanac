@@ -8,7 +8,7 @@
   mixed-granularity rules here all stand unchanged.
 - Date: 2026-07-29 (rewritten same day for clarity after first review)
 
-Review notes (Gaurav, 2026-07-29): (1) aggregation above the 4th level is
+Review notes (2026-07-29): (1) aggregation above the 4th level is
 untouched — the generation page stays the one shared page (the E46 M3 page
 lists all US model years AND Euro periods beneath it); granularity is
 additive below, never a replacement for the shared views. (2) Chassis-code

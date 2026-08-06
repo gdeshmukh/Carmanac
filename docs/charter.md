@@ -36,9 +36,14 @@ generations, catalogue periods and configurations — every fact carrying
 field-level provenance back to the raw record that asserted it. See
 `PROGRESS.md` for live counts and the open review queues.
 
-Next: the generation-placement pass (the goal level's evidence pass — every
-`configurations.generation_id` is NULL until it exists), then the source
-depth already inventoried on vPIC and EPA.
+The generation-placement pass is live (ADR 0016 restructured generations;
+ADR 0017 owns the evidence): generations re-anchored to companies,
+Wikipedia infoboxes supply generation time via sitelinks, and the first
+configurations are placed by unique dated overlap — everything ambiguous or
+under-evidenced waits with a logged reason. Next: ADR 0017 §4's proposed
+answer to the existence bottleneck (section-minted generations from
+nameplate articles; Wikidata demoted from gatekeeper to contributor), then
+the source depth already inventoried on vPIC and EPA.
 
 ## Architecture Invariants
 
@@ -110,9 +115,16 @@ Core tables (Phase 1 target):
 - `model_lines`, `model_line_members` — "3 Series" as an aggregation over
   as-filed models, not a level in the spine (ADR 0011 §2, ADR 0012 §4).
   Membership is a per-source assertion; lines hold no external ids.
-- `generations` — generation of a model (E46, G80, etc.). FK → `models`. Holds
+- `generations` — a generation (E46, G80, etc.). FK → `companies`
+  (ADR 0016): one E46 covers 325i/330i/M3, so a generation is a
+  company-anchored index/display entity, not a child of one model. Holds
   chassis codes. The **goal** level, not a mandatory one: placement is a
-  nullable, evidence-gated fact on `configurations` (ADR 0014).
+  nullable, evidence-gated fact on `configurations` (ADR 0014), and which
+  models a generation spans is derived from placements plus
+  `generation_model_links`.
+- `generation_model_links` — per-source assertions that a generation belongs
+  to a model's history (the `model_line_members` shape). The placement
+  pass's candidate gate: links are evidence, never inference.
 - `catalogue_periods` (formerly `model_years`; ADR 0009, re-parented by
   ADR 0014) — pure time under a **model**: a US model year, a production
   period, or a facelift phase, with `period_kinds` as the closed set.

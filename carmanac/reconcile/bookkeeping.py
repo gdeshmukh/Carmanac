@@ -77,11 +77,33 @@ class DecisionLog:
         method: str | None = None,
         detail: dict | None = None,
     ) -> None:
-        self._rows[record.external_id] = {
+        self.record_key(
+            record.external_id,
+            outcome,
+            raw_record_id=record.id,
+            rung=rung,
+            method=method,
+            detail=detail,
+        )
+
+    def record_key(
+        self,
+        external_id: str,
+        outcome: str,
+        *,
+        raw_record_id: int | None = None,
+        rung: str | None = None,
+        method: str | None = None,
+        detail: dict | None = None,
+    ) -> None:
+        """Keyed variant for passes whose decision subject is one of OUR rows
+        rather than a source record (generation placement decides per
+        configuration; the deciding raw record is evidence, not the key)."""
+        self._rows[external_id] = {
             "source_id": self.source_id,
             "pass_name": self.pass_name,
-            "external_id": record.external_id,
-            "raw_record_id": record.id,
+            "external_id": external_id,
+            "raw_record_id": raw_record_id,
             "rung": rung,
             "method": method,
             "outcome": outcome,

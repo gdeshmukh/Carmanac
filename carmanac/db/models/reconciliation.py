@@ -54,6 +54,13 @@ FLAG_KINDS = (
     # trigram-generated candidates in `detail` for the reviewer. Resolving
     # one grows the curated match registry and the matcher's labeled set.
     "match_review",
+    # A configuration whose period sits inside TWO linked generations' spans
+    # (ADR 0017 §3): the year alone must not choose. The fallback when no
+    # body signal exists, never the goal state - body evidence is a
+    # candidate veto, so a 4-door is never a C190 candidate in the first
+    # place. Candidates in `detail`; placement stays NULL until finer
+    # evidence discriminates.
+    "generation_overlap",
 )
 
 # Kinds that attach to a raw record rather than an entity (the arc is empty).

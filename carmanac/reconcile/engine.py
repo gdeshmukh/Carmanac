@@ -160,6 +160,80 @@ def supersede(
     return successor
 
 
+def assert_field_facts(
+    session: Session,
+    *,
+    arc_col: str,
+    entity,
+    coverage: tuple[str, ...],
+    facts: dict[str, tuple[str, object]],
+    source_id: int,
+    record,
+    skip_projection: frozenset[str] = frozenset(),
+) -> tuple[int, int]:
+    """Upsert one record's assertions for one entity into `field_provenance`,
+    tombstone coverage fields the source went quiet on, and project winners
+    onto the entity columns. Returns (inserted, superseded).
+
+    `skip_projection` is how a field-scoped precedence ruling gets mechanical
+    teeth (ADR 0017 §2: infobox assertions outrank label-derived ones): the
+    outranked pass still keeps its assertion current in `field_provenance` -
+    the evidence trail must not thin out - but leaves the entity column to
+    the source that outranks it.
+    """
+    inserted = superseded = 0
+    live: dict[str, FieldProvenance] = {
+        row.field_name: row
+        for row in session.scalars(
+            select(FieldProvenance).where(
+                getattr(FieldProvenance, arc_col) == entity.id,
+                FieldProvenance.source_id == source_id,
+                FieldProvenance.superseded_by.is_(None),
+                FieldProvenance.field_name.in_(coverage),
+            )
+        )
+    }
+    for field_name in coverage:
+        fact = facts.get(field_name)
+        row = live.get(field_name)
+        if fact is None:
+            if row is not None and row.observed_value is not None:
+                supersede(
+                    session,
+                    row,
+                    {
+                        arc_col: entity.id,
+                        "field_name": field_name,
+                        "observed_value": None,
+                        "source_id": source_id,
+                        "raw_record_id": record.id,
+                        "scraped_at": record.last_seen_at,
+                    },
+                )
+                if field_name not in skip_projection:
+                    setattr(entity, field_name, None)
+            continue
+        observed, projected = fact
+        values = {
+            arc_col: entity.id,
+            "field_name": field_name,
+            "observed_value": observed,
+            "source_id": source_id,
+            "raw_record_id": record.id,
+            "scraped_at": record.last_seen_at,
+        }
+        if row is None:
+            session.add(FieldProvenance(**values))
+            inserted += 1
+        elif row.observed_value != observed:
+            supersede(session, row, values)
+            inserted += 1
+            superseded += 1
+        if field_name not in skip_projection:
+            setattr(entity, field_name, projected)
+    return inserted, superseded
+
+
 class CompaniesPass:
     """One run of the companies pass over a source's records.
 

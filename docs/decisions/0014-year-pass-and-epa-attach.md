@@ -3,7 +3,7 @@
 - Status: Accepted (2026-07-31, as amended — goal-per-car doctrine;
   configuration-level generation placement)
 - Date: 2026-07-31
-- Deliberation: 2026-07-31 fundamentals review (Gaurav) — the hierarchy is
+- Deliberation: 2026-07-31 fundamentals review — the hierarchy is
   a **goal per car, not a form every car must fill**; endorsed. §1 amended
   same day: the generation link moved from periods to configurations after
   the AMG GT split-year finding.
@@ -186,7 +186,7 @@ lines.
   configuration, rendered when known and degrading gracefully when not.
 - `RECONCILER_VERSION` bumps; two new pass names in `match_decisions`.
 - First configurations exist (~49.5k), which unblocks the configuration
-  page work (F2) whenever Gaurav re-opens it — and makes the EAV
+  page work (F2) whenever it re-opens — and makes the EAV
   benchmark question (charter risk) testable with real rows.
 - The line-case generations and the engine/transmission entity passes
   are explicitly NOT this ADR; each gets its own when its evidence
