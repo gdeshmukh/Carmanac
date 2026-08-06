@@ -126,9 +126,19 @@ configuration's catalogue period:
   mechanically as spans land.
 - Exactly one candidate → place, with field-level provenance to the raw
   record whose span decided it. Two or more → NULL + one
-  `generation_overlap` flag carrying the candidates (the 2019 AMG GT
-  case: the year alone must not choose; body-style discrimination is the
-  named follow-up). Zero → the normal waiting state, logged, unflagged.
+  `generation_overlap` flag carrying the candidates. Zero → the normal
+  waiting state, logged, unflagged.
+- **Body evidence is a candidate VETO, not an overlap tiebreaker**
+  (Gaurav's ruling, 2026-08-06). The C190 and X290 are vastly different
+  cars sharing a badge — the 4-Door is not a coupe — and the overlap
+  flag was only ever the fallback under year-only evidence, never the
+  goal state. Where a generation's infobox asserts body styles and the
+  configuration carries a contradicting body signal (trim strings today;
+  EPA's ~100%-filled size class in raw, unconsumed, is the stronger
+  candidate), the generation is **not a candidate** regardless of year.
+  Where candidates differ in body but the configuration carries no body
+  signal, placement waits rather than guesses. Follow-up implementation,
+  same rule discipline as the rest of §3.
 - The pass is the **sole placer** (ADR 0015's sole-source posture): a
   recomputed answer supersedes the old one, including back to NULL, with
   the trail kept.
@@ -158,6 +168,26 @@ creates a generation**:
   generation entities keep minting where they exist (their QIDs remain
   the best join keys), its P179/chain structure becomes corroborating
   evidence, and Wikipedia sections mint where Wikidata is silent.
+- **Conflated filings and link completeness** (the AMG GT, ruled by
+  Gaurav): vPIC files ONE `AMG GT` whose catalogue holds two genuinely
+  different cars — the C190/C192 sports car and the X290 4-Door — an
+  artifact of Mercedes' naming, not of the sources: Wikipedia and
+  Wikidata keep them fully separate (own articles, own entities;
+  Q50368653 is in the sweep). Section-minting the sports car's article
+  yields C190/R190 and C192 *only* — it can never mint the X290 into
+  the wrong car. But that leaves a trap this section must close: with
+  only C190 linked, a 2019 4-door configuration would *uniquely*
+  year-match it, and the undated-competitor guard cannot fire against a
+  car that is not linked at all. The answer is twofold: the §3 body
+  veto (a 4-door is never a C190 candidate), and representing the
+  sibling honestly — the X290 minted as its **own** company-anchored
+  generation from its **own** article, linked to the as-filed model
+  because the link means "this filing's catalogue contains this
+  generation's cars" (true of vPIC/EPA). That link is never fabricated
+  by section parsing; it arrives from the sibling's own article plus a
+  curated judgment. End state: coupes place into C190, 4-doors into
+  X290, and `generation_overlap` fires only for rows carrying no body
+  signal.
 - Open questions the review must settle before implementation:
   - **Keying**: section headings rename; anchor spans (`id="S13"`) are
     deliberately maintained but not universal. Candidate key: the
@@ -182,9 +212,10 @@ creates a generation**:
   raise (~125 more models' generations mineable at current sampling,
   against 51 covered today).
 - The proof car stays honestly NULL until §4 lands: the AMG GT has no
-  generation rows to place into. With section minting it gains C190 and
-  X290 — and its 2019 coupes become exactly the `generation_overlap`
-  flag ADR 0014 anticipated, discriminated later by body style.
+  generation rows to place into. With §4 plus the body veto, its coupes
+  place into C190 and the 4-doors into X290 — no overlap flag, because
+  they were never each other's candidates. The flag remains only for
+  rows with no body signal.
 - Wikipedia's demotion of Wikidata here is evidence-driven, recorded,
   and reversible per field through provenance — no raw data is
   discarded either way (ADR 0004).

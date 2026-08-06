@@ -22,8 +22,10 @@ nothing (the first live run placed a 1991 Celica convertible into
 undated competitors hold the configuration in `waits_undated_competitor`
 until their spans land. Placement cites the raw record whose span decided
 it. Two or more candidates flag `generation_overlap` per (model, period)
-cluster - the 2019 AMG GT lands there by design. Zero is the normal state,
-logged, unflagged.
+cluster - the fallback when the year is the only evidence, never the goal
+state (ADR 0017 §3: body evidence is a candidate veto - a 4-door is never
+a C190 candidate - so the flag remains only for rows with no body signal).
+Zero is the normal state, logged, unflagged.
 
 The pass is the sole placer (ADR 0015's sole-source posture): when the
 recomputed answer changes - evidence moved, or ambiguity appeared - the old
