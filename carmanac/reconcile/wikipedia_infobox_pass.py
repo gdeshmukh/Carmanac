@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import ExternalId, Generation, ReconciliationFlag, Source
@@ -57,6 +57,7 @@ class WikipediaInfoboxStats:
     assertions_inserted: int = 0
     assertions_superseded: int = 0
     flags_opened: int = 0
+    flags_dismissed: int = 0
 
     def summary(self) -> str:
         return (
@@ -64,7 +65,8 @@ class WikipediaInfoboxStats:
             f"waits_unattached={self.waits_unattached} redirected={self.redirected} "
             f"no_facts={self.no_facts_found} | "
             f"assertions={self.assertions_inserted} "
-            f"(superseded={self.assertions_superseded}) flags={self.flags_opened}"
+            f"(superseded={self.assertions_superseded}) "
+            f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
         )
 
 
@@ -95,9 +97,11 @@ def run_wikipedia_infobox_pass(session: Session) -> WikipediaInfoboxStats:
         )
     }
 
-    # Open parse flags per (generation, field), so re-runs do not re-ask.
-    open_flags: set[tuple[int, str]] = {
-        (flag.generation_id, flag.field_name)
+    # Open parse flags per (generation, field), so re-runs do not re-ask -
+    # and so a field that starts parsing (the labeled-defer amendment) can
+    # dismiss the question it used to raise.
+    open_flags: dict[tuple[int, str], ReconciliationFlag] = {
+        (flag.generation_id, flag.field_name): flag
         for flag in session.scalars(
             select(ReconciliationFlag).where(
                 ReconciliationFlag.kind == "implausible_value",
@@ -109,6 +113,11 @@ def run_wikipedia_infobox_pass(session: Session) -> WikipediaInfoboxStats:
     }
 
     for record in current_records(session, source.id):
+        # Kinds are told apart by the namespaced id, never payload shape (the
+        # 2026-07-29 lesson): full `article:` records belong to the sections
+        # pass.
+        if not record.external_id.startswith("infobox:"):
+            continue
         stats.processed += 1
         qid = record.payload["qid"]
         generation_id = generation_by_qid.get(qid)
@@ -157,21 +166,36 @@ def run_wikipedia_infobox_pass(session: Session) -> WikipediaInfoboxStats:
         if code_source and codes:
             facts["chassis_codes"] = ("|".join(codes), codes)
 
+        failed_fields = {field_name for field_name, _, _ in parsed.failures}
+        for field_name, parsed_span in (
+            ("production", parsed.production),
+            ("model years", parsed.model_years),
+        ):
+            flag = open_flags.get((generation.id, field_name))
+            if parsed_span is not None and field_name not in failed_fields and flag is not None:
+                flag.status = "dismissed"
+                flag.resolved_at = func.now()
+                flag.detail = {
+                    **(flag.detail or {}),
+                    "resolution": "parses_under_labeled_defer_amendment",
+                }
+                del open_flags[(generation.id, field_name)]
+                stats.flags_dismissed += 1
+
         for field_name, reason, raw in parsed.failures:
             key = (generation.id, field_name)
             if key in open_flags:
                 continue
-            session.add(
-                ReconciliationFlag(
-                    kind="implausible_value",
-                    generation_id=generation.id,
-                    field_name=field_name,
-                    detail={"reason": reason, "raw": raw, "title": parsed.title, "qid": qid},
-                    source_id=source.id,
-                    raw_record_id=record.id,
-                )
+            flag = ReconciliationFlag(
+                kind="implausible_value",
+                generation_id=generation.id,
+                field_name=field_name,
+                detail={"reason": reason, "raw": raw, "title": parsed.title, "qid": qid},
+                source_id=source.id,
+                raw_record_id=record.id,
             )
-            open_flags.add(key)
+            session.add(flag)
+            open_flags[key] = flag
             stats.flags_opened += 1
 
         inserted, superseded = assert_field_facts(

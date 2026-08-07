@@ -61,6 +61,13 @@ FLAG_KINDS = (
     # place. Candidates in `detail`; placement stays NULL until finer
     # evidence discriminates.
     "generation_overlap",
+    # A nameplate article whose per-generation sections could not be safely
+    # minted or reconciled (ADR 0017 §4): duplicate/non-contiguous ordinals,
+    # a slug collision, or sections that reconcile to none of the model's
+    # existing generations. Model-scoped, all-or-nothing: minting the
+    # parseable sections while skipping one would hide a real competitor
+    # from the placement guards. Headings and the failure in `detail`.
+    "section_generation_review",
 )
 
 # Kinds that attach to a raw record rather than an entity (the arc is empty).

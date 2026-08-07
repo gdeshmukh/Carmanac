@@ -33,6 +33,14 @@ _YEAR_RANGE = re.compile(
 _YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
 _TITLE_PARENTHETICAL = re.compile(r"\(([^()]*)\)\s*$")
 
+# Segment boundaries inside a multi-entry field value: plainlist/ubl items,
+# <br> breaks, raw lines. Labeled-defer (ADR 0017 §4 amendment) reads the
+# field per segment, not per range.
+_SEGMENT_SPLIT = re.compile(
+    r"<br\s*/?>|\n\s*\*|\{\{\s*plainlist\s*\||\{\{\s*ubl\s*\||\}\}|\n", re.IGNORECASE
+)
+_PAREN_LABEL = re.compile(r"\([^()]*\)")
+
 
 @dataclass(frozen=True)
 class Span:
@@ -81,23 +89,47 @@ def infobox_field(wikitext: str, name: str) -> str | None:
     return "\n".join(value).strip() or None
 
 
+def _make_span(start_s: str, end_s: str) -> tuple[Span | None, str | None]:
+    end = int(end_s) if end_s.isdigit() else None
+    if end is not None and end < int(start_s):
+        return None, "end_before_start"
+    return Span(int(start_s), end), None
+
+
+def _unlabeled_range(cleaned: str) -> tuple[str, str] | None:
+    """The labeled-defer rule (ADR 0017 §4 amendment): a field listing one
+    UNLABELED range beside variant/market-labeled lines ('2021–2023 (AMG GT
+    Black Series)') asserts the unlabeled one - the field's own claim, with
+    the labeled lines as annotations about sub-series. Per-body and per-plant
+    lists label every line, so they still reduce to nothing and flag."""
+    hits: list[tuple[str, str]] = []
+    for segment in _SEGMENT_SPLIT.split(cleaned):
+        ranges = _YEAR_RANGE.findall(segment)
+        if not ranges:
+            continue
+        if _PAREN_LABEL.search(_YEAR_RANGE.sub(" ", segment)):
+            continue
+        hits.extend(ranges)
+        if len(hits) > 1:
+            return None
+    return hits[0] if len(hits) == 1 else None
+
+
 def parse_span(raw: str) -> tuple[Span | None, str | None]:
-    """(span, failure_reason). Exactly one range - or one bare year - parses;
-    anything else is the reviewer's problem, not a guess."""
+    """(span, failure_reason). Exactly one range - or one bare year, or one
+    unlabeled range among labeled ones - parses; anything else is the
+    reviewer's problem, not a guess."""
     cleaned = _COMMENT.sub(" ", _REF.sub(" ", raw))
     ranges = _YEAR_RANGE.findall(cleaned)
     if len(ranges) == 1:
-        start_s, end_s = ranges[0]
-        end = int(end_s) if end_s.isdigit() else None
-        if end is not None and end < int(start_s):
-            return None, "end_before_start"
-        return Span(int(start_s), end), None
+        return _make_span(*ranges[0])
     if len(ranges) > 1:
         distinct = {(s, e.lower() if not e.isdigit() else e) for s, e in ranges}
         if len(distinct) == 1:
-            start_s, end_s = ranges[0]
-            end = int(end_s) if end_s.isdigit() else None
-            return Span(int(start_s), end), None
+            return _make_span(*ranges[0])
+        unlabeled = _unlabeled_range(cleaned)
+        if unlabeled is not None:
+            return _make_span(*unlabeled)
         return None, "multiple_ranges"
     years = _YEAR.findall(cleaned)
     if len(set(years)) == 1:

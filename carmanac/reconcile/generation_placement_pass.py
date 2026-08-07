@@ -23,9 +23,18 @@ undated competitors hold the configuration in `waits_undated_competitor`
 until their spans land. Placement cites the raw record whose span decided
 it. Two or more candidates flag `generation_overlap` per (model, period)
 cluster - the fallback when the year is the only evidence, never the goal
-state (ADR 0017 §3: body evidence is a candidate veto - a 4-door is never
-a C190 candidate - so the flag remains only for rows with no body signal).
-Zero is the normal state, logged, unflagged.
+state. Zero is the normal state, logged, unflagged.
+
+Body evidence is a candidate VETO, never an overlap tiebreaker (ADR 0017
+§3/§4): a generation whose every asserted body contradicts the
+configuration's door signal is not a candidate at all - a 4-door is never
+a C190 candidate - and the veto strikes before both the containment test
+and the undated count, so a contradicting undated sibling cannot hold a
+placement hostage either. The configuration's signal comes from its EPA
+raw record (VClass "Two Seaters"; the pv/lv door-volume fills) with
+explicit body words in the trim string as fallback; the generation's
+bodies come from its landed article's infobox at decision time. The
+overlap flag remains only for rows carrying no body signal.
 
 The pass is the sole placer (ADR 0015's sole-source posture): when the
 recomputed answer changes - evidence moved, or ambiguity appeared - the old
@@ -56,7 +65,19 @@ from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikipedia import SOURCE_NAME
 from carmanac.reconcile.bookkeeping import DecisionLog
 from carmanac.reconcile.engine import supersede
-from carmanac.reconcile.sources.wikipedia_infobox import Span, parse_infobox
+from carmanac.reconcile.sources.wikipedia_infobox import (
+    Span,
+    infobox_field,
+    parse_infobox,
+    parse_span,
+)
+from carmanac.reconcile.sources.wikipedia_sections import (
+    BodySignal,
+    epa_body_signal,
+    generation_doors,
+    parse_article,
+    trim_body_signal,
+)
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +97,7 @@ class GenerationPlacementStats:
     undated_competitor: int = 0
     overlap_flagged: int = 0
     withdrawn: int = 0
+    body_vetoed: int = 0
     flags_opened: int = 0
     flags_dismissed: int = 0
 
@@ -84,7 +106,8 @@ class GenerationPlacementStats:
             f"configurations={self.configurations} placed={self.placed} "
             f"already={self.already_placed} no_candidate={self.unplaced_no_candidate} "
             f"undated_competitor={self.undated_competitor} "
-            f"overlap={self.overlap_flagged} withdrawn={self.withdrawn} | "
+            f"overlap={self.overlap_flagged} withdrawn={self.withdrawn} "
+            f"body_vetoed={self.body_vetoed} | "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
         )
 
@@ -115,15 +138,19 @@ class _PlacementPass:
         ):
             self.links.setdefault(model_id, []).append(generation_id)
 
+        self.model_year_spans: dict[int, tuple[Span, int]] = {}
+        self.generation_doors: dict[int, frozenset[int]] = {}
         self._load_model_year_spans()
+        self._load_section_evidence()
         self._load_span_provenance()
+        self._load_body_signals()
         self._load_open_flags()
         self._load_live_placements()
 
     def _load_model_year_spans(self) -> None:
-        """Per generation: the infobox `model_years` span, parsed from the
-        raw record its QID's sitelink landed (decision-time read, ADR §4)."""
-        self.model_year_spans: dict[int, tuple[Span, int]] = {}
+        """Per QID-attached generation: the infobox `model_years` span parsed
+        from its landed section-0 record, and the door counts its
+        `body_style` asserts (decision-time reads, ADR §3/§4)."""
         wikidata_id = self.session.scalar(select(Source.id).where(Source.name == "Wikidata"))
         qid_by_generation: dict[str, int] = {
             qid: generation_id
@@ -143,9 +170,89 @@ class _PlacementPass:
             )
         ):
             generation_id = qid_by_generation[record.payload["qid"]]
-            parsed = parse_infobox(record.payload["title"], record.payload.get("wikitext", ""))
+            wikitext = record.payload.get("wikitext", "")
+            parsed = parse_infobox(record.payload["title"], wikitext)
             if parsed.model_years is not None:
                 self.model_year_spans[generation_id] = (parsed.model_years, record.id)
+            doors = generation_doors(None, wikitext)
+            if doors:
+                self.generation_doors[generation_id] = doors
+
+    def _load_section_evidence(self) -> None:
+        """Per section-born generation (`section:<QID>#<ordinal>` keys): the
+        same decision-time reads, from its section of the landed article -
+        `model_years` from the section's infobox, doors from its `body_style`
+        with the article's top infobox as the nameplate-scope fallback."""
+        by_qid: dict[str, dict[int, int]] = {}
+        for external_id, generation_id in self.session.execute(
+            select(ExternalId.external_id, ExternalId.generation_id).where(
+                ExternalId.source_id == self.source.id,
+                ExternalId.generation_id.isnot(None),
+                ExternalId.external_id.like("section:%"),
+            )
+        ):
+            qid, _, ordinal = external_id.removeprefix("section:").partition("#")
+            by_qid.setdefault(qid, {})[int(ordinal)] = generation_id
+        if not by_qid:
+            return
+        for record in self.session.scalars(
+            select(RawRecord).where(
+                RawRecord.source_id == self.source.id,
+                RawRecord.external_id.in_([f"article:{qid}" for qid in by_qid]),
+            )
+        ):
+            qid = record.payload["qid"]
+            article = parse_article(record.payload["title"], record.payload.get("wikitext", ""))
+            sections = {s.ordinal: s for s in article.sections}
+            for ordinal, generation_id in by_qid[qid].items():
+                section = sections.get(ordinal)
+                if section is None:
+                    continue
+                raw = infobox_field(section.body, "model years") or infobox_field(
+                    section.body, "model_years"
+                )
+                if raw is not None:
+                    span, _reason = parse_span(raw)
+                    if span is not None:
+                        self.model_year_spans[generation_id] = (span, record.id)
+                doors = generation_doors(section.body, article.top_wikitext)
+                if doors:
+                    self.generation_doors[generation_id] = doors
+
+    def _load_body_signals(self) -> None:
+        """Per configuration: what its EPA raw record says about its doors
+        (ADR 0017 §4). Configurations without an attached EPA record fall
+        back to trim-string body words at decision time."""
+        self.config_body: dict[int, BodySignal] = {}
+        epa_id = self.session.scalar(
+            select(Source.id).where(Source.name == "EPA fueleconomy.gov")
+        )
+        if epa_id is None:
+            return
+        payload = RawRecord.payload
+        rows = self.session.execute(
+            select(
+                ExternalId.configuration_id,
+                payload.op("->>")("VClass"),
+                payload.op("->>")("pv2"),
+                payload.op("->>")("pv4"),
+                payload.op("->>")("lv2"),
+                payload.op("->>")("lv4"),
+            )
+            .join(
+                RawRecord,
+                (RawRecord.external_id == ExternalId.external_id)
+                & (RawRecord.source_id == ExternalId.source_id),
+            )
+            .where(
+                ExternalId.source_id == epa_id,
+                ExternalId.configuration_id.isnot(None),
+            )
+        ).all()
+        for configuration_id, vclass, pv2, pv4, lv2, lv4 in rows:
+            signal = epa_body_signal(vclass, pv2, pv4, lv2, lv4)
+            if signal:
+                self.config_body[configuration_id] = signal
 
     def _load_span_provenance(self) -> None:
         """Per generation: the raw record behind its live `start_year`
@@ -195,16 +302,27 @@ class _PlacementPass:
         }
 
     def _candidates(
-        self, model_id: int, period: CataloguePeriod, kind: str
-    ) -> tuple[list[_Candidate], int]:
-        """(matching candidates, undated linked generations). An undated
-        competitor makes 'unique among the dated' mean nothing - the 1991
-        Celica convertible must not land in `celica-gt-four` just because the
-        GT-Four page is the only one with a production span - so the caller
-        treats undated > 0 as unplaceable, not as a smaller field."""
+        self, configuration: Configuration, model_id: int, period: CataloguePeriod, kind: str
+    ) -> tuple[list[_Candidate], int, list[int]]:
+        """(matching candidates, undated linked generations, body-vetoed
+        generations). An undated competitor makes 'unique among the dated'
+        mean nothing - the 1991 Celica convertible must not land in
+        `celica-gt-four` just because the GT-Four page is the only one with
+        a production span - so the caller treats undated > 0 as unplaceable,
+        not as a smaller field. The body veto strikes FIRST: a generation
+        whose every asserted body contradicts the configuration's door
+        signal is not a candidate regardless of year, and not an undated
+        competitor either."""
+        signal = self.config_body.get(configuration.id) or trim_body_signal(
+            configuration.trim_name
+        )
         found: list[_Candidate] = []
         undated = 0
+        vetoed: list[int] = []
         for generation_id in self.links.get(model_id, ()):
+            if signal and signal.contradicts(self.generation_doors.get(generation_id, frozenset())):
+                vetoed.append(generation_id)
+                continue
             model_years = self.model_year_spans.get(generation_id)
             if kind == "model_year" and model_years is not None:
                 span, record_id = model_years
@@ -220,7 +338,7 @@ class _PlacementPass:
                 found.append(
                     _Candidate(generation_id, span, False, self.span_records.get(generation_id))
                 )
-        return sorted(found, key=lambda c: c.generation_id), undated
+        return sorted(found, key=lambda c: c.generation_id), undated, sorted(vetoed)
 
     def _assert_placement(self, configuration: Configuration, candidate: _Candidate | None) -> None:
         """Write/refresh/withdraw the placement assertion + column. The pass
@@ -294,9 +412,12 @@ class _PlacementPass:
         for configuration, period in rows:
             self.stats.configurations += 1
             key = f"configuration:{configuration.id}"
-            candidates, undated = self._candidates(
-                period.model_id, period, kind_by_id[period.period_kind_id]
+            candidates, undated, vetoed = self._candidates(
+                configuration, period.model_id, period, kind_by_id[period.period_kind_id]
             )
+            vetoed_slugs = [self.generations[g].slug for g in vetoed]
+            if vetoed:
+                self.stats.body_vetoed += 1
 
             if len(candidates) == 1 and undated:
                 # One dated match beside undated siblings is not uniqueness -
@@ -326,12 +447,15 @@ class _PlacementPass:
                     self.stats.already_placed += 1
                 else:
                     self.stats.placed += 1
+                detail = {"generation": self.generations[candidate.generation_id].slug}
+                if vetoed_slugs:
+                    detail["body_vetoed"] = vetoed_slugs
                 self.decisions.record_key(
                     key,
                     "placed_dated_overlap",
                     raw_record_id=candidate.raw_record_id,
                     method="model_years_exact" if candidate.exact else "production_end_slack",
-                    detail={"generation": self.generations[candidate.generation_id].slug},
+                    detail=detail,
                 )
                 continue
 
@@ -342,6 +466,10 @@ class _PlacementPass:
                 detail = {
                     "period": f"{period.start_year}–{period.end_year}",
                     "undated_siblings": undated,
+                    # The flag's standing precondition (ADR 0017 §3): rows
+                    # with a body signal either discriminated or still
+                    # genuinely overlap among compatible bodies.
+                    "body_vetoed": vetoed_slugs,
                     "candidates": [
                         {
                             "generation": self.generations[c.generation_id].slug,

@@ -56,6 +56,7 @@ def main() -> int:
                             WHEN rr.external_id LIKE 'modelyears:%' THEN 'model-years'
                             WHEN rr.external_id LIKE 'vehicle:%' THEN 'vehicles'
                             WHEN rr.external_id LIKE 'infobox:%' THEN 'infoboxes'
+                            WHEN rr.external_id LIKE 'article:%' THEN 'articles'
                             -- bare QIDs split by the landing-stamped sweep
                             -- marker (ADR 0012 §1), never by payload shape
                             WHEN rr.external_id LIKE 'Q%'
@@ -154,6 +155,16 @@ def main() -> int:
         ).one()
         print(f"Wikidata model QIDs -> models : {wd_models}/{wd_swept} swept")
         print(f"Wikidata QIDs -> generations  : {wd_gens}")
+
+        section_gens = s.execute(
+            text(
+                """
+                SELECT count(*) FROM external_ids ei JOIN sources so ON so.id = ei.source_id
+                WHERE so.name = 'Wikipedia (English)' AND ei.external_id LIKE 'section:%'
+                """
+            )
+        ).scalar()
+        print(f"section-born generations      : {section_gens}")
 
         placed, total, timed, gens, links = s.execute(
             text(
