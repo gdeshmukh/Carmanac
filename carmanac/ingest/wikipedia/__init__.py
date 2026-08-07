@@ -11,5 +11,11 @@ from carmanac.ingest.wikipedia.infoboxes import (
     SOURCE_NAME,
     land_generation_infoboxes,
 )
+from carmanac.ingest.wikipedia.section_mains import land_section_mains
 
-__all__ = ["SOURCE_NAME", "land_generation_infoboxes", "land_nameplate_articles"]
+__all__ = [
+    "SOURCE_NAME",
+    "land_generation_infoboxes",
+    "land_nameplate_articles",
+    "land_section_mains",
+]

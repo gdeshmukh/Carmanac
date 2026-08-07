@@ -207,11 +207,13 @@ def door_counts(body_style_raw: str) -> frozenset[int]:
     return frozenset(c for c in counts if c)
 
 
-def generation_doors(section_body: str | None, top_wikitext: str | None) -> frozenset[int]:
-    """Door counts a generation's bodies carry: its own section's infobox
-    first, else the article's top infobox - a nameplate-scope claim covers
-    every generation in the article (ADR 0017 §4)."""
-    for chunk in (section_body, top_wikitext):
+def generation_doors(*chunks: str | None) -> frozenset[int]:
+    """Door counts a generation's bodies carry, read from the first chunk
+    whose infobox asserts any. Callers order chunks most-specific-claim
+    first: the section's own body, then its fetched `{{Main}}` target
+    (ADR 0018 §3), then the article's top infobox - a nameplate-scope claim
+    covers every generation in the article (ADR 0017 §4)."""
+    for chunk in chunks:
         if not chunk:
             continue
         raw = infobox_field(chunk, "body style") or infobox_field(chunk, "body_style")
