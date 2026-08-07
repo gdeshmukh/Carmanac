@@ -224,9 +224,7 @@ class _PlacementPass:
         (ADR 0017 §4). Configurations without an attached EPA record fall
         back to trim-string body words at decision time."""
         self.config_body: dict[int, BodySignal] = {}
-        epa_id = self.session.scalar(
-            select(Source.id).where(Source.name == "EPA fueleconomy.gov")
-        )
+        epa_id = self.session.scalar(select(Source.id).where(Source.name == "EPA fueleconomy.gov"))
         if epa_id is None:
             return
         payload = RawRecord.payload
@@ -313,9 +311,7 @@ class _PlacementPass:
         whose every asserted body contradicts the configuration's door
         signal is not a candidate regardless of year, and not an undated
         competitor either."""
-        signal = self.config_body.get(configuration.id) or trim_body_signal(
-            configuration.trim_name
-        )
+        signal = self.config_body.get(configuration.id) or trim_body_signal(configuration.trim_name)
         found: list[_Candidate] = []
         undated = 0
         vetoed: list[int] = []
