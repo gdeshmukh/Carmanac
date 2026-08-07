@@ -42,11 +42,10 @@ from carmanac.reconcile import policy
 # The rest of the censused species (2026-08-07), NOT ruled: presented by the
 # dry run as proposals with evidence. An entry moves to the registry only by
 # ruling. The 5 Turbo is a genuine homologation gray case - the evidence is
-# presented without a lean either way.
+# presented without a lean either way. The Civic Type R FL5 left this list
+# by the opposite ruling (2026-08-07): it IS a generation - FL5 is its code,
+# under the type-r filing - so it belongs in neither list.
 PROPOSED_SPECIES: dict[str, str] = {
-    "Q2437169": "Celica GT-Four (the undated-competitor lesson's culprit)",
-    "Q1626577": "Civic Hybrid",
-    "Q107336578": "Civic Type R FL5",
     "Q1299603": "5 Turbo (homologation gray case)",
 }
 

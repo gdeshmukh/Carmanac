@@ -58,6 +58,7 @@ def main() -> int:
                             WHEN rr.external_id LIKE 'vehicle:%' THEN 'vehicles'
                             WHEN rr.external_id LIKE 'infobox:%' THEN 'infoboxes'
                             WHEN rr.external_id LIKE 'article:%' THEN 'articles'
+                            WHEN rr.external_id LIKE 'section-main:%' THEN 'section-mains'
                             -- bare QIDs split by the landing-stamped sweep
                             -- marker (ADR 0012 §1), never by payload shape
                             WHEN rr.external_id LIKE 'Q%'

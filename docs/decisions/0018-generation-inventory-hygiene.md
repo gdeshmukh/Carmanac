@@ -53,9 +53,15 @@ policy gate is what makes the retirement stick.
 
 - `NOT_A_GENERATION: dict[str, str]` in `carmanac/reconcile/policy.py`
   (the `IDENTITY_MERGES` / `WIKIDATA_MODEL_NEGATIVES` species): QID →
-  verdict slug (`trim_lineage`, `body_style`). Each entry is a recorded
-  human judgment. Seeded with the two ruled QIDs **only**; the unruled
-  four enter if and when ruled, never by implication.
+  verdict slug (`trim_lineage`, `body_style`, `powertrain_lineage`). Each
+  entry is a recorded human judgment. Seeded with the two ruled QIDs
+  **only**; the unruled four enter if and when ruled, never by
+  implication. Session rulings from the dry-run review (2026-08-07): the
+  Celica GT-Four entered as `trim_lineage` (the Celica article carries
+  seven real generations) and the Civic Hybrid as `powertrain_lineage`;
+  the Civic Type R FL5 was ruled the opposite way — a real generation,
+  FL5 being its code — and the 5 Turbo stays the unruled homologation
+  gray case.
 - **The wd-models pass** stops asserting `generation_model_links` for
   registered QIDs and stops refreshing them as generations (decision
   outcome `held_not_a_generation`). Their assertions stay live in

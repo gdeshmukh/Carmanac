@@ -250,6 +250,14 @@ NOT_A_GENERATION: dict[str, str] = {
     # drove 213 of the 480 open overlap flags); the Targa is a body style.
     "Q1752875": "trim_lineage",  # Porsche 911 GT2
     "Q124935918": "body_style",  # Porsche 911 Targa
+    # Ruled 2026-08-07, from the demotion dry-run review: the GT-Four is a
+    # trim lineage - the Celica nameplate's own article carries seven real
+    # generations; the Hybrid is a powertrain lineage across Civic
+    # generations. NOT here by the same review: the Civic Type R FL5 is a
+    # real generation (FL5 is its code, under the type-r filing); the
+    # Renault 5 Turbo stays an unruled homologation gray case.
+    "Q2437169": "trim_lineage",  # Toyota Celica GT-Four
+    "Q1626577": "powertrain_lineage",  # Honda Civic Hybrid
 }
 
 # --- admission (ADR 0007 §3) ------------------------------------------------
