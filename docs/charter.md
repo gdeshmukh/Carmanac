@@ -38,12 +38,16 @@ field-level provenance back to the raw record that asserted it. See
 
 The generation-placement pass is live (ADR 0016 restructured generations;
 ADR 0017 owns the evidence): generations re-anchored to companies,
-Wikipedia infoboxes supply generation time via sitelinks, and the first
-configurations are placed by unique dated overlap — everything ambiguous or
-under-evidenced waits with a logged reason. Next: ADR 0017 §4's proposed
-answer to the existence bottleneck (section-minted generations from
-nameplate articles; Wikidata demoted from gatekeeper to contributor), then
-the source depth already inventoried on vPIC and EPA.
+Wikipedia infoboxes supply generation time via sitelinks, and
+configurations place by unique dated overlap — everything ambiguous or
+under-evidenced waits with a logged reason. ADR 0017 §4 broke the
+existence bottleneck: nameplate articles' per-generation sections mint
+generations (Wikidata demoted from gatekeeper to contributor), and body
+evidence vetoes candidates before the year test — the AMG GT's coupes and
+4-doors place into their own generations without ever being each other's
+candidates. Next: the review queues §4 opened (unreconciled section
+articles, boundary-year overlaps), then the source depth already
+inventoried on vPIC and EPA.
 
 ## Architecture Invariants
 

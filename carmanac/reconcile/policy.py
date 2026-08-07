@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "13"
+RECONCILER_VERSION = "14"
 
 # --- identity --------------------------------------------------------------
 
@@ -217,6 +217,22 @@ WIKIDATA_MODEL_MATCHES: dict[str, str] = {}
 # rung-3 accept and when building flag candidates. Grown by flag resolutions,
 # like the positive registry.
 WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
+
+# Curated nameplate-article routings (ADR 0017 §4): QID ->
+# "company-slug/model-slug", for articles whose per-generation sections
+# describe generations contained in that filing's catalogue but whose QID is
+# not 1:1-attached to the model - the ruled "link curated" mechanism. Each
+# entry is a recorded human judgment; section parsing never fabricates one.
+#
+# The AMG GT pair is the founding case (review ruling, 2026-08-06): vPIC
+# files ONE `AMG GT` whose catalogue holds two genuinely different cars.
+# Q18011551 (the sports car's nameplate page, held as a line by the
+# wd-models pass - its P179 children are trims) and Q50368653 (the 4-Door's
+# own two-section nameplate page) both belong in that filing's catalogue.
+SECTION_ARTICLE_MODELS: dict[str, str] = {
+    "Q18011551": "mercedes-benz/amg-gt",
+    "Q50368653": "mercedes-benz/amg-gt",
+}
 
 # --- admission (ADR 0007 §3) ------------------------------------------------
 

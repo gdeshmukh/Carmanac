@@ -2,13 +2,12 @@
 
 - Status: §1–3 Accepted and implemented (2026-08-06, same branch as
   ADR 0016 — the machinery ran live and its first run's two lessons are
-  folded in as amendments); **§4 approved in principle**
-  (review, 2026-08-06 — the ADR 0012 "approved in principle,
-  deliberately not in v1" pattern): the direction stands, and its own
-  implementation branch proves it out — probe-first on the full-article
-  fetch and the section parse, with the keying/dedup/naming questions
-  settled against real pages before any generation is minted.
-- Date: 2026-08-06
+  folded in as amendments); **§4 accepted and implemented**
+  (2026-08-07, its own branch, per the approved-in-principle ruling:
+  probe-first on the full-article fetch and the section parse, with the
+  keying/dedup/naming questions settled against real pages — the probe
+  verdict and the settled rules are recorded in §4 below).
+- Date: 2026-08-06 (§4 settled 2026-08-07)
 - Depends on: ADR 0016 (company-anchored generations,
   `generation_model_links` as the candidate gate), ADR 0014 (placement
   is configuration-level and evidence-gated), ADR 0013 (evidence ranks),
@@ -154,7 +153,7 @@ production+slack), 354 overlap flags, 616 undated-competitor waits,
 pre-amendment run withdrawn with their supersession trail. Re-runs are
 exact no-ops.
 
-### 4. PROPOSED: existence comes from Wikipedia too — section-minted generations
+### 4. Existence comes from Wikipedia too — section-minted generations
 
 The funnel shows the binding constraint is not time but *existence*:
 placement can only reach the 51 models Wikidata gave generations. This
@@ -192,34 +191,120 @@ creates a generation**:
   curated judgment. End state: coupes place into C190, 4-doors into
   X290, and `generation_overlap` fires only for rows carrying no body
   signal.
-- Open questions the review must settle before implementation:
-  - **Keying**: section headings rename; anchor spans (`id="S13"`) are
-    deliberately maintained but not universal. Candidate key: the
-    nameplate QID + normalized ordinal (`Q18011551#1`), with codes and
-    heading text as facts rather than identity. Ordinal-only headings
-    ("first/second/third", no codes) are the minority but real and must
-    key cleanly.
-  - **Dedup**: when Wikidata later grows a C190 entity, the
-    section-born generation must adopt its QID (sitelink+section
-    correspondence) rather than duplicate.
-  - **Naming/slugs**: section-born generations need a display-name rule
-    (`AMG GT (C190)` vs `AMG GT first generation`) consistent with the
-    company-scoped slug uniqueness.
-  - **Fetch shape**: full-article wikitext for the 432 nameplate pages
-    (a second polite sweep, ~430 requests), landed as a distinct record
-    kind beside the section-0 `infobox:` records.
+**Probe verdict (2026-08-07, 108 of the 432 fetched — every 4th by QID
+order — plus the AMG GT pair):** 43% of articles carry at least one
+generation-shaped section (182 sections total). Ordinals are nearly
+universal (99%, one "Sixteenth" beyond the common tables), years in the
+heading 97%, own infobox per section 77%, maintained anchors 79%.
+Chassis codes in headings pass the strict label extractor only 9% of
+the time — but that is the extractor's letters-then-digits bias, not
+absence: headings follow a `(CODES; YEAR)` convention where letters-only
+codes (GD/GE, NA, SF, VA) are common and positionally unambiguous.
+Ordinal collisions appeared in 3/108 articles, all one benign shape —
+an `=== Nth generation models ===` subsection under the real section.
+`{{Main}}` sub-article pointers exist on only 18% of sections and
+resolve to attached generations even less often, so dedup cannot lean
+on them alone. 7/108 sitelinks resolve through redirects. The open
+questions settle as follows:
+
+- **Keying**: nameplate QID + ordinal, written as
+  `section:<QID>#<ordinal>` in `external_ids` under the Wikipedia
+  source. The ordinal comes from a **strict heading grammar**: after
+  stripping anchors, templates, refs and italics, the heading must be
+  `<ordinal> generation` followed by nothing, a dash code, or one
+  parenthetical — `Second generation models` fails the grammar and is
+  never a generation. Inside the parenthetical, tokens before `;` are
+  chassis codes (letters-only accepted here — the position carries the
+  confidence the label extractor lacks), years are extracted separately.
+  Codes and heading text are **facts, never identity**. Heading years
+  are recorded as detail only and never become spans: a start year with
+  a fabricated open end would contain every later period — the Civic
+  redirect lesson in another shape.
+- **All-or-nothing per article**: a generation-shaped section that
+  fails the grammar (no ordinal, or a duplicate ordinal) flags
+  `section_generation_review` and the article mints **nothing**.
+  Minting the parseable sections while skipping one is the
+  link-completeness trap generalized: the skipped generation would be
+  an unlinked competitor the undated-competitor guard cannot see.
+- **Dedup against existing inventory**: for a model that already has
+  linked generations, every section must reconcile to one of them —
+  by `{{Main}}` target matching an attached QID's sitelink title, or by
+  unique intersection of heading codes with a linked generation's
+  `chassis_codes`. Reconciled sections corroborate the link (a second
+  live sourced row) and assert no facts — the generation's own article
+  is the richer source. If any section fails to reconcile, the article
+  flags and mints nothing. Models with zero linked generations mint
+  freely; that is the 381-model population §4 exists for. When Wikidata
+  later grows an entity for a section-born generation, the same
+  correspondence (its sitelink title against the section's `{{Main}}`
+  target) is the adoption key; the ordinal keying keeps the case
+  detectable, and the adoption pass is built when the case first
+  arises.
+- **Naming/slugs**: with codes, `<model name> (C190/R190)` — the shape
+  the Wikidata-born generations already wear; without,
+  `<model name> (first generation)`. Slugs are company-scoped as ever;
+  a collision flags and never auto-suffixes (the models-pass rule).
+- **Fetch shape**: full-article wikitext lands as `article:<QID>`
+  records beside the section-0 `infobox:` records — same lander module,
+  same polite client, same resumable commit cadence (~430 requests).
+- **Facts on section-born generations**: `name`, `chassis_codes` (from
+  the heading), `start_year`/`end_year` from the **section's own
+  infobox** production span through the same flag-never-guess parser as
+  §2. The section's `model_years` and body styles are parsed from the
+  landed article at placement decision time, like §3 already does for
+  `infobox:` records.
+- **Curated article routing**: `SECTION_ARTICLE_MODELS` (policy
+  registry, the `WIKIDATA_MODEL_MATCHES` species) maps a nameplate QID
+  to a model where the article's generations belong in that filing's
+  catalogue but the QID is not 1:1-attached — each entry a recorded
+  human judgment. The AMG GT pair is the founding case: Q18011551
+  (classified a line by the wd-models pass — its P179 children are
+  trims) and Q50368653 (the 4-Door, unmatched) both route to
+  `mercedes-benz/amg-gt`. This is the ruled "link curated" mechanism:
+  the probe found the 4-Door page is itself a two-section nameplate
+  article (X290 2018, C590 2026), so both articles flow through the
+  same section machinery and nothing is minted by hand.
+
+**§2 amendment (from the probe, same rule discipline): labeled
+subranges defer to a single unlabeled range.** The C190's production
+field is one unlabeled range (`October 2014 – September 2022`) beside
+variant-labeled lines (`2021–2023 (AMG GT Black Series; …)`). The
+unlabeled line is the field's own claim; the labeled lines annotate
+sub-series, markets or plants. When exactly one segment carries exactly
+one range and no label, that range is the span; per-body and per-plant
+lists label every line and keep flagging, so this is not the hull guess
+§2 rejected. A previously-flagged field that now parses dismisses its
+open `implausible_value` flag with the amendment recorded.
+
+**§3 body-veto implementation (the rule §3 already states, now with
+its signals):** the configuration's body signal comes from its attached
+EPA raw record — `VClass` "Two Seaters" (a seat-count class, mutually
+exclusive with every other car class), and the volume fields `pv4`/
+`lv4` (four-door interior volumes, filled exactly when EPA measured a
+four-door body) and `pv2`/`lv2` (two-door) — with explicit body words
+in the trim string as fallback. The generation's bodies come from its
+infobox `body_style` (its section's, else the article's top infobox —
+a nameplate-scope claim covers every generation in the article).
+Contradiction is **door-count-explicit only**: a two-seater or two-door
+signal vetoes a generation whose every body carries `4-door`/`5-door`;
+a four-door signal vetoes one whose every body carries `2-door`/
+`3-door`. Wagon/SUV/van size classes deliberately assert nothing in
+v1 — EPA reclassed the 2025 GT 4-Door as a station wagon, and a class
+that can drift must not veto its own car.
 
 ## Consequences
 
 - Time and placement machinery is live and self-correcting; its
-  coverage ceiling is generation inventory, which §4 is designed to
-  raise (~125 more models' generations mineable at current sampling,
-  against 51 covered today).
-- The proof car stays honestly NULL until §4 lands: the AMG GT has no
-  generation rows to place into. With §4 plus the body veto, its coupes
-  place into C190 and the 4-doors into X290 — no overlap flag, because
-  they were never each other's candidates. The flag remains only for
-  rows with no body signal.
+  coverage ceiling is generation inventory, which §4 raises (the probe
+  puts articles with mineable sections at ~43% of the 432, against 51
+  models covered through Wikidata today).
+- With §4 plus the body veto, the proof car resolves: coupes place into
+  C190 and the 4-doors into X290 — no overlap flag, because they were
+  never each other's candidates (the two-seater signal vetoes the
+  5-door X290; the four-door signal vetoes the all-2-door C190). The
+  overlap flag remains only for rows with no body signal — the 2024
+  coupes EPA classes "Subcompact Cars" with zero volume fills are the
+  live example, honestly flagged between C192 and X290.
 - Wikipedia's demotion of Wikidata here is evidence-driven, recorded,
   and reversible per field through provenance — no raw data is
   discarded either way (ADR 0004).

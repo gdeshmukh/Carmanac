@@ -6,9 +6,10 @@ is why this Tier 2 source does not cross the charter's matcher-precision
 gate.
 """
 
+from carmanac.ingest.wikipedia.articles import land_nameplate_articles
 from carmanac.ingest.wikipedia.infoboxes import (
     SOURCE_NAME,
     land_generation_infoboxes,
 )
 
-__all__ = ["SOURCE_NAME", "land_generation_infoboxes"]
+__all__ = ["SOURCE_NAME", "land_generation_infoboxes", "land_nameplate_articles"]
