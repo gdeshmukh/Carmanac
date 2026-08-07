@@ -13,6 +13,14 @@ authoritative and enthusiast sources, reconciled into a single canonical record
 per configuration. Served via a fast, intuitive web frontend with dedicated
 pages for makes, models, generations, configurations, and engines.
 
+**The database is the product; every surface is a view of it.** It is built
+rock-solid from the ground up — explicit structure, natural keys, field-level
+provenance — so that search tools and LLM agents can navigate it fast and
+mechanically (stable canonical addresses, machine-readable relationships,
+honest NULLs that mean "no source has said") while the human-facing
+experience stays simple. Anything that would make the data easier to render
+but harder to reason over is the wrong trade.
+
 This is a long-horizon project (months to years) intended as a portfolio
 centerpiece demonstrating data engineering, entity resolution at scale,
 relational schema design, and full-stack delivery. Scope is intentionally
