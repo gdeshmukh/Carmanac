@@ -78,6 +78,7 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     parse_article,
     trim_body_signal,
 )
+from carmanac.reconcile.wikipedia_sections_pass import section_main_asserts
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +175,7 @@ class _PlacementPass:
             parsed = parse_infobox(record.payload["title"], wikitext)
             if parsed.model_years is not None:
                 self.model_year_spans[generation_id] = (parsed.model_years, record.id)
-            doors = generation_doors(None, wikitext)
+            doors = generation_doors(wikitext)
             if doors:
                 self.generation_doors[generation_id] = doors
 
@@ -182,7 +183,10 @@ class _PlacementPass:
         """Per section-born generation (`section:<QID>#<ordinal>` keys): the
         same decision-time reads, from its section of the landed article -
         `model_years` from the section's infobox, doors from its `body_style`
-        with the article's top infobox as the nameplate-scope fallback."""
+        with the article's top infobox as the nameplate-scope fallback. A
+        fetched `{{Main}}` target (`section-main:` record, ADR 0018 §3)
+        supplies both where the section itself has none, behind the same
+        grain guards the sections pass applies."""
         by_qid: dict[str, dict[int, int]] = {}
         for external_id, generation_id in self.session.execute(
             select(ExternalId.external_id, ExternalId.generation_id).where(
@@ -195,6 +199,17 @@ class _PlacementPass:
             by_qid.setdefault(qid, {})[int(ordinal)] = generation_id
         if not by_qid:
             return
+        section_mains: dict[tuple[str, int], RawRecord] = {}
+        for record in self.session.scalars(
+            select(RawRecord)
+            .where(
+                RawRecord.source_id == self.source.id,
+                RawRecord.external_id.like("section-main:%"),
+            )
+            .order_by(RawRecord.last_seen_at, RawRecord.id)
+        ):
+            qid, _, ordinal = record.external_id.removeprefix("section-main:").partition("#")
+            section_mains[(qid, int(ordinal))] = record
         for record in self.session.scalars(
             select(RawRecord).where(
                 RawRecord.source_id == self.source.id,
@@ -208,6 +223,12 @@ class _PlacementPass:
                 section = sections.get(ordinal)
                 if section is None:
                     continue
+                section_main = section_mains.get((qid, ordinal))
+                target_wikitext = None
+                target_record_id = None
+                if section_main is not None and section_main_asserts(section_main.payload):
+                    target_wikitext = section_main.payload.get("wikitext", "")
+                    target_record_id = section_main.id
                 raw = infobox_field(section.body, "model years") or infobox_field(
                     section.body, "model_years"
                 )
@@ -215,7 +236,15 @@ class _PlacementPass:
                     span, _reason = parse_span(raw)
                     if span is not None:
                         self.model_year_spans[generation_id] = (span, record.id)
-                doors = generation_doors(section.body, article.top_wikitext)
+                elif target_wikitext is not None:
+                    traw = infobox_field(target_wikitext, "model years") or infobox_field(
+                        target_wikitext, "model_years"
+                    )
+                    if traw is not None:
+                        span, _reason = parse_span(traw)
+                        if span is not None:
+                            self.model_year_spans[generation_id] = (span, target_record_id)
+                doors = generation_doors(section.body, target_wikitext, article.top_wikitext)
                 if doors:
                     self.generation_doors[generation_id] = doors
 

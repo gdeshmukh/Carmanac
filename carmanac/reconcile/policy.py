@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "14"
+RECONCILER_VERSION = "15"
 
 # --- identity --------------------------------------------------------------
 
@@ -232,6 +232,24 @@ WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
 SECTION_ARTICLE_MODELS: dict[str, str] = {
     "Q18011551": "mercedes-benz/amg-gt",
     "Q50368653": "mercedes-benz/amg-gt",
+}
+
+# Wrong-grain generation verdicts (ADR 0018 §1): QID -> verdict slug, for
+# Wikidata entities whose P179 membership minted a generation row that a
+# human ruling found to be another kind of thing entirely. The registry is
+# what makes `scripts/decisions/demote_non_generations.py` stick: the
+# wd-models pass re-asserts links from P179 every run, so without this gate
+# the next re-run would lawfully resurrect what the script retired. The rows
+# and their facts stay - they are real entities of the trim-line/derivation
+# kind not yet modeled - but they stop being placement candidates.
+#
+# Grown exclusively by ruling; each entry is a recorded human judgment.
+NOT_A_GENERATION: dict[str, str] = {
+    # Ruled 2026-08-07: "GT2 and Targa are not generations." The GT2 is a
+    # trim lineage spanning five real 911 generations (its 1993-2019 span
+    # drove 213 of the 480 open overlap flags); the Targa is a body style.
+    "Q1752875": "trim_lineage",  # Porsche 911 GT2
+    "Q124935918": "body_style",  # Porsche 911 Targa
 }
 
 # --- admission (ADR 0007 §3) ------------------------------------------------
