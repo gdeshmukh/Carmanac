@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import subprocess
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from carmanac.db.session import SessionLocal
+from carmanac.reconcile import policy
 
 
 def _git(*args: str) -> str:
@@ -57,6 +58,7 @@ def main() -> int:
                             WHEN rr.external_id LIKE 'vehicle:%' THEN 'vehicles'
                             WHEN rr.external_id LIKE 'infobox:%' THEN 'infoboxes'
                             WHEN rr.external_id LIKE 'article:%' THEN 'articles'
+                            WHEN rr.external_id LIKE 'section-main:%' THEN 'section-mains'
                             -- bare QIDs split by the landing-stamped sweep
                             -- marker (ADR 0012 §1), never by payload shape
                             WHEN rr.external_id LIKE 'Q%'
@@ -165,6 +167,82 @@ def main() -> int:
             )
         ).scalar()
         print(f"section-born generations      : {section_gens}")
+
+        # The coverage funnel (ADR 0018): each stage is cumulative, so the
+        # last line's denominator is visible all the way up. Curated article
+        # routings (SECTION_ARTICLE_MODELS) count as reach - the AMG GT has
+        # articles and placements without a 1:1 model QID.
+        routed = sorted({pair for pair in policy.SECTION_ARTICLE_MODELS.values()}) or ["-/-"]
+        routed_qids = sorted(policy.SECTION_ARTICLE_MODELS) or ["Q0"]
+        funnel = s.execute(
+            text(
+                """
+                WITH routed_models AS (
+                  SELECT m.id FROM models m JOIN companies co ON co.id = m.company_id
+                  WHERE co.slug || '/' || m.slug IN :routed
+                ),
+                stages AS (
+                  SELECT m.id,
+                    EXISTS (SELECT 1 FROM catalogue_periods p
+                            JOIN configurations c ON c.catalogue_period_id = p.id
+                            WHERE p.model_id = m.id) AS has_configs,
+                    (EXISTS (SELECT 1 FROM external_ids ei
+                             JOIN sources so ON so.id = ei.source_id
+                             WHERE so.name = 'Wikidata' AND ei.model_id = m.id)
+                     OR m.id IN (SELECT id FROM routed_models)) AS has_qid,
+                    (EXISTS (SELECT 1 FROM external_ids ei
+                             JOIN sources so ON so.id = ei.source_id
+                             JOIN raw_scrape.raw_records rr
+                               ON rr.external_id = 'article:' || ei.external_id
+                             JOIN sources ws ON ws.id = rr.source_id
+                              AND ws.name = 'Wikipedia (English)'
+                             WHERE so.name = 'Wikidata' AND ei.model_id = m.id)
+                     OR (m.id IN (SELECT id FROM routed_models)
+                         AND EXISTS (SELECT 1 FROM raw_scrape.raw_records rr
+                                     JOIN sources ws ON ws.id = rr.source_id
+                                      AND ws.name = 'Wikipedia (English)'
+                                     WHERE substring(rr.external_id FROM 9)
+                                           IN :routed_qids
+                                       AND rr.external_id LIKE 'article:%')))
+                        AS has_article,
+                    EXISTS (SELECT 1 FROM generation_model_links l
+                            WHERE l.model_id = m.id
+                              AND l.superseded_by IS NULL) AS has_links,
+                    EXISTS (SELECT 1 FROM catalogue_periods p
+                            JOIN configurations c ON c.catalogue_period_id = p.id
+                            WHERE p.model_id = m.id
+                              AND c.generation_id IS NOT NULL) AS has_placed
+                  FROM models m
+                )
+                SELECT
+                  count(*) FILTER (WHERE has_configs),
+                  count(*) FILTER (WHERE has_configs AND has_qid),
+                  count(*) FILTER (WHERE has_configs AND has_qid AND has_article),
+                  count(*) FILTER (WHERE has_configs AND has_qid AND has_article
+                                     AND has_links),
+                  count(*) FILTER (WHERE has_configs AND has_qid AND has_article
+                                     AND has_links AND has_placed)
+                FROM stages
+                """
+            ).bindparams(
+                bindparam("routed", expanding=True),
+                bindparam("routed_qids", expanding=True),
+            ),
+            {"routed": routed, "routed_qids": routed_qids},
+        ).one()
+        print("coverage funnel (models, cumulative):")
+        for label, n in zip(
+            (
+                "with configurations",
+                "+ QID attached/routed",
+                "+ nameplate article landed",
+                "+ linked generations",
+                "+ placed configurations",
+            ),
+            funnel,
+            strict=True,
+        ):
+            print(f"  {label:<28}: {n}")
 
         placed, total, timed, gens, links = s.execute(
             text(

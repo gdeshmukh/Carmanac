@@ -56,13 +56,33 @@ from carmanac.ingest.wikipedia import SOURCE_NAME
 from carmanac.reconcile import policy
 from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled
 from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
-from carmanac.reconcile.sources.wikipedia_infobox import infobox_field, parse_span
+from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes
+from carmanac.reconcile.sources.wikipedia_infobox import (
+    infobox_field,
+    parse_span,
+    title_code_tokens,
+)
 from carmanac.reconcile.sources.wikipedia_sections import (
     ORDINAL_WORDS,
     GenerationSection,
     parse_article,
 )
 from carmanac.reconcile.wikipedia_infobox_pass import _same_subject
+
+
+def section_main_asserts(payload: dict) -> bool:
+    """The grain guards on a landed `section-main:` record (ADR 0018 §3),
+    shared with placement's decision-time loaders. A redirected target
+    asserts nothing (the §2 rule verbatim), and so does a bare-title target:
+    per-generation articles carry a trailing parenthetical (`Mazda MX-5
+    (NA)`) - a bare title (`Kia Sephia`) is a nameplate/rebadge deferral
+    whose section-0 speaks at the wrong grain, arriving without a redirect
+    to warn us."""
+    resolved = payload.get("title", "")
+    if not _same_subject(payload.get("requested_title", ""), resolved):
+        return False
+    return title_code_tokens(resolved) is not None
+
 
 log = logging.getLogger(__name__)
 
@@ -109,10 +129,12 @@ class _SectionsPass:
         self.wikidata_id = session.scalar(select(Source.id).where(Source.name == "Wikidata"))
         self.decisions = DecisionLog(session, self.source.id, PASS_NAME)
 
+        self.current = current_records(session, self.source.id)
         self._load_routing()
         self._load_generations()
         self._load_links()
         self._load_section_keys()
+        self._load_section_mains()
         self._load_sitelink_titles()
         self._load_open_flags()
 
@@ -161,7 +183,21 @@ class _SectionsPass:
 
     def _load_links(self) -> None:
         """Live links per model (any source - the candidate gate placement
-        sees), and this source's own live pairs for idempotent assertion."""
+        sees), and this source's own live pairs for idempotent assertion.
+
+        Generations ruled wrong-grain (ADR 0018 §1) are excluded from the
+        competitor sets: a section must never reconcile onto a row ruled
+        not-a-generation, and such a row must not block a real section from
+        minting - even while its links await the demotion script."""
+        demoted: set[int] = set(
+            self.session.scalars(
+                select(ExternalId.generation_id).where(
+                    ExternalId.source_id == self.wikidata_id,
+                    ExternalId.generation_id.isnot(None),
+                    ExternalId.external_id.in_(policy.NOT_A_GENERATION),
+                )
+            )
+        )
         self.links_by_model: dict[int, set[int]] = {}
         self.own_links: set[tuple[int, int]] = set()
         for generation_id, model_id, source_id in self.session.execute(
@@ -171,7 +207,8 @@ class _SectionsPass:
                 GenerationModelLink.source_id,
             ).where(GenerationModelLink.superseded_by.is_(None))
         ):
-            self.links_by_model.setdefault(model_id, set()).add(generation_id)
+            if generation_id not in demoted:
+                self.links_by_model.setdefault(model_id, set()).add(generation_id)
             if source_id == self.source.id:
                 self.own_links.add((generation_id, model_id))
 
@@ -187,6 +224,36 @@ class _SectionsPass:
                 )
             )
         }
+
+    def _load_section_mains(self) -> None:
+        """Current `section-main:<QID>#<ordinal>` records by (qid, ordinal) -
+        the fetched {{Main}} targets (ADR 0018 §3) - plus, for the adoption
+        note, every sweep QID's sitelink title: whether a target corresponds
+        to a Wikidata entity is feedstock for the future adoption pass, and
+        recording it costs one query here."""
+        self.section_mains: dict[tuple[str, int], RawRecord] = {}
+        for record in self.current:
+            if not record.external_id.startswith("section-main:"):
+                continue
+            qid, _, ordinal = record.external_id.removeprefix("section-main:").partition("#")
+            self.section_mains[(qid, int(ordinal))] = record
+        self.sweep_qid_by_title: dict[str, str] = {}
+        if not self.section_mains:
+            return
+        from urllib.parse import unquote
+
+        for sweep_qid, url in self.session.execute(
+            select(
+                RawRecord.external_id,
+                RawRecord.payload.op("->")("article").op("->>")("value"),
+            ).where(
+                RawRecord.source_id == self.wikidata_id,
+                RawRecord.payload.op("->>")("sweep") == "models",
+            )
+        ):
+            if url and "/wiki/" in url:
+                title = unquote(url.rsplit("/wiki/", 1)[-1])
+                self.sweep_qid_by_title[self._norm_title(title)] = sweep_qid
 
     def _load_sitelink_titles(self) -> None:
         """Normalized enwiki title -> generation, for `{{Main}}`
@@ -283,12 +350,44 @@ class _SectionsPass:
         self.links_by_model.setdefault(model_id, set()).add(generation_id)
         self.stats.links_asserted += 1
 
-    def _section_facts(
-        self, generation: Generation, section: GenerationSection, display: str, record: RawRecord
+    def _value_flag(
+        self, generation: Generation, reason: str, raw: str, context: str, record: RawRecord
     ) -> None:
+        key = (generation.id, "production")
+        if key in self.open_value_flags:
+            return
+        self.session.add(
+            ReconciliationFlag(
+                kind="implausible_value",
+                generation_id=generation.id,
+                field_name="production",
+                detail={"reason": reason, "raw": raw[:500], "heading": context},
+                source_id=self.source.id,
+                raw_record_id=record.id,
+            )
+        )
+        self.open_value_flags.add(key)
+        self.stats.flags_opened += 1
+
+    def _section_facts(
+        self,
+        generation: Generation,
+        section: GenerationSection,
+        display: str,
+        record: RawRecord,
+        section_main: RawRecord | None = None,
+    ) -> None:
+        """The section's own infobox is first; a fetched `{{Main}}` target
+        supplies what the section itself lacks (ADR 0018 §3), and every
+        target-sourced assertion carries the `section-main:` record as its
+        provenance. The two assert_field_facts calls split COVERAGE
+        disjointly per run, so a field the target stops supplying falls back
+        into the article record's coverage and tombstones normally."""
         facts: dict[str, tuple[str, object]] = {"name": (display, display)}
+        main_facts: dict[str, tuple[str, object]] = {}
         if section.codes:
             facts["chassis_codes"] = ("|".join(section.codes), list(section.codes))
+        span = None
         raw = infobox_field(section.body, "production")
         if raw is not None:
             span, reason = parse_span(raw)
@@ -297,35 +396,45 @@ class _SectionsPass:
                 facts["start_year"] = (observed, span.start)
                 facts["end_year"] = (observed, span.end)
             elif reason is not None:
-                key = (generation.id, "production")
-                if key not in self.open_value_flags:
-                    self.session.add(
-                        ReconciliationFlag(
-                            kind="implausible_value",
-                            generation_id=generation.id,
-                            field_name="production",
-                            detail={
-                                "reason": reason,
-                                "raw": raw[:500],
-                                "heading": section.heading,
-                            },
-                            source_id=self.source.id,
-                            raw_record_id=record.id,
+                self._value_flag(generation, reason, raw, section.heading, record)
+
+        if section_main is not None and section_main_asserts(section_main.payload):
+            target_title = section_main.payload["title"]
+            target_wikitext = section_main.payload.get("wikitext", "")
+            if span is None and raw is None:
+                target_raw = infobox_field(target_wikitext, "production")
+                if target_raw is not None:
+                    target_span, target_reason = parse_span(target_raw)
+                    if target_span is not None:
+                        observed = f"{target_span.start}–{target_span.end or 'present'}"
+                        main_facts["start_year"] = (observed, target_span.start)
+                        main_facts["end_year"] = (observed, target_span.end)
+                    elif target_reason is not None:
+                        self._value_flag(
+                            generation, target_reason, target_raw, target_title, section_main
                         )
-                    )
-                    self.open_value_flags.add(key)
-                    self.stats.flags_opened += 1
-        inserted, superseded = assert_field_facts(
-            self.session,
-            arc_col="generation_id",
-            entity=generation,
-            coverage=COVERAGE,
-            facts=facts,
-            source_id=self.source.id,
-            record=record,
-        )
-        self.stats.assertions_inserted += inserted
-        self.stats.assertions_superseded += superseded
+            if "chassis_codes" not in facts and title_code_tokens(target_title):
+                codes, _ambiguous = extract_chassis_codes(target_title, (), None)
+                if codes:
+                    main_facts["chassis_codes"] = ("|".join(codes), codes)
+
+        for fact_record, fact_map, coverage in (
+            (record, facts, tuple(f for f in COVERAGE if f not in main_facts)),
+            (section_main, main_facts, tuple(f for f in COVERAGE if f in main_facts)),
+        ):
+            if not coverage:
+                continue
+            inserted, superseded = assert_field_facts(
+                self.session,
+                arc_col="generation_id",
+                entity=generation,
+                coverage=coverage,
+                facts=fact_map,
+                source_id=self.source.id,
+                record=fact_record,
+            )
+            self.stats.assertions_inserted += inserted
+            self.stats.assertions_superseded += superseded
 
     def _display_name(self, model: Model, section: GenerationSection) -> str:
         if section.codes:
@@ -507,7 +616,13 @@ class _SectionsPass:
         for section in parsed.sections:
             if section.ordinal in keyed:
                 generation = self.generations[keyed[section.ordinal]]
-                self._section_facts(generation, section, self._display_name(model, section), record)
+                self._section_facts(
+                    generation,
+                    section,
+                    self._display_name(model, section),
+                    record,
+                    section_main=self.section_mains.get((qid, section.ordinal)),
+                )
                 self._assert_link(generation.id, model_id, record)
                 self.stats.generations_refreshed += 1
             elif section.ordinal in reconciled:
@@ -531,7 +646,13 @@ class _SectionsPass:
                 self.session.flush()
                 self.section_generations[key] = generation.id
                 self._assert_link(generation.id, model_id, record)
-                self._section_facts(generation, section_, display, record)
+                self._section_facts(
+                    generation,
+                    section_,
+                    display,
+                    record,
+                    section_main=self.section_mains.get((qid, section_.ordinal)),
+                )
                 self.stats.generations_created += 1
                 minted.append(slug)
 
@@ -539,20 +660,39 @@ class _SectionsPass:
         self._dismiss_article_flag(qid, "sections_resolved")
         if minted:
             self.stats.articles_minted_from += 1
-        self.decisions.record(
-            record,
-            "sections_processed",
-            method="section_parse",
-            detail={
-                "model": self.model_pairs[model_id],
-                "minted": minted,
-                "reconciled": len(reconciled),
-                "refreshed": len(keyed),
-            },
-        )
+        detail = {
+            "model": self.model_pairs[model_id],
+            "minted": minted,
+            "reconciled": len(reconciled),
+            "refreshed": len(keyed),
+        }
+        # Per fetched {{Main}} target: what it resolved to, whether the grain
+        # guards let it assert, and the sweep-QID correspondence - the future
+        # Wikidata-adoption pass's key (ADR 0017 §4), recorded here because
+        # it costs a dict lookup. Identity is not touched.
+        section_main_detail = {}
+        for section in parsed.sections:
+            section_main = self.section_mains.get((qid, section.ordinal))
+            if section_main is None:
+                continue
+            title = section_main.payload["title"]
+            section_main_detail[str(section.ordinal)] = {
+                "target": title,
+                "asserts": section_main_asserts(section_main.payload),
+                "sweep_qid": self.sweep_qid_by_title.get(self._norm_title(title)),
+            }
+        if section_main_detail:
+            detail["section_main"] = section_main_detail
+        self.decisions.record(record, "sections_processed", method="section_parse", detail=detail)
 
     def run(self) -> WikipediaSectionsStats:
-        for record in current_records(self.session, self.source.id):
+        for record in self.current:
+            if record.external_id.startswith("section-main:"):
+                # Consumed as evidence inside the article's processing; marked
+                # here so staleness stays queryable. `infobox:` records belong
+                # to the infobox pass, which marks its own.
+                mark_reconciled(self.session, record)
+                continue
             if not record.external_id.startswith("article:"):
                 continue
             self.stats.processed += 1

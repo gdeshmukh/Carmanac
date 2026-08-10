@@ -1053,6 +1053,19 @@ class _WikidataModelsPass:
     def _structure_phase(self) -> None:
         for qid in sorted(self.subjects, key=lambda q: int(q[1:])):
             subject = self.subjects[qid]
+            if qid in policy.NOT_A_GENERATION and not subject.decided:
+                # Ruled wrong-grain (ADR 0018 §1): no link assertion, no
+                # refresh, no creation - the registry gate that keeps the
+                # demotion script's retirement from resurrecting on re-run.
+                # Existing assertions stay live; the record stays in raw.
+                self._decide(
+                    subject,
+                    "5",
+                    "not_a_generation_registry",
+                    "held_not_a_generation",
+                    {"verdict": policy.NOT_A_GENERATION[qid]},
+                )
+                continue
             if qid in self.generation_by_qid and not subject.decided:
                 self._refresh_generation(subject)
                 continue

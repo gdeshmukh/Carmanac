@@ -33,6 +33,13 @@ _YEAR_RANGE = re.compile(
 _YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
 _TITLE_PARENTHETICAL = re.compile(r"\(([^()]*)\)\s*$")
 
+# Dash templates rewrite to the dash they render as ("October 2010
+# {{nbndash}} September 2017") - typography, not interpretation; without
+# this the range reads as years_without_range (ADR 0018 §3).
+_DASH_TEMPLATE = re.compile(
+    r"\{\{\s*(?:(?:nb)?[nm]dash|snd|spnd|spaced en dash)\s*\}\}", re.IGNORECASE
+)
+
 # Segment boundaries inside a multi-entry field value: plainlist/ubl items,
 # <br> breaks, raw lines. Labeled-defer (ADR 0017 §4 amendment) reads the
 # field per segment, not per range.
@@ -119,7 +126,7 @@ def parse_span(raw: str) -> tuple[Span | None, str | None]:
     """(span, failure_reason). Exactly one range - or one bare year, or one
     unlabeled range among labeled ones - parses; anything else is the
     reviewer's problem, not a guess."""
-    cleaned = _COMMENT.sub(" ", _REF.sub(" ", raw))
+    cleaned = _DASH_TEMPLATE.sub("–", _COMMENT.sub(" ", _REF.sub(" ", raw)))
     ranges = _YEAR_RANGE.findall(cleaned)
     if len(ranges) == 1:
         return _make_span(*ranges[0])
