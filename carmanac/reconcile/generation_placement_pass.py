@@ -371,11 +371,15 @@ class _PlacementPass:
         if candidate is None:
             observed = None
         else:
-            generation = self.generations[candidate.generation_id]
-            # An unaddressed generation is still a real placement; naming it
-            # by row keeps the decision log honest instead of writing "None".
-            named = generation.slug or f"#{generation.id}"
-            observed = f"{named}[{candidate.span.start}–{candidate.span.end or 'present'}]"
+            # The generation is named by ROW, never by address. A slug is a
+            # projection that may be recomposed at any time, and citing one
+            # here made 1,369 placement assertions supersede themselves the
+            # first time the grammar changed - an address rewriting history
+            # it has no business touching. The placement itself is the FK.
+            observed = (
+                f"generation:{candidate.generation_id}"
+                f"[{candidate.span.start}–{candidate.span.end or 'present'}]"
+            )
         live = self.live_placements.get(configuration.id)
         target = None if candidate is None else candidate.generation_id
         record_id = None if candidate is None else candidate.raw_record_id
