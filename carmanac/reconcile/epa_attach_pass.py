@@ -63,7 +63,7 @@ from carmanac.ingest.epa.bulk import EPA_SOURCE_NAME
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import DecisionLog
+from carmanac.reconcile.bookkeeping import DecisionLog, alias_addresses, hold_address_lock
 from carmanac.reconcile.engine import current_records, supersede
 from carmanac.reconcile.matching import normalize_name
 
@@ -195,6 +195,7 @@ class _EpaAttachPass:
     entry point. Deliberately not reusable across runs."""
 
     def __init__(self, session: Session):
+        hold_address_lock(session)
         self.session = session
         self.stats = EpaAttachStats()
         self.source = get_source(session, EPA_SOURCE_NAME)
@@ -306,6 +307,8 @@ class _EpaAttachPass:
         ):
             self.config_by_key[(period_id, trim, market_id, dt_id, body_id)] = cfg_id
             self.config_slugs.add(slug)
+        # Retired addresses stay occupied (ADR 0019).
+        self.config_slugs.update(slug for _, slug in alias_addresses(session, "configuration"))
 
         self.vehicle_external: set[str] = set(
             session.scalars(

@@ -14,12 +14,18 @@ bookkeeping rather than collide with it.
 
 from __future__ import annotations
 
-from sqlalchemy import func, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from carmanac.db.models import MatchDecision, RawRecord, ReconciledRecord
+from carmanac.db.models import MatchDecision, RawRecord, ReconciledRecord, SlugAlias
+from carmanac.db.models.reconciliation import ALIAS_ARC_BY_KIND
 from carmanac.reconcile import policy
+
+# One lock for every address writer (ADR 0019): the mint-capable passes and
+# the rename/merge scripts. Arbitrary constant; what matters is that all of
+# them use the same one.
+_ADDRESS_LOCK_KEY = 0x0019_ADD2
 
 # Rows per INSERT. Postgres caps a statement at 65535 bind parameters and a
 # decision row has ~9 columns, so this sits an order of magnitude below it.
@@ -48,6 +54,46 @@ def mark_reconciled(session: Session, record: RawRecord) -> None:
             },
         )
     )
+
+
+def hold_address_lock(session: Session) -> None:
+    """Serialize address writers (ADR 0019).
+
+    Session-level advisory lock, not transaction-level, because the big
+    passes commit in chunks and must stay covered across their commits.
+    `unlock_all` first: pooled connections inherit lock counts from earlier
+    holders on the same connection, and without the reset a stale stack
+    would make a fresh writer on another connection fail forever. Fail-fast
+    rather than block - the operator re-runs when the other writer is done.
+    Released with the connection.
+    """
+    session.execute(text("SELECT pg_advisory_unlock_all()"))
+    got = session.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _ADDRESS_LOCK_KEY})
+    if not got.scalar():
+        raise RuntimeError(
+            "another address writer (a pass run or a rename/merge script) holds "
+            "the advisory lock; retry when it finishes"
+        )
+
+
+def alias_addresses(session: Session, kind: str) -> dict[tuple[int | None, str], int]:
+    """One kind's retired addresses: (scope_company_id, slug) -> current row.
+
+    Every mint site unions these into its occupancy state so a freed address
+    is never re-minted (the INSERT trigger is the mechanical backstop; this
+    keeps the polite path a flag instead of an aborted run), and the line
+    lookup resolves through them so a renamed line matches its own row
+    instead of duplicate-minting.
+    """
+    arc = getattr(SlugAlias, ALIAS_ARC_BY_KIND[kind])
+    return {
+        (scope, slug): target
+        for scope, slug, target in session.execute(
+            select(SlugAlias.scope_company_id, SlugAlias.slug, arc).where(
+                SlugAlias.entity_kind == kind
+            )
+        )
+    }
 
 
 class DecisionLog:

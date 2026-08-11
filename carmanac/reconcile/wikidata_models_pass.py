@@ -69,7 +69,13 @@ from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikidata.models import SWEEP_MARKER
 from carmanac.ingest.wikipedia import SOURCE_NAME as WIKIPEDIA_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled, trigram_candidates
+from carmanac.reconcile.bookkeeping import (
+    DecisionLog,
+    alias_addresses,
+    hold_address_lock,
+    mark_reconciled,
+    trigram_candidates,
+)
 from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata_models
@@ -152,6 +158,7 @@ class _WikidataModelsPass:
     entry point. Deliberately not reusable across runs."""
 
     def __init__(self, session: Session):
+        hold_address_lock(session)
         self.session = session
         self.stats = WikidataModelsStats()
         self.source = get_source(session, wikidata_models.SOURCE_NAME)
@@ -271,9 +278,13 @@ class _WikidataModelsPass:
         resolve against."""
         session = self.session
         # Lines resolve by natural key - they hold no external ids (§4).
+        # The lookup falls through to retired addresses (ADR 0019): a renamed
+        # line must match its own row, not duplicate-mint under its old slug.
         self.line_by_key: dict[tuple[int, str], int] = {
             (line.company_id, line.slug): line.id for line in session.scalars(select(ModelLine))
         }
+        for key, line_id in alias_addresses(session, "model_line").items():
+            self.line_by_key.setdefault(key, line_id)
         self.line_by_qid: dict[str, int] = {}  # this run's line resolutions
 
         # Live memberships this source already asserts, for idempotent re-runs.
@@ -288,10 +299,12 @@ class _WikidataModelsPass:
         }
 
         # Generation slugs per company (ADR 0016 anchoring), for collision
-        # detection before INSERT.
+        # detection before INSERT. Retired addresses stay occupied (ADR 0019).
         self.generation_by_company_slug: dict[tuple[int, str], int] = {
             (g.company_id, g.slug): g.id for g in session.scalars(select(Generation))
         }
+        for key, generation_id in alias_addresses(session, "generation").items():
+            self.generation_by_company_slug.setdefault(key, generation_id)
 
         # Live generation-model links: this source's own (for idempotent
         # re-runs) and the sourceless migration seeds (to adopt - a sourced

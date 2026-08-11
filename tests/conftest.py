@@ -131,7 +131,8 @@ def db(engine: Engine) -> Iterator[Session]:
                 """
                 TRUNCATE raw_scrape.raw_records,
                          reconciled_records, reconciliation_flags,
-                         match_decisions, external_ids, field_provenance,
+                         match_decisions, slug_aliases, external_ids,
+                         field_provenance,
                          countries, configuration_attributes,
                          configuration_engines, configuration_transmissions,
                          company_role_assignments, vehicle_derivations,

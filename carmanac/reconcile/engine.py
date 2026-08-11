@@ -52,7 +52,7 @@ from carmanac.db.models import (
     Source,
 )
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import mark_reconciled
+from carmanac.reconcile.bookkeeping import alias_addresses, hold_address_lock, mark_reconciled
 from carmanac.reconcile.types import Assertion, MappedRecord
 
 log = logging.getLogger(__name__)
@@ -242,6 +242,7 @@ class CompaniesPass:
     Holds per-run caches, so it is not reusable across runs."""
 
     def __init__(self, session: Session, mapper: ModuleType):
+        hold_address_lock(session)
         self.session = session
         self.mapper = mapper
         self.stats = PassStats()
@@ -263,7 +264,10 @@ class CompaniesPass:
                 )
             ).all()
         )
+        # Occupancy is live slugs plus retired addresses (ADR 0019): a freed
+        # address must never be silently re-minted.
         self.slugs: set[str] = set(session.scalars(select(Company.slug)))
+        self.slugs.update(slug for _, slug in alias_addresses(session, "company"))
         # Open-flag dedup keys: entity-scoped and record-scoped shapes.
         # Record-scoped flags key on EXTERNAL id, not raw_record id: a changed
         # payload lands a new raw row for the same entity, and its still-open

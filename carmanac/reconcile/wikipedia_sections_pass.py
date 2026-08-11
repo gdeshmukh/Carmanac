@@ -54,7 +54,12 @@ from carmanac.db.models import (
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikipedia import SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled
+from carmanac.reconcile.bookkeeping import (
+    DecisionLog,
+    alias_addresses,
+    hold_address_lock,
+    mark_reconciled,
+)
 from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
 from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes
 from carmanac.reconcile.sources.wikipedia_infobox import (
@@ -123,6 +128,7 @@ class WikipediaSectionsStats:
 
 class _SectionsPass:
     def __init__(self, session: Session):
+        hold_address_lock(session)
         self.session = session
         self.stats = WikipediaSectionsStats()
         self.source = get_source(session, SOURCE_NAME)
@@ -180,6 +186,9 @@ class _SectionsPass:
         self.generation_by_company_slug: dict[tuple[int, str], int] = {
             (g.company_id, g.slug): g.id for g in self.generations.values()
         }
+        # Retired addresses stay occupied (ADR 0019).
+        for key, generation_id in alias_addresses(self.session, "generation").items():
+            self.generation_by_company_slug.setdefault(key, generation_id)
 
     def _load_links(self) -> None:
         """Live links per model (any source - the candidate gate placement
