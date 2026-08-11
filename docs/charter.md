@@ -170,6 +170,11 @@ Core tables (Phase 1 target):
   (ADR 0002).
 - `external_ids` — `(source, external_id)` → entity mapping, incl. Wikidata
   QIDs (ADR 0003). Written only on one-to-one correspondence (ADR 0011 §4).
+- `slug_aliases` — every address an entity ever wore (ADR 0019): trigger-
+  written on rename, script-written on merge, append-only, consulted by
+  every mint site so a freed address is never re-minted. Reconciler
+  bookkeeping (no provenance columns) of the durable-adopted-state species:
+  a re-run cannot recompute it, so nothing may reset it.
 - `reconciled_records`, `reconciliation_flags`, `match_decisions` — the
   reconciler's own bookkeeping: which raw records a pass has processed at
   which version, the open review questions with their candidates, and the
@@ -231,16 +236,25 @@ then flag for review.
 
 ## URL / Page Structure
 
-The frontend route map mirrors the entity hierarchy (public slug for the leaf
-is pending the slug-strategy ADR; it need not literally be `configurations`):
+The route map mirrors the entity hierarchy (ADR 0019 fixed the open pieces:
+canonical addresses are slug-only, ids never appear in public routes, and
+every retired address survives as a `slug_aliases` row):
 
 - `/makes/<company-slug>` — company page (a make is a company holding the
   `manufacturer` role)
-- `/makes/<company-slug>/<model-slug>` — model page
-- `/makes/<company-slug>/<model-slug>/<generation-slug>` — generation page
-- `/configurations/<configuration-slug-or-id>` — configuration detail
+- `/makes/<company-slug>/<model-slug>` — model page (models own the bare
+  second segment; other kinds live under reserved literals)
+- `/makes/<company-slug>/generations/<generation-slug>` — the generation
+  page's canonical address (company-anchored, matching ADR 0016; stable
+  against link/placement churn). `/makes/<c>/<model>/<generation-slug>`
+  stays a valid non-canonical form for every live-linked model — a
+  contextual form, not a durable promise.
+- `/makes/<company-slug>/lines/<line-slug>` — line browse view
+- `/makes/<company-slug>/codes/<code>` — chassis-code view (a query, not an
+  entity: no row, no alias history)
+- `/cars/<configuration-slug>` — configuration detail (the focal page)
 - `/engines/<engine-slug>` — engine detail + list of configurations using it
-- `/compare?configurations=a,b,c` — comparison view
+- `/compare?cars=a,b,c` — comparison view
 
 ## Working Rules
 

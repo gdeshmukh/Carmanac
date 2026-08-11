@@ -92,13 +92,40 @@ class PassStats:
         )
 
 
-def slugify(name: str, external_id: str) -> str:
-    """Deterministic display slug (ADR 0007 §7): ASCII-folded, lowercased,
-    hyphenated. A name with no ASCII representation (e.g. fully CJK) falls
-    back to the external id, which is stable and unique by construction."""
-    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
-    return slug or external_id.lower()
+# The dash family folds to a hyphen BEFORE the ASCII strip: NFKD cannot
+# decompose an en dash, so "Renault–Nissan" used to lose its boundary
+# entirely (`renaultnissan...`).
+_DASHES = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212", "-"))
+
+_YEAR_RANGE_PREFIX = re.compile(r"^\d{4}-\d{4}(?:-|$)")
+
+
+def slugify(name: str) -> str:
+    """Deterministic display slug (ADR 0007 §7, amended by ADR 0019 §2):
+    ASCII-folded, lowercased, hyphenated. A name with no ASCII representation
+    (e.g. fully CJK) yields "" and the caller flags for a curated
+    romanization - the old external-id fallback leaked a source's identifier
+    scheme into public identity, the same wart as the QID collision suffix."""
+    folded = (
+        unicodedata.normalize("NFKD", name.translate(_DASHES))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    return re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
+
+
+def nonconforming_slug(slug: str) -> str | None:
+    """ADR 0019 §4: the observed drift classes no generation mint may repeat.
+    A year-range prefix is a section heading slugged whole (its span belongs
+    in facts, never identity); a `category-` prefix is a leaked source page
+    title. Returns the reason, or None for a conforming slug."""
+    if not slug:
+        return "no_ascii_name"
+    if _YEAR_RANGE_PREFIX.match(slug):
+        return "year_range_prefix"
+    if slug.startswith("category-"):
+        return "source_artifact_title"
+    return None
 
 
 def _sort_key(external_id: str) -> tuple[int, int | str]:
@@ -268,6 +295,7 @@ class CompaniesPass:
         # address must never be silently re-minted.
         self.slugs: set[str] = set(session.scalars(select(Company.slug)))
         self.slugs.update(slug for _, slug in alias_addresses(session, "company"))
+        self.slugs.update(policy.RESERVED_COMPANY_SLUGS)
         # Open-flag dedup keys: entity-scoped and record-scoped shapes.
         # Record-scoped flags key on EXTERNAL id, not raw_record id: a changed
         # payload lands a new raw row for the same entity, and its still-open
@@ -370,9 +398,22 @@ class CompaniesPass:
             self._open_record_flag(record, {"reason": "no_usable_label"})
             return None
 
-        slug = slugify(mapped.name, qid)
+        # Flag-never-suffix (ADR 0019 §2, replacing §7's QID suffix): a pin
+        # is a recorded human judgment; anything unpinnable that collides -
+        # with a live slug, a retired address, or a reserved bare - waits in
+        # quarantine until a human disambiguates. The cheap error stays the
+        # recoverable one.
+        slug = policy.COMPANY_SLUG_OVERRIDES.get(qid)
+        if slug is None:
+            slug = slugify(mapped.name)
+            if not slug:
+                self._open_record_flag(
+                    record, {"reason": "needs_curated_slug", "name": mapped.name}
+                )
+                return None
         if slug in self.slugs:
-            slug = f"{slug}-{qid.lower()}"  # §7: QID suffix on collision
+            self._open_record_flag(record, {"reason": "namesake_collision", "slug": slug})
+            return None
         company = Company(slug=slug, name=mapped.name)
         self.session.add(company)
         self.session.flush()

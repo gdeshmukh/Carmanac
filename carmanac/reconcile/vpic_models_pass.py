@@ -183,7 +183,15 @@ class _VpicModelsPass:
             self._flag(record, "no_usable_label", {"model_id": record.payload.get("model_id")})
             return None
 
-        slug = slugify(name, record.external_id)
+        slug = slugify(name)
+        if not slug:
+            self._flag(record, "needs_curated_slug", {"model_name": name})
+            return None
+        if slug in policy.RESERVED_ROUTE_SEGMENTS:
+            # Models own the bare segment under /makes/<company>/ - except
+            # the literals other kinds live under (ADR 0019 §6).
+            self._flag(record, "reserved_segment", {"model_name": name, "slug": slug})
+            return None
         occupant_id = self.by_company_slug.get((company_id, slug))
         if occupant_id is not None:
             occupant = self.session.get(Model, occupant_id)

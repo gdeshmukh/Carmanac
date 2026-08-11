@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "15"
+RECONCILER_VERSION = "16"
 
 # --- identity --------------------------------------------------------------
 
@@ -233,6 +233,30 @@ SECTION_ARTICLE_MODELS: dict[str, str] = {
     "Q18011551": "mercedes-benz/amg-gt",
     "Q50368653": "mercedes-benz/amg-gt",
 }
+
+# Curated company slugs (ADR 0019 §2): QID -> full slug, for companies whose
+# mechanical slug collides with a live, aliased, or reserved address - or has
+# no ASCII form. Each entry is a recorded human judgment (the encyclopedia's
+# disambiguating parenthetical: place, era, or product - `meteor-detroit`,
+# `standard-coventry`); a pin freezes the judgment, so addresses never move
+# when a country or founding-year fact is later arbitrated. Grown by
+# resolving `namesake_collision` / `needs_curated_slug` admission flags.
+COMPANY_SLUG_OVERRIDES: dict[str, str] = {}
+
+# Bare slugs no company may hold (ADR 0019 §2): a contested namesake cluster
+# retires its bare base here - nobody owns `meteor`, and the reserved address
+# later serves a disambiguation page. Code, not data, so occupation survives
+# any rebuild. Grown by the company rename batch, one base per vacated
+# cluster, in the same commit that pins the members.
+RESERVED_COMPANY_SLUGS: frozenset[str] = frozenset()
+
+# Route segments under /makes/<company>/ that can never be a model or line
+# slug (ADR 0019 §6): models own the bare second segment, every other kind
+# lives under one of these literals. Checked at mint time; zero live
+# conflicts existed when the list landed.
+RESERVED_ROUTE_SEGMENTS: frozenset[str] = frozenset(
+    {"generations", "lines", "codes", "engines", "transmissions", "platforms", "cars", "compare"}
+)
 
 # Wrong-grain generation verdicts (ADR 0018 §1): QID -> verdict slug, for
 # Wikidata entities whose P179 membership minted a generation row that a

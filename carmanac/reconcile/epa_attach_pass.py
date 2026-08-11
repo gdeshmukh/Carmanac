@@ -64,7 +64,7 @@ from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
 from carmanac.reconcile.bookkeeping import DecisionLog, alias_addresses, hold_address_lock
-from carmanac.reconcile.engine import current_records, supersede
+from carmanac.reconcile.engine import current_records, slugify, supersede
 from carmanac.reconcile.matching import normalize_name
 
 log = logging.getLogger(__name__)
@@ -535,24 +535,28 @@ class _EpaAttachPass:
             self.stats.periods_created += 1
         return pid
 
-    def _slug(self, group: _Group) -> str:
+    def _slug(self, group: _Group) -> str | None:
+        """Composed leaf address (ADR 0019 §5): company · model · year ·
+        [trim] · [drivetrain], every token through the shared slugify (the
+        private per-token grammar minted 38 double-hyphen slugs). Body and
+        market tokens join the composition when a source first asserts them;
+        the US omission is a frozen grammar constant, which is what keeps the
+        whole existing fleet conformant. None = the address is taken: the
+        counter that used to absorb this papered over an unreconciled
+        duplicate, so the group flags and mints nothing."""
         model = self.models[group.model_id]
         company = self.companies[model.company_id]
         parts = [company.slug, model.slug, str(group.year)]
         if group.trim:
-            trim_slug = "-".join(
-                "".join(ch for ch in tok.casefold() if ch.isalnum()) for tok in group.trim.split()
-            ).strip("-")
+            trim_slug = slugify(group.trim)
             if trim_slug:
                 parts.append(trim_slug)
         code = self.drivetrain_code_by_id.get(group.drivetrain_id)
         if code:
             parts.append(code)
-        base = "-".join(p for p in parts if p)
-        slug, n = base, 1
-        while slug in self.config_slugs:
-            n += 1
-            slug = f"{base}-{n}"
+        slug = "-".join(parts)
+        if slug in self.config_slugs:
+            return None
         return slug
 
     def _materialize(self, group: _Group) -> None:
@@ -579,12 +583,24 @@ class _EpaAttachPass:
 
         rep = min(group.members, key=lambda m: m[0].id)[0]
         if created:
+            slug = self._slug(group)
+            if slug is None:
+                self._flag(
+                    rep,
+                    "configuration_slug_collision",
+                    rep.payload.get("make", ""),
+                    rep.payload.get("model", ""),
+                    {"trim": group.trim, "year": group.year},
+                )
+                for member, _, _ in group.members:
+                    self.decisions.record(member, "flagged_slug_collision")
+                return
             config = Configuration(
                 catalogue_period_id=period_id,
                 market_region_id=self.us_market_id,
                 trim_name=group.trim,
                 drivetrain_id=group.drivetrain_id,
-                slug=self._slug(group),
+                slug=slug,
                 **agreed,
             )
             self.session.add(config)

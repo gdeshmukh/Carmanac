@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
@@ -61,8 +61,14 @@ from carmanac.reconcile.bookkeeping import (
     mark_reconciled,
     validate_registry_pairs,
 )
-from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
-from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes
+from carmanac.reconcile.engine import (
+    assert_field_facts,
+    current_records,
+    nonconforming_slug,
+    slugify,
+)
+from carmanac.reconcile.matching import normalize_name
+from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes, strip_prefix
 from carmanac.reconcile.sources.wikipedia_infobox import (
     infobox_field,
     parse_span,
@@ -139,6 +145,7 @@ class _SectionsPass:
 
         self.current = current_records(session, self.source.id)
         self._load_routing()
+        self._load_strip_prefixes()
         self._load_generations()
         self._load_links()
         self._load_section_keys()
@@ -180,6 +187,30 @@ class _SectionsPass:
                 log.warning("SECTION_ARTICLE_MODELS[%s] -> %r: no such model yet", qid, pair)
                 continue
             self.model_by_qid[qid] = model_id
+
+    def _load_strip_prefixes(self) -> None:
+        """ADR 0013 §1 name forms per company - its own name plus its vPIC
+        make name(s), longest first - for the stripped display rule
+        (ADR 0019 §4). The same query the wd-models pass runs."""
+        norms: dict[int, set[str]] = {
+            cid: {normalize_name(name)}
+            for cid, name in self.session.execute(select(Company.id, Company.name))
+        }
+        for company_id, make_name in self.session.execute(
+            text(
+                """SELECT DISTINCT ei.company_id, rr.payload->>'make_name'
+                   FROM external_ids ei
+                   JOIN sources s ON s.id = ei.source_id AND s.name = 'NHTSA vPIC'
+                   JOIN raw_scrape.raw_records rr
+                     ON rr.source_id = s.id AND rr.external_id = ei.external_id
+                   WHERE ei.external_id LIKE 'make:%' AND ei.company_id IS NOT NULL"""
+            )
+        ):
+            if make_name:
+                norms.setdefault(company_id, set()).add(normalize_name(make_name))
+        self.company_prefixes: dict[int, tuple[str, ...]] = {
+            cid: tuple(sorted(ns, key=len, reverse=True)) for cid, ns in norms.items()
+        }
 
     def _load_generations(self) -> None:
         self.generations: dict[int, Generation] = {
@@ -448,10 +479,20 @@ class _SectionsPass:
             self.stats.assertions_superseded += superseded
 
     def _display_name(self, model: Model, section: GenerationSection) -> str:
+        # Stripped nameplate (ADR 0019 §4, amending ADR 0017 §4): the same
+        # ADR 0013 §1 rule the Wikidata mint follows, so one kind stops
+        # wearing two conventions and section-born slugs stop embedding
+        # corporate-name marques.
+        name = model.name
+        for prefix in self.company_prefixes.get(model.company_id, ()):
+            stripped = strip_prefix(name, prefix, normalize_name)
+            if stripped != name:
+                name = stripped
+                break
         if section.codes:
-            return f"{model.name} ({'/'.join(section.codes)})"
+            return f"{name} ({'/'.join(section.codes)})"
         word = ORDINAL_WORDS[section.ordinal - 1]
-        return f"{model.name} ({word} generation)"
+        return f"{name} ({word} generation)"
 
     def _reconcile_section(
         self, section: GenerationSection, competitors: set[int]
@@ -603,7 +644,24 @@ class _SectionsPass:
         planned: dict[int, tuple[GenerationSection, str, str]] = {}
         for section in to_mint:
             display = self._display_name(model, section)
-            slug = slugify(display, f"{qid.lower()}-{section.ordinal}")
+            slug = slugify(display)
+            reason = nonconforming_slug(slug)
+            if reason is not None:
+                # The drift guard (ADR 0019 §4), all-or-nothing as ever.
+                self._flag_article(
+                    qid,
+                    model_id,
+                    record,
+                    "generation_slug_nonconforming",
+                    {"title": parsed.title, "slug": slug, "reason": reason},
+                )
+                self.stats.flagged_articles += 1
+                self.decisions.record(
+                    record,
+                    "flagged_sections",
+                    detail={"reason": "nonconforming_slug", "slug": slug},
+                )
+                return
             occupant = self.generation_by_company_slug.get((model.company_id, slug))
             if occupant is not None or any(s == slug for _, _, s in planned.values()):
                 self._flag_article(

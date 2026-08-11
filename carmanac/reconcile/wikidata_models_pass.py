@@ -77,7 +77,12 @@ from carmanac.reconcile.bookkeeping import (
     trigram_candidates,
     validate_registry_pairs,
 )
-from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
+from carmanac.reconcile.engine import (
+    assert_field_facts,
+    current_records,
+    nonconforming_slug,
+    slugify,
+)
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata_models
 from carmanac.reconcile.sources.wikidata_models import (
@@ -922,7 +927,10 @@ class _WikidataModelsPass:
                 continue
             company_id = subject.held_companies[0]
             name = self._strip(entity.label, company_id)
-            slug = slugify(name, qid)
+            slug = slugify(name)
+            if not slug or slug in policy.RESERVED_ROUTE_SEGMENTS:
+                self._decide(subject, "4", None, "line_waits_unslugable", {"name": name})
+                continue
             key = (company_id, slug)
             line_id = self.line_by_key.get(key)
             if line_id is None:
@@ -1016,7 +1024,24 @@ class _WikidataModelsPass:
         entity = subject.entity
         model = self.models[model_id]
         display = self._strip(entity.label, model.company_id)
-        slug = slugify(display, entity.qid)
+        slug = slugify(display)
+        reason = nonconforming_slug(slug)
+        if reason is not None:
+            # The drift guard (ADR 0019 §4): a label shaped like a section
+            # heading or a source page title flags instead of minting.
+            self._flag(
+                subject,
+                "generation_slug_nonconforming",
+                {"label": entity.label, "slug": slug, "reason": reason},
+            )
+            self._decide(
+                subject,
+                "5",
+                "p179_member_of_matched_model",
+                "flagged_nonconforming_slug",
+                {"model": self._slug_pair(model_id), "slug": slug, "reason": reason},
+            )
+            return
         occupant = self.generation_by_company_slug.get((model.company_id, slug))
         if occupant is not None:
             # Two source entities, one slug, one model: usually Wikidata's

@@ -187,9 +187,14 @@ def test_empty_class_set_quarantines():
 
 
 def test_slugify():
-    assert slugify("Škoda Auto", "Q29637") == "skoda-auto"
-    assert slugify("BMW", "Q26678") == "bmw"
-    assert slugify("一汽", "Q166885") == "q166885"  # no ASCII at all -> QID
+    assert slugify("Škoda Auto") == "skoda-auto"
+    assert slugify("BMW") == "bmw"
+    # No ASCII at all -> "": the caller flags for a curated romanization
+    # (ADR 0019 §2); an id-derived address would leak the source's scheme.
+    assert slugify("一汽") == ""
+    # The dash family folds to a hyphen before the ASCII strip - an en dash
+    # used to vanish and weld its neighbours together.
+    assert slugify("Renault\u2013Nissan") == "renault-nissan"
 
 
 # --- engine integration -------------------------------------------------------
@@ -457,11 +462,22 @@ def test_defunct_before_founded_flags(db, wikidata_source):
     assert flag.field_name == "defunct_year"
 
 
-def test_slug_collision_gets_qid_suffix(db, wikidata_source):
-    """Two distinct marques, one name: ascending-QID order gives the lower QID
-    the bare slug, deterministically (ADR 0007 §1/§7)."""
+def test_slug_collision_flags_until_pinned(db, wikidata_source, monkeypatch):
+    """Two distinct marques, one name (ADR 0019 §2, replacing §7's QID
+    suffix): the later namesake mints nothing and waits in quarantine; a
+    curated pin - a recorded human judgment - is what mints it, and the
+    address is then the pin, never a source-derived suffix."""
     _land(db, wikidata_source, "Q100", label="Eagle", classes=("Q786820",))
     _land(db, wikidata_source, "Q200", label="Eagle", classes=("Q786820",))
     run_companies_pass(db, wikidata)
-    slugs = set(db.scalars(select(Company.slug)))
-    assert slugs == {"eagle", "eagle-q200"}
+    assert set(db.scalars(select(Company.slug))) == {"eagle"}
+    flag = db.scalars(
+        select(ReconciliationFlag).where(
+            ReconciliationFlag.detail["reason"].astext == "namesake_collision"
+        )
+    ).one()
+    assert flag.status == "open"
+
+    monkeypatch.setitem(policy.COMPANY_SLUG_OVERRIDES, "Q200", "eagle-talon")
+    run_companies_pass(db, wikidata)
+    assert set(db.scalars(select(Company.slug))) == {"eagle", "eagle-talon"}
