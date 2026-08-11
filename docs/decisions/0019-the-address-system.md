@@ -1,6 +1,6 @@
 # ADR 0019 — Slugs are addresses, not identity
 
-- Status: Proposed (2026-08-11) — implementation rides this branch
+- Status: Accepted (2026-08-11) — implemented and applied live in PR #37
 - Date: 2026-08-11
 
 ## Context
