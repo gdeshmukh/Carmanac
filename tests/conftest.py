@@ -30,7 +30,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from carmanac.config import settings
 from carmanac.db.models import Source
-from carmanac.reconcile import policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -127,16 +126,12 @@ def db(engine: Engine) -> Iterator[Session]:
         yield session
         session.rollback()
     with engine.begin() as conn:
-        # slug_aliases is guarded against TRUNCATE (ADR 0019): recorded address
-        # history is unrecomputable, so discarding it is always deliberate.
-        conn.execute(text("SET LOCAL carmanac.allow_address_drop = 'on'"))
         conn.execute(
             text(
                 """
                 TRUNCATE raw_scrape.raw_records,
                          reconciled_records, reconciliation_flags,
-                         match_decisions, slug_aliases, external_ids,
-                         field_provenance,
+                         match_decisions, external_ids, field_provenance,
                          countries, configuration_attributes,
                          configuration_engines, configuration_transmissions,
                          company_role_assignments, vehicle_derivations,
@@ -148,17 +143,6 @@ def db(engine: Engine) -> Iterator[Session]:
                 """
             )
         )
-
-
-@pytest.fixture(autouse=True)
-def _empty_slug_registries(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The slug-pair registries describe the PRODUCTION catalogue, and the
-    ADR 0019 §3 validation aborts any pass whose entries do not resolve - a
-    synthetic test spine never contains them. Tests exercising registry
-    behavior patch their own entries on top of these."""
-    monkeypatch.setattr(policy, "SECTION_ARTICLE_MODELS", {})
-    monkeypatch.setattr(policy, "WIKIDATA_MODEL_MATCHES", {})
-    monkeypatch.setattr(policy, "WIKIDATA_MODEL_NEGATIVES", frozenset())
 
 
 @pytest.fixture()

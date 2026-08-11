@@ -115,6 +115,13 @@ as a decision to revisit — never slipped in silently.
 - **Wikidata QID is the universal join key** wherever a vehicle entity has one
   — stored in `external_ids` alongside every other source's identifiers
   (ADR 0003), not as a per-table column.
+- **Slugs are display addresses, not identity** (ADR 0019). No registry, key,
+  lookup or join may identify a row by its slug; identity is the natural key
+  and `external_ids`. A row must be able to exist with no slug at all, and an
+  address is a **projection** — recomputed from current data on every run,
+  free to change until pages are published. The rule exists because it was
+  broken once: curated judgments keyed on slug pairs, so renaming a page
+  silently disarmed a human's recorded decision.
 
 ## Schema Overview
 
@@ -170,11 +177,6 @@ Core tables (Phase 1 target):
   (ADR 0002).
 - `external_ids` — `(source, external_id)` → entity mapping, incl. Wikidata
   QIDs (ADR 0003). Written only on one-to-one correspondence (ADR 0011 §4).
-- `slug_aliases` — every address an entity ever wore (ADR 0019): trigger-
-  written on rename, script-written on merge, append-only, consulted by
-  every mint site so a freed address is never re-minted. Reconciler
-  bookkeeping (no provenance columns) of the durable-adopted-state species:
-  a re-run cannot recompute it, so nothing may reset it.
 - `reconciled_records`, `reconciliation_flags`, `match_decisions` — the
   reconciler's own bookkeeping: which raw records a pass has processed at
   which version, the open review questions with their candidates, and the
@@ -237,8 +239,7 @@ then flag for review.
 ## URL / Page Structure
 
 The route map mirrors the entity hierarchy (ADR 0019 fixed the open pieces:
-canonical addresses are slug-only, ids never appear in public routes, and
-every retired address survives as a `slug_aliases` row):
+addresses are slug-only, and ids never appear in public routes):
 
 - `/makes/<company-slug>` — company page (a make is a company holding the
   `manufacturer` role)
@@ -251,7 +252,7 @@ every retired address survives as a `slug_aliases` row):
   contextual form, not a durable promise.
 - `/makes/<company-slug>/lines/<line-slug>` — line browse view
 - `/makes/<company-slug>/codes/<code>` — chassis-code view (a query, not an
-  entity: no row, no alias history)
+  entity: no row of its own)
 - `/cars/<configuration-slug>` — configuration detail (the focal page)
 - `/engines/<engine-slug>` — engine detail + list of configurations using it
 - `/compare?cars=a,b,c` — comparison view

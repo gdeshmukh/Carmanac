@@ -270,87 +270,45 @@ def main() -> int:
         ):
             print(f"  {pass_name:<16} {outcome:<28}: {n}")
 
-        # Registry + address health (ADR 0019 §3): the always-on loud check,
-        # run where the data exists - CI's registries are monkeypatched.
-        problems: list[str] = []
-        live_pairs = {
-            f"{co}/{m}"
-            for co, m in s.execute(
-                text(
-                    "SELECT co.slug, m.slug FROM models m JOIN companies co ON co.id = m.company_id"
-                )
-            )
-        }
-        for name, entries in (
-            ("WIKIDATA_MODEL_MATCHES", policy.WIKIDATA_MODEL_MATCHES.items()),
-            ("WIKIDATA_MODEL_NEGATIVES", policy.WIKIDATA_MODEL_NEGATIVES),
-            ("SECTION_ARTICLE_MODELS", policy.SECTION_ARTICLE_MODELS.items()),
+        # Unaddressed rows ARE the address queue - a contested namesake or an
+        # unnameable generation has no slug, and that is the whole signal. The
+        # registries are checked here rather than in CI, where they are stubs.
+        for label, sql in (
+            ("companies", "SELECT count(*) FROM companies WHERE slug IS NULL"),
+            ("generations", "SELECT count(*) FROM generations WHERE slug IS NULL"),
+            ("configurations", "SELECT count(*) FROM configurations WHERE slug IS NULL"),
         ):
-            for key, pair in entries:
-                if pair not in live_pairs:
-                    problems.append(f"{name} ({key}, {pair!r}): pair not live")
-        known_qids = {
+            print(f"  unaddressed {label:<16}: {s.execute(text(sql)).scalar()}")
+        known = {
             qid
             for (qid,) in s.execute(
                 text("SELECT external_id FROM external_ids WHERE external_id LIKE 'Q%'")
             )
         }
-        for name, qids in (
-            ("NOT_A_GENERATION", policy.NOT_A_GENERATION),
-            ("IDENTITY_MERGES canonical", set(policy.IDENTITY_MERGES.values())),
-        ):
-            for qid in qids:
-                if qid not in known_qids:
-                    problems.append(f"{name} {qid}: no external_ids row")
-        for slug in sorted(policy.RESERVED_COMPANY_SLUGS):
-            if s.execute(text("SELECT 1 FROM companies WHERE slug = :s"), {"s": slug}).scalar():
-                problems.append(f"reserved company slug is live: {slug}")
-            if s.execute(
-                text("SELECT 1 FROM slug_aliases WHERE entity_kind = 'company' AND slug = :s"),
-                {"s": slug},
-            ).scalar():
-                problems.append(f"reserved company slug is aliased: {slug}")
-        shadowed = s.execute(
-            text(
-                """
-                SELECT a.entity_kind, a.slug FROM slug_aliases a
-                WHERE EXISTS (
-                  SELECT 1 FROM companies c
-                  WHERE a.entity_kind = 'company' AND c.slug = a.slug
-                ) OR EXISTS (
-                  SELECT 1 FROM models m
-                  WHERE a.entity_kind = 'model' AND m.slug = a.slug
-                    AND m.company_id = a.scope_company_id
-                ) OR EXISTS (
-                  SELECT 1 FROM model_lines l
-                  WHERE a.entity_kind = 'model_line' AND l.slug = a.slug
-                    AND l.company_id = a.scope_company_id
-                ) OR EXISTS (
-                  SELECT 1 FROM generations g
-                  WHERE a.entity_kind = 'generation' AND g.slug = a.slug
-                    AND g.company_id = a.scope_company_id
-                ) OR EXISTS (
-                  SELECT 1 FROM configurations cf
-                  WHERE a.entity_kind = 'configuration' AND cf.slug = a.slug
-                ) OR EXISTS (
-                  SELECT 1 FROM engines e
-                  WHERE a.entity_kind = 'engine' AND e.slug = a.slug
-                ) OR EXISTS (
-                  SELECT 1 FROM transmissions t
-                  WHERE a.entity_kind = 'transmission' AND t.slug = a.slug
-                )
-                """
+        filings = {
+            key
+            for (key,) in s.execute(
+                text("SELECT external_id FROM external_ids WHERE model_id IS NOT NULL")
             )
-        ).all()
-        problems.extend(f"alias shadowed by a live {k} slug: {slug}" for k, slug in shadowed)
-        aliases = s.execute(text("SELECT count(*) FROM slug_aliases")).scalar()
-        print(f"slug aliases                  : {aliases}")
+        }
+        problems = [
+            f"{name} {key}: no external_ids row"
+            for name, keys, universe in (
+                ("NOT_A_GENERATION", policy.NOT_A_GENERATION, known),
+                ("IDENTITY_MERGES canonical", set(policy.IDENTITY_MERGES.values()), known),
+                ("COMPANY_SLUG_OVERRIDES", set(policy.COMPANY_SLUG_OVERRIDES), known),
+                ("SECTION_ARTICLE_MODELS", set(policy.SECTION_ARTICLE_MODELS.values()), filings),
+                ("WIKIDATA_MODEL_MATCHES", set(policy.WIKIDATA_MODEL_MATCHES.values()), filings),
+            )
+            for key in keys
+            if key not in universe
+        ]
         if problems:
-            print("REGISTRY/ADDRESS HEALTH: PROBLEMS")
+            print("REGISTRY HEALTH: PROBLEMS")
             for p in problems:
                 print(f"  !! {p}")
         else:
-            print("registry/address health       : ok")
+            print("registry health               : ok")
     return 0
 
 

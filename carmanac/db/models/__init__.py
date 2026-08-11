@@ -57,7 +57,6 @@ from carmanac.db.models.reconciliation import (
     MatchDecision,
     ReconciledRecord,
     ReconciliationFlag,
-    SlugAlias,
 )
 
 __all__ = [
@@ -99,7 +98,6 @@ __all__ = [
     "RawRecord",
     "ReconciledRecord",
     "ReconciliationFlag",
-    "SlugAlias",
     "Source",
     "Transmission",
     "TransmissionType",

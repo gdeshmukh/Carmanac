@@ -63,8 +63,9 @@ from carmanac.ingest.epa.bulk import EPA_SOURCE_NAME
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import DecisionLog, alias_addresses, hold_address_lock
-from carmanac.reconcile.engine import current_records, slugify, supersede
+from carmanac.reconcile.addressing import slugify
+from carmanac.reconcile.bookkeeping import DecisionLog
+from carmanac.reconcile.engine import current_records, supersede
 from carmanac.reconcile.matching import normalize_name
 
 log = logging.getLogger(__name__)
@@ -195,7 +196,6 @@ class _EpaAttachPass:
     entry point. Deliberately not reusable across runs."""
 
     def __init__(self, session: Session):
-        hold_address_lock(session)
         self.session = session
         self.stats = EpaAttachStats()
         self.source = get_source(session, EPA_SOURCE_NAME)
@@ -310,9 +310,8 @@ class _EpaAttachPass:
             )
         ):
             self.config_by_key[(period_id, trim, market_id, dt_id, body_id)] = cfg_id
-            self.config_slugs.add(slug)
-        # Retired addresses stay occupied (ADR 0019).
-        self.config_slugs.update(slug for _, slug in alias_addresses(session, "configuration"))
+            if slug:
+                self.config_slugs.add(slug)
 
         self.vehicle_external: set[str] = set(
             session.scalars(
@@ -536,16 +535,18 @@ class _EpaAttachPass:
         return pid
 
     def _slug(self, group: _Group) -> str | None:
-        """Composed leaf address (ADR 0019 §5): company · model · year ·
-        [trim] · [drivetrain], every token through the shared slugify (the
-        private per-token grammar minted 38 double-hyphen slugs). Body and
-        market tokens join the composition when a source first asserts them;
-        the US omission is a frozen grammar constant, which is what keeps the
-        whole existing fleet conformant. None = the address is taken: the
-        counter that used to absorb this papered over an unreconciled
-        duplicate, so the group flags and mints nothing."""
+        """Composed leaf address: company · model · year · [trim] ·
+        [drivetrain], every token through the shared slugify (the private
+        per-token grammar minted 38 double-hyphen slugs).
+
+        None means "no address available" - the parents have none, or the
+        composed string is taken. The car is created either way; the counter
+        that used to absorb a collision papered over an unreconciled duplicate
+        (`E350 4Matic` twice), so a taken address flags instead."""
         model = self.models[group.model_id]
         company = self.companies[model.company_id]
+        if not company.slug or not model.slug:
+            return None
         parts = [company.slug, model.slug, str(group.year)]
         if group.trim:
             trim_slug = slugify(group.trim)
@@ -585,6 +586,8 @@ class _EpaAttachPass:
         if created:
             slug = self._slug(group)
             if slug is None:
+                # The car lands regardless - an address is a page's name, and
+                # a car is not less real for wanting one that is taken.
                 self._flag(
                     rep,
                     "configuration_slug_collision",
@@ -592,9 +595,6 @@ class _EpaAttachPass:
                     rep.payload.get("model", ""),
                     {"trim": group.trim, "year": group.year},
                 )
-                for member, _, _ in group.members:
-                    self.decisions.record(member, "flagged_slug_collision")
-                return
             config = Configuration(
                 catalogue_period_id=period_id,
                 market_region_id=self.us_market_id,
@@ -607,7 +607,8 @@ class _EpaAttachPass:
             self.session.flush()
             cfg_id = config.id
             self.config_by_key[natural_key] = cfg_id
-            self.config_slugs.add(config.slug)
+            if slug:
+                self.config_slugs.add(slug)
             self.stats.configurations_created += 1
             self.config_cols[cfg_id] = {c: agreed.get(c) for c in SPEC_COLUMNS}
             # Field-level provenance (ADR 0002) from a representative record:

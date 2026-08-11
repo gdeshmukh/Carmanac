@@ -44,14 +44,12 @@ from carmanac.db.models import (
     MediaAttachment,
     Model,
     ReconciliationFlag,
-    SlugAlias,
     Source,
     Transmission,
     VehicleDerivation,
 )
 from carmanac.db.session import SessionLocal
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import hold_address_lock
 from carmanac.reconcile.sources import wikidata
 
 # Columns that would make a member company real catalogue data rather than a
@@ -87,8 +85,6 @@ def main() -> int:
     args = parser.parse_args()
 
     with SessionLocal() as session:
-        if args.execute:
-            hold_address_lock(session)
         source = session.scalars(select(Source).where(Source.name == wikidata.SOURCE_NAME)).one()
         qid_to_company: dict[str, int] = dict(
             session.execute(
@@ -140,30 +136,6 @@ def main() -> int:
                     update(ExternalId)
                     .where(ExternalId.company_id == member_company_id)
                     .values(company_id=canonical_company_id)
-                )
-                # The merge sequence ADR 0019 §1 requires, before the delete:
-                # forward the member's own address to the survivor, re-point
-                # aliases that targeted the member, and re-scope its
-                # per-company aliases (scope follows the merge-successor).
-                # The address triggers and arc FKs refuse the delete until
-                # all three have happened.
-                session.add(
-                    SlugAlias(
-                        entity_kind="company",
-                        slug=member.slug,
-                        company_id=canonical_company_id,
-                        reason="merge",
-                    )
-                )
-                session.execute(
-                    update(SlugAlias)
-                    .where(SlugAlias.company_id == member_company_id)
-                    .values(company_id=canonical_company_id)
-                )
-                session.execute(
-                    update(SlugAlias)
-                    .where(SlugAlias.scope_company_id == member_company_id)
-                    .values(scope_company_id=canonical_company_id)
                 )
                 session.execute(delete(Company).where(Company.id == member_company_id))
                 session.flush()

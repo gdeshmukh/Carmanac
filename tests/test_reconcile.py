@@ -26,7 +26,8 @@ from carmanac.db.models import (
 )
 from carmanac.ingest.wikidata.land import canonicalize, content_hash
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import nonconforming_slug, run_companies_pass, slugify
+from carmanac.reconcile.addressing import nonconforming_slug, recompute_addresses, slugify
+from carmanac.reconcile.engine import run_companies_pass
 from carmanac.reconcile.sources import wikidata
 from carmanac.reconcile.sources.wikidata import map_record
 
@@ -475,22 +476,18 @@ def test_defunct_before_founded_flags(db, wikidata_source):
     assert flag.field_name == "defunct_year"
 
 
-def test_slug_collision_flags_until_pinned(db, wikidata_source, monkeypatch):
-    """Two distinct marques, one name (ADR 0019 §2, replacing §7's QID
-    suffix): the later namesake mints nothing and waits in quarantine; a
-    curated pin - a recorded human judgment - is what mints it, and the
-    address is then the pin, never a source-derived suffix."""
+def test_slug_collision_flags_but_the_company_still_exists(db, wikidata_source, monkeypatch):
+    """Two distinct marques, one name: both companies exist - a source
+    asserted them, and an address is a page's name, not a condition of
+    being real. The one that cannot have the bare address has none, and
+    waits for a curated pin rather than a source-derived suffix."""
     _land(db, wikidata_source, "Q100", label="Eagle", classes=("Q786820",))
     _land(db, wikidata_source, "Q200", label="Eagle", classes=("Q786820",))
     run_companies_pass(db, wikidata)
-    assert set(db.scalars(select(Company.slug))) == {"eagle"}
-    flag = db.scalars(
-        select(ReconciliationFlag).where(
-            ReconciliationFlag.detail["reason"].astext == "namesake_collision"
-        )
-    ).one()
-    assert flag.status == "open"
+    assert db.scalar(select(func.count(Company.id))) == 2
+    assert sorted(db.scalars(select(Company.slug)), key=str) == [None, "eagle"]
 
     monkeypatch.setitem(policy.COMPANY_SLUG_OVERRIDES, "Q200", "eagle-talon")
     run_companies_pass(db, wikidata)
+    recompute_addresses(db)
     assert set(db.scalars(select(Company.slug))) == {"eagle", "eagle-talon"}

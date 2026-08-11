@@ -54,18 +54,14 @@ from carmanac.db.models import (
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikipedia import SOURCE_NAME
 from carmanac.reconcile import policy
+from carmanac.reconcile.addressing import nonconforming_slug, slugify
 from carmanac.reconcile.bookkeeping import (
     DecisionLog,
-    alias_addresses,
-    hold_address_lock,
     mark_reconciled,
-    validate_registry_pairs,
 )
 from carmanac.reconcile.engine import (
     assert_field_facts,
     current_records,
-    nonconforming_slug,
-    slugify,
 )
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes, strip_prefix
@@ -135,8 +131,6 @@ class WikipediaSectionsStats:
 
 class _SectionsPass:
     def __init__(self, session: Session):
-        hold_address_lock(session)
-        validate_registry_pairs(session)
         self.session = session
         self.stats = WikipediaSectionsStats()
         self.source = get_source(session, SOURCE_NAME)
@@ -177,14 +171,23 @@ class _SectionsPass:
                 )
             )
         }
-        slug_pair_to_model = {pair: model_id for model_id, pair in self.model_pairs.items()}
-        for qid, pair in policy.SECTION_ARTICLE_MODELS.items():
-            model_id = slug_pair_to_model.get(pair)
+        # The routing resolves through the model's own source id, never its
+        # address: re-addressing a page must not unroute a curated judgment.
+        model_by_external_id = {
+            external_id: model_id
+            for external_id, model_id in self.session.execute(
+                select(ExternalId.external_id, ExternalId.model_id).where(
+                    ExternalId.model_id.isnot(None)
+                )
+            )
+        }
+        for qid, key in policy.SECTION_ARTICLE_MODELS.items():
+            model_id = model_by_external_id.get(key)
             if model_id is None:
                 # A database that has not materialized the routed model yet
                 # (fresh clone, test DB): the article stays unrouted and
                 # waits, same as any other missing prerequisite.
-                log.warning("SECTION_ARTICLE_MODELS[%s] -> %r: no such model yet", qid, pair)
+                log.warning("SECTION_ARTICLE_MODELS[%s] -> %r: no such model yet", qid, key)
                 continue
             self.model_by_qid[qid] = model_id
 
@@ -219,9 +222,6 @@ class _SectionsPass:
         self.generation_by_company_slug: dict[tuple[int, str], int] = {
             (g.company_id, g.slug): g.id for g in self.generations.values()
         }
-        # Retired addresses stay occupied (ADR 0019).
-        for key, generation_id in alias_addresses(self.session, "generation").items():
-            self.generation_by_company_slug.setdefault(key, generation_id)
 
     def _load_links(self) -> None:
         """Live links per model (any source - the candidate gate placement

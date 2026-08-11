@@ -55,7 +55,11 @@ class Company(Base, TimestampMixin):
     __tablename__ = "companies"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # The public address, not identity: identity is the natural key and
+    # `external_ids`. NULL means no address is settled yet - a contested
+    # namesake waiting on a human judgment - never that the company is
+    # provisional.
+    slug: Mapped[str | None] = mapped_column(Text, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id"), index=True)
     founded_year: Mapped[int | None] = mapped_column(SmallInteger)
@@ -148,7 +152,7 @@ class Model(Base, TimestampMixin):
     # Points at `companies` regardless of role (ADR 0006), so Singer's product
     # lines get the same catalogue depth as BMW's with no exclusive arc.
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)
 
@@ -183,7 +187,7 @@ class ModelLine(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str] = mapped_column(Text, nullable=False)
 
     company: Mapped[Company] = relationship()
@@ -255,7 +259,7 @@ class Generation(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str | None] = mapped_column(Text)
     # One generation routinely spans several codes (E46 sedan/coupe/touring
     # carry different internal codes), hence an array rather than a scalar.
@@ -418,7 +422,7 @@ class Configuration(Base, TimestampMixin):
     # placed this car yet", visibly; the model -> year pages render it fully
     # either way. This is the goal level of the goal-per-car hierarchy.
     generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id"), index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
 
     # --- identity / classification (mostly NHTSA vPIC) ---
     trim_name: Mapped[str | None] = mapped_column(Text)  # 'M340i', 'LE', 'GTI Autobahn'

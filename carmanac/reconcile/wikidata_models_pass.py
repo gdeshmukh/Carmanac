@@ -69,19 +69,15 @@ from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikidata.models import SWEEP_MARKER
 from carmanac.ingest.wikipedia import SOURCE_NAME as WIKIPEDIA_SOURCE_NAME
 from carmanac.reconcile import policy
+from carmanac.reconcile.addressing import nonconforming_slug, slugify
 from carmanac.reconcile.bookkeeping import (
     DecisionLog,
-    alias_addresses,
-    hold_address_lock,
     mark_reconciled,
     trigram_candidates,
-    validate_registry_pairs,
 )
 from carmanac.reconcile.engine import (
     assert_field_facts,
     current_records,
-    nonconforming_slug,
-    slugify,
 )
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata_models
@@ -164,8 +160,6 @@ class _WikidataModelsPass:
     entry point. Deliberately not reusable across runs."""
 
     def __init__(self, session: Session):
-        hold_address_lock(session)
-        validate_registry_pairs(session)
         self.session = session
         self.stats = WikidataModelsStats()
         self.source = get_source(session, wikidata_models.SOURCE_NAME)
@@ -240,19 +234,33 @@ class _WikidataModelsPass:
             key=lambda t: len(t[0]),
             reverse=True,
         )
-        self.company_by_slug: dict[str, int] = {c.slug: c.id for c in self.companies.values()}
 
     def _load_models(self) -> None:
         """As-filed models, indexed for rung 3, plus each model's anchor QID."""
         session = self.session
         self.models: dict[int, Model] = {m.id: m for m in session.scalars(select(Model))}
         self.models_by_name: dict[int, dict[str, list[int]]] = {}
-        self.model_by_company_slug: dict[tuple[int, str], int] = {}
         for m in self.models.values():
             self.models_by_name.setdefault(m.company_id, {}).setdefault(
                 normalize_name(m.name), []
             ).append(m.id)
-            self.model_by_company_slug[(m.company_id, m.slug)] = m.id
+
+        # What the curated registries key on: the model's own source id. A
+        # model carries one per source that filed it (vPIC's `model:<id>` for
+        # every row we hold); the lowest sorts first so the key is stable
+        # whichever order external ids landed in.
+        self.model_source_key: dict[int, str] = {}
+        self.model_by_source_key: dict[str, int] = {}
+        for external_id, model_id in sorted(
+            session.execute(
+                select(ExternalId.external_id, ExternalId.model_id).where(
+                    ExternalId.model_id.isnot(None)
+                )
+            ),
+            reverse=True,
+        ):
+            self.model_source_key[model_id] = external_id
+            self.model_by_source_key[external_id] = model_id
 
         # Reverse of model_by_qid: the model's ONE QID (lowest wins if legacy
         # data ever holds several - the deterministic assert-anchor, same
@@ -284,14 +292,14 @@ class _WikidataModelsPass:
         """Lines, memberships and generation slugs - the structure rungs 4-5
         resolve against."""
         session = self.session
-        # Lines resolve by natural key - they hold no external ids (§4).
-        # The lookup falls through to retired addresses (ADR 0019): a renamed
-        # line must match its own row, not duplicate-mint under its old slug.
+        # Lines resolve by natural key - they hold no external ids (§4). The
+        # key is the normalized NAME, never the slug: a slug is an address,
+        # and re-addressing a line must not make the next run mint a second
+        # one under the freed string.
         self.line_by_key: dict[tuple[int, str], int] = {
-            (line.company_id, line.slug): line.id for line in session.scalars(select(ModelLine))
+            (line.company_id, normalize_name(line.name)): line.id
+            for line in session.scalars(select(ModelLine))
         }
-        for key, line_id in alias_addresses(session, "model_line").items():
-            self.line_by_key.setdefault(key, line_id)
         self.line_by_qid: dict[str, int] = {}  # this run's line resolutions
 
         # Live memberships this source already asserts, for idempotent re-runs.
@@ -306,12 +314,10 @@ class _WikidataModelsPass:
         }
 
         # Generation slugs per company (ADR 0016 anchoring), for collision
-        # detection before INSERT. Retired addresses stay occupied (ADR 0019).
+        # detection before INSERT.
         self.generation_by_company_slug: dict[tuple[int, str], int] = {
             (g.company_id, g.slug): g.id for g in session.scalars(select(Generation))
         }
-        for key, generation_id in alias_addresses(session, "generation").items():
-            self.generation_by_company_slug.setdefault(key, generation_id)
 
         # Live generation-model links: this source's own (for idempotent
         # re-runs) and the sourceless migration seeds (to adopt - a sourced
@@ -566,8 +572,16 @@ class _WikidataModelsPass:
         self.qid_by_model[model_id] = subject.entity.qid
 
     def _slug_pair(self, model_id: int) -> str:
+        """Readable model reference for decision detail and flag candidates -
+        display only. Registry lookups use `_model_key`."""
         model = self.models[model_id]
         return f"{self.companies[model.company_id].slug}/{model.slug}"
+
+    def _model_key(self, model_id: int) -> str | None:
+        """The model's own source id, which is what curated judgments key on.
+        None for a model no source has identified - it cannot be the subject
+        of a registry entry, so it can never be negated or curated either."""
+        return self.model_source_key.get(model_id)
 
     def _name_hits(self, subject: _Subject) -> dict[int, str]:
         """Rung 3: exact-normalized hits across label/aliases and their
@@ -590,7 +604,7 @@ class _WikidataModelsPass:
                     (stripped, f"prefix_stripped_{kind}"),
                 ):
                     for model_id in index.get(normalize_name(candidate), []):
-                        if (entity.qid, self._slug_pair(model_id)) in (
+                        if (entity.qid, self._model_key(model_id)) in (
                             policy.WIKIDATA_MODEL_NEGATIVES
                         ):
                             continue
@@ -684,13 +698,7 @@ class _WikidataModelsPass:
             # Rung 2: curated registry - recorded human judgments.
             curated = policy.WIKIDATA_MODEL_MATCHES.get(qid)
             if curated is not None:
-                company_slug, _, model_slug = curated.partition("/")
-                company_id = self.company_by_slug.get(company_slug)
-                model_id = (
-                    self.model_by_company_slug.get((company_id, model_slug))
-                    if company_id is not None
-                    else None
-                )
+                model_id = self.model_by_source_key.get(curated)
                 if model_id is None:
                     self._flag(subject, "registry_unresolvable", {"registry": curated})
                     self._decide(subject, "2", "curated", "flagged_registry_unresolvable")
@@ -928,12 +936,12 @@ class _WikidataModelsPass:
             company_id = subject.held_companies[0]
             name = self._strip(entity.label, company_id)
             slug = slugify(name)
-            if not slug or slug in policy.RESERVED_ROUTE_SEGMENTS:
-                self._decide(subject, "4", None, "line_waits_unslugable", {"name": name})
-                continue
-            key = (company_id, slug)
+            key = (company_id, normalize_name(name))
             line_id = self.line_by_key.get(key)
             if line_id is None:
+                if not slug or slug in policy.RESERVED_ROUTE_SEGMENTS:
+                    self._decide(subject, "4", None, "line_waits_unslugable", {"name": name})
+                    continue
                 line = ModelLine(company_id=company_id, slug=slug, name=name)
                 self.session.add(line)
                 self.session.flush()

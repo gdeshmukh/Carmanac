@@ -42,6 +42,7 @@ from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
 from carmanac.reconcile.bookkeeping import mark_reconciled, trigram_candidates
 from carmanac.reconcile.engine import CompaniesPass, current_records
+from carmanac.reconcile.names import normalize_name
 from carmanac.reconcile.sources import wikidata
 
 log = logging.getLogger(__name__)
@@ -66,13 +67,6 @@ class MatchStats:
             f"admission_resolved={self.admission_flags_resolved} "
             f"match_flags_dismissed={self.match_flags_dismissed}"
         )
-
-
-def normalize_name(name: str) -> str:
-    """Casefold and strip everything but letters and digits: 'ASTON MARTIN'
-    == 'Aston Martin' == 'aston-martin'. Mechanical on purpose - anything
-    smarter is rung 3's job (candidates), never auto-accepted."""
-    return "".join(ch for ch in name.casefold() if ch.isalnum())
 
 
 class _MatchPass:

@@ -46,7 +46,7 @@ from carmanac.db.models import (
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import alias_addresses, hold_address_lock, mark_reconciled
+from carmanac.reconcile.bookkeeping import mark_reconciled
 from carmanac.reconcile.engine import current_records, slugify, supersede
 
 log = logging.getLogger(__name__)
@@ -86,7 +86,6 @@ class _VpicModelsPass:
     entry point. Deliberately not reusable across runs."""
 
     def __init__(self, session: Session):
-        hold_address_lock(session)
         self.session = session
         self.stats = VpicModelsPassStats()
         self.source = get_source(session, VPIC_SOURCE_NAME)
@@ -115,10 +114,6 @@ class _VpicModelsPass:
                 select(Model.id, Model.company_id, Model.slug)
             )
         }
-        # Retired addresses stay occupied (ADR 0019); live keys win, and an
-        # alias key can never equal one anyway (the triggers forbid it).
-        for key, model_id in alias_addresses(self.session, "model").items():
-            self.by_company_slug.setdefault(key, model_id)
 
         # Open match_review flags on this source's MODEL records, for dedupe
         # and dismissal. Keyed on the record's external id, not its raw id: a

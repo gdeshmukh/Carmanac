@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import logging
 import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import ModuleType
@@ -52,7 +51,8 @@ from carmanac.db.models import (
     Source,
 )
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import alias_addresses, hold_address_lock, mark_reconciled
+from carmanac.reconcile.addressing import slugify
+from carmanac.reconcile.bookkeeping import mark_reconciled
 from carmanac.reconcile.types import Assertion, MappedRecord
 
 log = logging.getLogger(__name__)
@@ -90,52 +90,6 @@ class PassStats:
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed}) "
             f"merged_members={self.merged_members}"
         )
-
-
-# The dash family folds to a hyphen BEFORE the ASCII strip: NFKD cannot
-# decompose an en dash, so "Renault–Nissan" used to lose its boundary
-# entirely (`renaultnissan...`).
-_DASHES = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212", "-"))
-
-# A year range anywhere in the slug, not just leading: the Cadillac species
-# wears it mid-slug (`de-ville-1961-64`) and the Impreza section heading wears
-# it in front. Two-digit end years are the common form.
-_YEAR_RANGE = re.compile(r"(?:^|-)\d{4}-\d{2,4}(?:-|$)")
-_NUMERAL_ORDINAL = re.compile(r"-\d+(?:st|nd|rd|th)-generation$")
-
-
-def slugify(name: str) -> str:
-    """Deterministic display slug (ADR 0007 §7, amended by ADR 0019 §2):
-    ASCII-folded, lowercased, hyphenated. A name with no ASCII representation
-    (e.g. fully CJK) yields "" and the caller flags for a curated
-    romanization - the old external-id fallback leaked a source's identifier
-    scheme into public identity, the same wart as the QID collision suffix."""
-    folded = (
-        unicodedata.normalize("NFKD", name.translate(_DASHES))
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
-    return re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
-
-
-def nonconforming_slug(slug: str) -> str | None:
-    """ADR 0019 §4: the observed drift classes no generation mint may repeat.
-    A year range is production time, which belongs in facts and never in
-    identity; a `category-` prefix is a leaked source page title; a numeral
-    ordinal is the wrong form of a word the grammar spells out. Returns the
-    reason, or None for a conforming slug.
-
-    The rename batch tests the same function, so the class it sweeps and the
-    class the mint refuses can never drift apart."""
-    if not slug:
-        return "no_ascii_name"
-    if _YEAR_RANGE.search(slug):
-        return "year_range"
-    if slug.startswith("category-"):
-        return "source_artifact_title"
-    if _NUMERAL_ORDINAL.search(slug):
-        return "numeral_ordinal"
-    return None
 
 
 def _sort_key(external_id: str) -> tuple[int, int | str]:
@@ -279,7 +233,6 @@ class CompaniesPass:
     Holds per-run caches, so it is not reusable across runs."""
 
     def __init__(self, session: Session, mapper: ModuleType):
-        hold_address_lock(session)
         self.session = session
         self.mapper = mapper
         self.stats = PassStats()
@@ -301,10 +254,8 @@ class CompaniesPass:
                 )
             ).all()
         )
-        # Occupancy is live slugs plus retired addresses (ADR 0019): a freed
-        # address must never be silently re-minted.
-        self.slugs: set[str] = set(session.scalars(select(Company.slug)))
-        self.slugs.update(slug for _, slug in alias_addresses(session, "company"))
+        # Live addresses plus the bases reserved for contested namesakes.
+        self.slugs: set[str] = {s for s in session.scalars(select(Company.slug)) if s}
         self.slugs.update(policy.RESERVED_COMPANY_SLUGS)
         # Open-flag dedup keys: entity-scoped and record-scoped shapes.
         # Record-scoped flags key on EXTERNAL id, not raw_record id: a changed
@@ -408,26 +359,18 @@ class CompaniesPass:
             self._open_record_flag(record, {"reason": "no_usable_label"})
             return None
 
-        # Flag-never-suffix (ADR 0019 §2, replacing §7's QID suffix): a pin
-        # is a recorded human judgment; anything unpinnable that collides -
-        # with a live slug, a retired address, or a reserved bare - waits in
-        # quarantine until a human disambiguates. The cheap error stays the
-        # recoverable one.
-        slug = policy.COMPANY_SLUG_OVERRIDES.get(qid)
-        if slug is None:
-            slug = slugify(mapped.name)
-            if not slug:
-                self._open_record_flag(
-                    record, {"reason": "needs_curated_slug", "name": mapped.name}
-                )
-                return None
+        # The obvious address if it is free, nothing if it is not. No suffix,
+        # no flag, and no bearing on whether the company exists: addressing is
+        # `addressing.recompute_addresses`'s job, and a company with no
+        # address is that queue, visible as `companies.slug IS NULL`.
+        slug = policy.COMPANY_SLUG_OVERRIDES.get(qid) or slugify(mapped.name) or None
         if slug in self.slugs:
-            self._open_record_flag(record, {"reason": "namesake_collision", "slug": slug})
-            return None
+            slug = None
         company = Company(slug=slug, name=mapped.name)
         self.session.add(company)
         self.session.flush()
-        self.slugs.add(slug)
+        if slug:
+            self.slugs.add(slug)
         self._attach_external_id(qid, company.id)
         self.stats.companies_created += 1
         return company

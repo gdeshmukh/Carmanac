@@ -188,8 +188,13 @@ def routed(db, monkeypatch, wikidata_source, spine, linkless_model):  # noqa: F8
     """Route article QIDs to models: Q7 1:1-attached to the link-less model,
     Q8 curated onto it (the SECTION_ARTICLE_MODELS mechanism)."""
     db.add(ExternalId(model_id=linkless_model.id, source_id=wikidata_source.id, external_id="Q7"))
+    # The routing keys on the model's own source id, so the fixture needs the
+    # filing id a real model carries.
+    db.add(
+        ExternalId(model_id=linkless_model.id, source_id=wikidata_source.id, external_id="model:7")
+    )
     db.commit()
-    monkeypatch.setattr(policy, "SECTION_ARTICLE_MODELS", {"Q8": "bmw/z4"})
+    monkeypatch.setattr(policy, "SECTION_ARTICLE_MODELS", {"Q8": "model:7"})
     return linkless_model
 
 
