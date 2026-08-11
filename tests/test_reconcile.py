@@ -26,7 +26,8 @@ from carmanac.db.models import (
 )
 from carmanac.ingest.wikidata.land import canonicalize, content_hash
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import run_companies_pass, slugify
+from carmanac.reconcile.addressing import nonconforming_slug, recompute_addresses, slugify
+from carmanac.reconcile.engine import run_companies_pass
 from carmanac.reconcile.sources import wikidata
 from carmanac.reconcile.sources.wikidata import map_record
 
@@ -186,10 +187,28 @@ def test_empty_class_set_quarantines():
     assert policy.classify(frozenset()) == policy.QUARANTINE
 
 
+def test_nonconforming_slug_covers_the_ruled_drift_classes():
+    """ADR 0019 §4. The year range is tested anywhere, not just as a prefix:
+    the Cadillac species wears it mid-slug."""
+    assert nonconforming_slug("e46") is None
+    assert nonconforming_slug("mx-5-na") is None
+    assert nonconforming_slug("civic-fifth-generation") is None
+    assert nonconforming_slug("2000-2007-subaru-impreza") == "year_range"
+    assert nonconforming_slug("de-ville-1961-64") == "year_range"
+    assert nonconforming_slug("category-honda-hr-v") == "source_artifact_title"
+    assert nonconforming_slug("civic-11th-generation") == "numeral_ordinal"
+    assert nonconforming_slug("") == "no_ascii_name"
+
+
 def test_slugify():
-    assert slugify("Škoda Auto", "Q29637") == "skoda-auto"
-    assert slugify("BMW", "Q26678") == "bmw"
-    assert slugify("一汽", "Q166885") == "q166885"  # no ASCII at all -> QID
+    assert slugify("Škoda Auto") == "skoda-auto"
+    assert slugify("BMW") == "bmw"
+    # No ASCII at all -> "": the caller flags for a curated romanization
+    # (ADR 0019 §2); an id-derived address would leak the source's scheme.
+    assert slugify("一汽") == ""
+    # The dash family folds to a hyphen before the ASCII strip - an en dash
+    # used to vanish and weld its neighbours together.
+    assert slugify("Renault\u2013Nissan") == "renault-nissan"
 
 
 # --- engine integration -------------------------------------------------------
@@ -457,11 +476,18 @@ def test_defunct_before_founded_flags(db, wikidata_source):
     assert flag.field_name == "defunct_year"
 
 
-def test_slug_collision_gets_qid_suffix(db, wikidata_source):
-    """Two distinct marques, one name: ascending-QID order gives the lower QID
-    the bare slug, deterministically (ADR 0007 §1/§7)."""
+def test_slug_collision_flags_but_the_company_still_exists(db, wikidata_source, monkeypatch):
+    """Two distinct marques, one name: both companies exist - a source
+    asserted them, and an address is a page's name, not a condition of
+    being real. The one that cannot have the bare address has none, and
+    waits for a curated pin rather than a source-derived suffix."""
     _land(db, wikidata_source, "Q100", label="Eagle", classes=("Q786820",))
     _land(db, wikidata_source, "Q200", label="Eagle", classes=("Q786820",))
     run_companies_pass(db, wikidata)
-    slugs = set(db.scalars(select(Company.slug)))
-    assert slugs == {"eagle", "eagle-q200"}
+    assert db.scalar(select(func.count(Company.id))) == 2
+    assert sorted(db.scalars(select(Company.slug)), key=str) == [None, "eagle"]
+
+    monkeypatch.setitem(policy.COMPANY_SLUG_OVERRIDES, "Q200", "eagle-talon")
+    run_companies_pass(db, wikidata)
+    recompute_addresses(db)
+    assert set(db.scalars(select(Company.slug))) == {"eagle", "eagle-talon"}

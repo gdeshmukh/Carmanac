@@ -135,7 +135,10 @@ def test_no_match_flags_with_candidates(db, wikidata_source, vpic_source):
     assert db.scalar(select(func.count()).select_from(ReconciliationFlag)) == 1
 
 
-def test_ambiguous_match_flags_not_guesses(db, wikidata_source, vpic_source):
+def test_ambiguous_match_flags_not_guesses(db, wikidata_source, vpic_source, monkeypatch):
+    # The second Eagle needs a curated pin to mint at all (ADR 0019 §2);
+    # with both live, the make name is ambiguous and must flag, not guess.
+    monkeypatch.setitem(policy.COMPANY_SLUG_OVERRIDES, "Q200", "eagle-talon")
     _land_wd(db, wikidata_source, "Q100", label="Eagle", classes=("Q786820",))
     _land_wd(db, wikidata_source, "Q200", label="Eagle", classes=("Q786820",))
     run_companies_pass(db, wikidata)

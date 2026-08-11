@@ -63,6 +63,7 @@ from carmanac.ingest.epa.bulk import EPA_SOURCE_NAME
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
+from carmanac.reconcile.addressing import configuration_slug
 from carmanac.reconcile.bookkeeping import DecisionLog
 from carmanac.reconcile.engine import current_records, supersede
 from carmanac.reconcile.matching import normalize_name
@@ -269,6 +270,10 @@ class _EpaAttachPass:
             company_id = qid_to_company.get(policy.IDENTITY_MERGES.get(qid, qid))
             if company_id is not None:
                 self.registry_company[make_norm] = company_id
+            else:
+                # The affected rows still hit the loud `unbridged_make` flag;
+                # this makes the ENTRY diagnosable, not just its symptom.
+                log.warning("EPA_MAKE_MATCHES[%r] -> %s: no company holds that QID", make_norm, qid)
 
     def _load_models(self) -> None:
         """As-filed models per company, plus the rows slugs and candidates
@@ -292,7 +297,7 @@ class _EpaAttachPass:
             )
         }
         self.config_by_key: dict[tuple, int] = {}
-        self.config_slugs: set[str] = set()
+        self.config_slugs: set[tuple[int, str]] = set()
         for cfg_id, period_id, trim, market_id, dt_id, body_id, slug in session.execute(
             select(
                 Configuration.id,
@@ -305,7 +310,8 @@ class _EpaAttachPass:
             )
         ):
             self.config_by_key[(period_id, trim, market_id, dt_id, body_id)] = cfg_id
-            self.config_slugs.add(slug)
+            if slug:
+                self.config_slugs.add((period_id, slug))
 
         self.vehicle_external: set[str] = set(
             session.scalars(
@@ -528,25 +534,17 @@ class _EpaAttachPass:
             self.stats.periods_created += 1
         return pid
 
-    def _slug(self, group: _Group) -> str:
-        model = self.models[group.model_id]
-        company = self.companies[model.company_id]
-        parts = [company.slug, model.slug, str(group.year)]
-        if group.trim:
-            trim_slug = "-".join(
-                "".join(ch for ch in tok.casefold() if ch.isalnum()) for tok in group.trim.split()
-            ).strip("-")
-            if trim_slug:
-                parts.append(trim_slug)
-        code = self.drivetrain_code_by_id.get(group.drivetrain_id)
-        if code:
-            parts.append(code)
-        base = "-".join(p for p in parts if p)
-        slug, n = base, 1
-        while slug in self.config_slugs:
-            n += 1
-            slug = f"{base}-{n}"
-        return slug
+    def _slug(self, period_id: int, group: _Group) -> str | None:
+        """The car's address at mint time, composed by the one grammar that
+        owns it. `recompute_addresses` re-derives the same string later, so
+        this is a convenience, not a second implementation.
+
+        None means the tail is already taken INSIDE this model year, which is
+        the only scope an address has to be unique in. The car is created
+        either way; the counter that used to absorb a collision papered over
+        an unreconciled duplicate (`E350 4Matic` twice), so it flags."""
+        slug = configuration_slug(group.trim, self.drivetrain_code_by_id.get(group.drivetrain_id))
+        return None if (period_id, slug) in self.config_slugs else slug
 
     def _materialize(self, group: _Group) -> None:
         period_id = self._period_id(group.model_id, group.year)
@@ -572,19 +570,31 @@ class _EpaAttachPass:
 
         rep = min(group.members, key=lambda m: m[0].id)[0]
         if created:
+            slug = self._slug(period_id, group)
+            if slug is None:
+                # The car lands regardless - an address is a page's name, and
+                # a car is not less real for wanting one that is taken.
+                self._flag(
+                    rep,
+                    "configuration_slug_collision",
+                    rep.payload.get("make", ""),
+                    rep.payload.get("model", ""),
+                    {"trim": group.trim, "year": group.year},
+                )
             config = Configuration(
                 catalogue_period_id=period_id,
                 market_region_id=self.us_market_id,
                 trim_name=group.trim,
                 drivetrain_id=group.drivetrain_id,
-                slug=self._slug(group),
+                slug=slug,
                 **agreed,
             )
             self.session.add(config)
             self.session.flush()
             cfg_id = config.id
             self.config_by_key[natural_key] = cfg_id
-            self.config_slugs.add(config.slug)
+            if slug:
+                self.config_slugs.add((period_id, slug))
             self.stats.configurations_created += 1
             self.config_cols[cfg_id] = {c: agreed.get(c) for c in SPEC_COLUMNS}
             # Field-level provenance (ADR 0002) from a representative record:

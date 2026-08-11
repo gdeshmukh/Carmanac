@@ -172,14 +172,14 @@ def main() -> int:
         # last line's denominator is visible all the way up. Curated article
         # routings (SECTION_ARTICLE_MODELS) count as reach - the AMG GT has
         # articles and placements without a 1:1 model QID.
-        routed = sorted({pair for pair in policy.SECTION_ARTICLE_MODELS.values()}) or ["-/-"]
+        routed = sorted(set(policy.SECTION_ARTICLE_MODELS.values())) or ["-"]
         routed_qids = sorted(policy.SECTION_ARTICLE_MODELS) or ["Q0"]
         funnel = s.execute(
             text(
                 """
                 WITH routed_models AS (
-                  SELECT m.id FROM models m JOIN companies co ON co.id = m.company_id
-                  WHERE co.slug || '/' || m.slug IN :routed
+                  SELECT DISTINCT ei.model_id AS id FROM external_ids ei
+                  WHERE ei.model_id IS NOT NULL AND ei.external_id IN :routed
                 ),
                 stages AS (
                   SELECT m.id,
@@ -269,6 +269,46 @@ def main() -> int:
             )
         ):
             print(f"  {pass_name:<16} {outcome:<28}: {n}")
+
+        # Unaddressed rows ARE the address queue - a contested namesake or an
+        # unnameable generation has no slug, and that is the whole signal. The
+        # registries are checked here rather than in CI, where they are stubs.
+        for label, sql in (
+            ("companies", "SELECT count(*) FROM companies WHERE slug IS NULL"),
+            ("generations", "SELECT count(*) FROM generations WHERE slug IS NULL"),
+            ("configurations", "SELECT count(*) FROM configurations WHERE slug IS NULL"),
+        ):
+            print(f"  unaddressed {label:<16}: {s.execute(text(sql)).scalar()}")
+        known = {
+            qid
+            for (qid,) in s.execute(
+                text("SELECT external_id FROM external_ids WHERE external_id LIKE 'Q%'")
+            )
+        }
+        filings = {
+            key
+            for (key,) in s.execute(
+                text("SELECT external_id FROM external_ids WHERE model_id IS NOT NULL")
+            )
+        }
+        problems = [
+            f"{name} {key}: no external_ids row"
+            for name, keys, universe in (
+                ("NOT_A_GENERATION", policy.NOT_A_GENERATION, known),
+                ("IDENTITY_MERGES canonical", set(policy.IDENTITY_MERGES.values()), known),
+                ("COMPANY_SLUG_OVERRIDES", set(policy.COMPANY_SLUG_OVERRIDES), known),
+                ("SECTION_ARTICLE_MODELS", set(policy.SECTION_ARTICLE_MODELS.values()), filings),
+                ("WIKIDATA_MODEL_MATCHES", set(policy.WIKIDATA_MODEL_MATCHES.values()), filings),
+            )
+            for key in keys
+            if key not in universe
+        ]
+        if problems:
+            print("REGISTRY HEALTH: PROBLEMS")
+            for p in problems:
+                print(f"  !! {p}")
+        else:
+            print("registry health               : ok")
     return 0
 
 

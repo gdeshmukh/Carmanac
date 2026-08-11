@@ -89,7 +89,8 @@ def test_exact_attach_creates_configuration(db, wikidata_source, vpic_source, ep
     assert config.trim_name is None and config.generation_id is None
     assert config.engine_displacement_cc == 3400 and config.cylinders == 6
     assert float(config.mpg_combined) == 17
-    assert config.slug == "toyota-4runner-1999-rwd"
+    # The address is the tail only; /toyota/4runner/1999/ carries the rest.
+    assert config.slug == "rwd"
     ext = db.scalars(select(ExternalId).where(ExternalId.external_id == "vehicle:100")).one()
     assert ext.configuration_id == config.id
     prov = db.scalars(

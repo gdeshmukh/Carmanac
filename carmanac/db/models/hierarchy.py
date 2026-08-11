@@ -55,7 +55,11 @@ class Company(Base, TimestampMixin):
     __tablename__ = "companies"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # The public address, not identity: identity is the natural key and
+    # `external_ids`. NULL means no address is settled yet - a contested
+    # namesake waiting on a human judgment - never that the company is
+    # provisional.
+    slug: Mapped[str | None] = mapped_column(Text, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id"), index=True)
     founded_year: Mapped[int | None] = mapped_column(SmallInteger)
@@ -148,7 +152,7 @@ class Model(Base, TimestampMixin):
     # Points at `companies` regardless of role (ADR 0006), so Singer's product
     # lines get the same catalogue depth as BMW's with no exclusive arc.
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)
 
@@ -171,7 +175,7 @@ class ModelLine(Base, TimestampMixin):
     """A grouping row, NOT an entity in the hierarchy (ADR 0012 §4).
 
     "3 Series" is an aggregation over as-filed models (ADR 0011 §2), served
-    as a browse view over its members - /makes/bmw/3-series is a page over
+    as a browse view over its members - /bmw/lines/3-series is a page over
     memberships, never a sixth level. Nothing in the FK spine points here,
     and lines hold NO external ids: the series QID stays on the raw record,
     and identity resolves by the (company, slug) natural key. A source
@@ -183,7 +187,7 @@ class ModelLine(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str] = mapped_column(Text, nullable=False)
 
     company: Mapped[Company] = relationship()
@@ -255,7 +259,7 @@ class Generation(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str | None] = mapped_column(Text)
     # One generation routinely spans several codes (E46 sedan/coupe/touring
     # carry different internal codes), hence an array rather than a scalar.
@@ -418,7 +422,7 @@ class Configuration(Base, TimestampMixin):
     # placed this car yet", visibly; the model -> year pages render it fully
     # either way. This is the goal level of the goal-per-car hierarchy.
     generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id"), index=True)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(Text)
 
     # --- identity / classification (mostly NHTSA vPIC) ---
     trim_name: Mapped[str | None] = mapped_column(Text)  # 'M340i', 'LE', 'GTI Autobahn'
@@ -487,10 +491,10 @@ class Configuration(Base, TimestampMixin):
             name="uq_configurations_natural_key",
             postgresql_nulls_not_distinct=True,
         ),
-        # Slug is now a display artifact, but the public route is a flat
-        # /configurations/<slug> lookup, so it still needs to resolve without
-        # knowing the model year first.
-        UniqueConstraint("slug", name="uq_configurations_slug"),
+        # The route carries the model year (/bmw/m3/2004/convertible-rwd), so
+        # the address only has to be unique inside it - and can only be:
+        # `fwd` names 3,161 cars across the fleet.
+        UniqueConstraint("catalogue_period_id", "slug", name="uq_configurations_period_slug"),
         Index(
             "idx_configurations_trim_name_trgm",
             "trim_name",

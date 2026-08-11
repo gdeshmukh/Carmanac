@@ -368,12 +368,18 @@ class _PlacementPass:
     def _assert_placement(self, configuration: Configuration, candidate: _Candidate | None) -> None:
         """Write/refresh/withdraw the placement assertion + column. The pass
         is the sole placer, so the column follows the recomputed answer."""
-        observed = (
-            None
-            if candidate is None
-            else f"{self.generations[candidate.generation_id].slug}"
-            f"[{candidate.span.start}–{candidate.span.end or 'present'}]"
-        )
+        if candidate is None:
+            observed = None
+        else:
+            # The generation is named by ROW, never by address. A slug is a
+            # projection that may be recomposed at any time, and citing one
+            # here made 1,369 placement assertions supersede themselves the
+            # first time the grammar changed - an address rewriting history
+            # it has no business touching. The placement itself is the FK.
+            observed = (
+                f"generation:{candidate.generation_id}"
+                f"[{candidate.span.start}–{candidate.span.end or 'present'}]"
+            )
         live = self.live_placements.get(configuration.id)
         target = None if candidate is None else candidate.generation_id
         record_id = None if candidate is None else candidate.raw_record_id

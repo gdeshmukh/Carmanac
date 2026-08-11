@@ -69,8 +69,16 @@ from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikidata.models import SWEEP_MARKER
 from carmanac.ingest.wikipedia import SOURCE_NAME as WIKIPEDIA_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled, trigram_candidates
-from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
+from carmanac.reconcile.addressing import nonconforming_slug, slugify
+from carmanac.reconcile.bookkeeping import (
+    DecisionLog,
+    mark_reconciled,
+    trigram_candidates,
+)
+from carmanac.reconcile.engine import (
+    assert_field_facts,
+    current_records,
+)
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata_models
 from carmanac.reconcile.sources.wikidata_models import (
@@ -82,6 +90,13 @@ from carmanac.reconcile.sources.wikidata_models import (
 log = logging.getLogger(__name__)
 
 PASS_NAME = "wikidata_models"
+
+
+def _filing_number(external_id: str) -> int:
+    """`model:999` sorts below `model:1000`. Lexicographic order would not,
+    and the two dual-filing models are exactly where that shows."""
+    return int(external_id.split(":", 1)[1])
+
 
 # What this pass asserts per entity kind, and therefore what it may tombstone.
 MODEL_COVERAGE: tuple[str, ...] = ("summary",)
@@ -226,19 +241,36 @@ class _WikidataModelsPass:
             key=lambda t: len(t[0]),
             reverse=True,
         )
-        self.company_by_slug: dict[str, int] = {c.slug: c.id for c in self.companies.values()}
 
     def _load_models(self) -> None:
         """As-filed models, indexed for rung 3, plus each model's anchor QID."""
         session = self.session
         self.models: dict[int, Model] = {m.id: m for m in session.scalars(select(Model))}
         self.models_by_name: dict[int, dict[str, list[int]]] = {}
-        self.model_by_company_slug: dict[tuple[int, str], int] = {}
         for m in self.models.values():
             self.models_by_name.setdefault(m.company_id, {}).setdefault(
                 normalize_name(m.name), []
             ).append(m.id)
-            self.model_by_company_slug[(m.company_id, m.slug)] = m.id
+
+        # What the curated registries key on: the model's own FILING id
+        # (vPIC's `model:<id>`, which all 1,735 live rows carry). A QID is a
+        # match someone made later, not the model's own identifier - keying
+        # on whichever id sorted first would have moved the key the day an
+        # entity attached, which is the same silent-unmaking a slug key had.
+        # Lookups still accept any id, so a registry entry written against a
+        # QID keeps resolving; only the canonical key is narrowed.
+        self.model_source_key: dict[int, str] = {}
+        self.model_by_source_key: dict[str, int] = {}
+        for external_id, model_id in session.execute(
+            select(ExternalId.external_id, ExternalId.model_id).where(
+                ExternalId.model_id.isnot(None)
+            )
+        ):
+            self.model_by_source_key[external_id] = model_id
+            if external_id.startswith("model:"):
+                current = self.model_source_key.get(model_id)
+                if current is None or _filing_number(external_id) < _filing_number(current):
+                    self.model_source_key[model_id] = external_id
 
         # Reverse of model_by_qid: the model's ONE QID (lowest wins if legacy
         # data ever holds several - the deterministic assert-anchor, same
@@ -270,9 +302,13 @@ class _WikidataModelsPass:
         """Lines, memberships and generation slugs - the structure rungs 4-5
         resolve against."""
         session = self.session
-        # Lines resolve by natural key - they hold no external ids (§4).
+        # Lines resolve by natural key - they hold no external ids (§4). The
+        # key is the normalized NAME, never the slug: a slug is an address,
+        # and re-addressing a line must not make the next run mint a second
+        # one under the freed string.
         self.line_by_key: dict[tuple[int, str], int] = {
-            (line.company_id, line.slug): line.id for line in session.scalars(select(ModelLine))
+            (line.company_id, normalize_name(line.name)): line.id
+            for line in session.scalars(select(ModelLine))
         }
         self.line_by_qid: dict[str, int] = {}  # this run's line resolutions
 
@@ -546,8 +582,17 @@ class _WikidataModelsPass:
         self.qid_by_model[model_id] = subject.entity.qid
 
     def _slug_pair(self, model_id: int) -> str:
+        """Readable model reference for decision detail and flag candidates -
+        display only. Registry lookups use `_model_key`."""
         model = self.models[model_id]
-        return f"{self.companies[model.company_id].slug}/{model.slug}"
+        company = self.companies[model.company_id]
+        return f"{company.slug or company.name}/{model.slug or model.name}"
+
+    def _model_key(self, model_id: int) -> str | None:
+        """The model's own source id, which is what curated judgments key on.
+        None for a model no source has identified - it cannot be the subject
+        of a registry entry, so it can never be negated or curated either."""
+        return self.model_source_key.get(model_id)
 
     def _name_hits(self, subject: _Subject) -> dict[int, str]:
         """Rung 3: exact-normalized hits across label/aliases and their
@@ -570,7 +615,7 @@ class _WikidataModelsPass:
                     (stripped, f"prefix_stripped_{kind}"),
                 ):
                     for model_id in index.get(normalize_name(candidate), []):
-                        if (entity.qid, self._slug_pair(model_id)) in (
+                        if (entity.qid, self._model_key(model_id)) in (
                             policy.WIKIDATA_MODEL_NEGATIVES
                         ):
                             continue
@@ -664,13 +709,7 @@ class _WikidataModelsPass:
             # Rung 2: curated registry - recorded human judgments.
             curated = policy.WIKIDATA_MODEL_MATCHES.get(qid)
             if curated is not None:
-                company_slug, _, model_slug = curated.partition("/")
-                company_id = self.company_by_slug.get(company_slug)
-                model_id = (
-                    self.model_by_company_slug.get((company_id, model_slug))
-                    if company_id is not None
-                    else None
-                )
+                model_id = self.model_by_source_key.get(curated)
                 if model_id is None:
                     self._flag(subject, "registry_unresolvable", {"registry": curated})
                     self._decide(subject, "2", "curated", "flagged_registry_unresolvable")
@@ -907,10 +946,13 @@ class _WikidataModelsPass:
                 continue
             company_id = subject.held_companies[0]
             name = self._strip(entity.label, company_id)
-            slug = slugify(name, qid)
-            key = (company_id, slug)
+            slug = slugify(name)
+            key = (company_id, normalize_name(name))
             line_id = self.line_by_key.get(key)
             if line_id is None:
+                if not slug or slug in policy.RESERVED_ROUTE_SEGMENTS:
+                    self._decide(subject, "4", None, "line_waits_unslugable", {"name": name})
+                    continue
                 line = ModelLine(company_id=company_id, slug=slug, name=name)
                 self.session.add(line)
                 self.session.flush()
@@ -1001,7 +1043,24 @@ class _WikidataModelsPass:
         entity = subject.entity
         model = self.models[model_id]
         display = self._strip(entity.label, model.company_id)
-        slug = slugify(display, entity.qid)
+        slug = slugify(display)
+        reason = nonconforming_slug(slug)
+        if reason is not None:
+            # The drift guard (ADR 0019 §4): a label shaped like a section
+            # heading or a source page title flags instead of minting.
+            self._flag(
+                subject,
+                "generation_slug_nonconforming",
+                {"label": entity.label, "slug": slug, "reason": reason},
+            )
+            self._decide(
+                subject,
+                "5",
+                "p179_member_of_matched_model",
+                "flagged_nonconforming_slug",
+                {"model": self._slug_pair(model_id), "slug": slug, "reason": reason},
+            )
+            return
         occupant = self.generation_by_company_slug.get((model.company_id, slug))
         if occupant is not None:
             # Two source entities, one slug, one model: usually Wikidata's

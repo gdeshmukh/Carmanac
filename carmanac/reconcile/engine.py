@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import logging
 import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import ModuleType
@@ -52,6 +51,7 @@ from carmanac.db.models import (
     Source,
 )
 from carmanac.reconcile import policy
+from carmanac.reconcile.addressing import slugify
 from carmanac.reconcile.bookkeeping import mark_reconciled
 from carmanac.reconcile.types import Assertion, MappedRecord
 
@@ -90,15 +90,6 @@ class PassStats:
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed}) "
             f"merged_members={self.merged_members}"
         )
-
-
-def slugify(name: str, external_id: str) -> str:
-    """Deterministic display slug (ADR 0007 §7): ASCII-folded, lowercased,
-    hyphenated. A name with no ASCII representation (e.g. fully CJK) falls
-    back to the external id, which is stable and unique by construction."""
-    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
-    return slug or external_id.lower()
 
 
 def _sort_key(external_id: str) -> tuple[int, int | str]:
@@ -263,7 +254,9 @@ class CompaniesPass:
                 )
             ).all()
         )
-        self.slugs: set[str] = set(session.scalars(select(Company.slug)))
+        # Live addresses plus the bases reserved for contested namesakes.
+        self.slugs: set[str] = {s for s in session.scalars(select(Company.slug)) if s}
+        self.slugs.update(policy.RESERVED_COMPANY_SLUGS)
         # Open-flag dedup keys: entity-scoped and record-scoped shapes.
         # Record-scoped flags key on EXTERNAL id, not raw_record id: a changed
         # payload lands a new raw row for the same entity, and its still-open
@@ -366,13 +359,18 @@ class CompaniesPass:
             self._open_record_flag(record, {"reason": "no_usable_label"})
             return None
 
-        slug = slugify(mapped.name, qid)
+        # The obvious address if it is free, nothing if it is not. No suffix,
+        # no flag, and no bearing on whether the company exists: addressing is
+        # `addressing.recompute_addresses`'s job, and a company with no
+        # address is that queue, visible as `companies.slug IS NULL`.
+        slug = policy.COMPANY_SLUG_OVERRIDES.get(qid) or slugify(mapped.name) or None
         if slug in self.slugs:
-            slug = f"{slug}-{qid.lower()}"  # §7: QID suffix on collision
+            slug = None
         company = Company(slug=slug, name=mapped.name)
         self.session.add(company)
         self.session.flush()
-        self.slugs.add(slug)
+        if slug:
+            self.slugs.add(slug)
         self._attach_external_id(qid, company.id)
         self.stats.companies_created += 1
         return company

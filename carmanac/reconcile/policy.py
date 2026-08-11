@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "15"
+RECONCILER_VERSION = "16"
 
 # --- identity --------------------------------------------------------------
 
@@ -202,24 +202,28 @@ VPIC_MATCHES: dict[str, str] = {
 EPA_MAKE_MATCHES: dict[str, str] = {}
 
 # Curated Wikidata-model matches (ADR 0012, the ADR 0008 registry precedent
-# one level down): QID -> "company-slug/model-slug", for model entities the
-# mechanical rungs cannot place. Grown exclusively by resolving model-level
-# `match_review` flags; each entry is a recorded human judgment. The slug
-# pair - not a database id - is the natural key, stable across environments
-# and re-materializations.
+# one level down): QID -> our model's vPIC external id, for model entities
+# the mechanical rungs cannot place. Grown exclusively by resolving
+# model-level `match_review` flags; each entry is a recorded human judgment,
+# named in a trailing comment the way VPIC_MATCHES names its makes.
+#
+# BOTH sides of the judgment are source identifiers, never addresses: a slug
+# is a page's name and may be re-chosen at any time, and a judgment that
+# stops matching when a page is renamed is a judgment that silently unmakes
+# itself - for the negative registry, back into the exact match a human
+# rejected.
 WIKIDATA_MODEL_MATCHES: dict[str, str] = {}
 
-# The negative-match registry: recorded human
-# judgments that an entity is NOT one of our rows, so a dismissed candidate
-# can never silently re-match on the next run - before this, negative
-# judgments lived only in policy comments and the labeled set had no negative
-# examples. (QID, "company-slug/model-slug") pairs; consulted before any
-# rung-3 accept and when building flag candidates. Grown by flag resolutions,
-# like the positive registry.
+# The negative-match registry: recorded human judgments that an entity is
+# NOT one of our rows, so a dismissed candidate can never silently re-match
+# on the next run - before this, negative judgments lived only in policy
+# comments and the labeled set had no negative examples. (QID, vPIC external
+# id) pairs; consulted before any rung-3 accept and when building flag
+# candidates. Grown by flag resolutions, like the positive registry.
 WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
 
-# Curated nameplate-article routings (ADR 0017 §4): QID ->
-# "company-slug/model-slug", for articles whose per-generation sections
+# Curated nameplate-article routings (ADR 0017 §4): QID -> our model's vPIC
+# external id, for articles whose per-generation sections
 # describe generations contained in that filing's catalogue but whose QID is
 # not 1:1-attached to the model - the ruled "link curated" mechanism. Each
 # entry is a recorded human judgment; section parsing never fabricates one.
@@ -230,9 +234,50 @@ WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
 # wd-models pass - its P179 children are trims) and Q50368653 (the 4-Door's
 # own two-section nameplate page) both belong in that filing's catalogue.
 SECTION_ARTICLE_MODELS: dict[str, str] = {
-    "Q18011551": "mercedes-benz/amg-gt",
-    "Q50368653": "mercedes-benz/amg-gt",
+    "Q18011551": "model:5881",  # Mercedes-Benz AMG GT (the sports car's page)
+    "Q50368653": "model:5881",  # Mercedes-Benz AMG GT (the 4-Door's page)
 }
+
+# Curated company slugs (ADR 0019 §2): QID -> full slug, for companies whose
+# mechanical slug collides with a live, aliased, or reserved address - or has
+# no ASCII form. Each entry is a recorded human judgment (the encyclopedia's
+# disambiguating parenthetical: place, era, or product - `meteor-detroit`,
+# `standard-coventry`); a pin freezes the judgment, so addresses never move
+# when a country or founding-year fact is later arbitrated. Grown by
+# resolving `namesake_collision` / `needs_curated_slug` admission flags.
+COMPANY_SLUG_OVERRIDES: dict[str, str] = {}
+
+# Bare slugs no company may hold (ADR 0019). Two kinds live here: a contested
+# namesake cluster's bare base, retired so nobody owns `meteor` by arrival
+# order, and the site's own root literals - a company sits at `/<slug>`, so
+# anything the frontend answers at the root is an address no company can
+# take. Zero live company slugs collide with the literals, so they land as a
+# pure guard. Code, not data, so occupation survives any rebuild.
+RESERVED_COMPANY_SLUGS: frozenset[str] = frozenset(
+    {
+        "api",
+        "about",
+        "cars",
+        "compare",
+        "engines",
+        "makes",
+        "search",
+        "static",
+        "transmissions",
+        "_next",
+        "favicon.ico",
+        "robots.txt",
+        "sitemap.xml",
+    }
+)
+
+# Route segments under /<company>/ that can never be a model or line slug
+# (ADR 0019): models own the bare second segment, every other kind lives
+# under one of these literals. Checked at mint time; zero live conflicts
+# existed when the list landed.
+RESERVED_ROUTE_SEGMENTS: frozenset[str] = frozenset(
+    {"generations", "lines", "codes", "engines", "transmissions", "platforms", "cars", "compare"}
+)
 
 # Wrong-grain generation verdicts (ADR 0018 §1): QID -> verdict slug, for
 # Wikidata entities whose P179 membership minted a generation row that a

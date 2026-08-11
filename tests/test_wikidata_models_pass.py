@@ -333,7 +333,9 @@ def test_negative_registry_blocks_the_match(db, wikidata_source, vpic_source, mo
     from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
 
     run_vpic_models_pass(db)
-    monkeypatch.setattr(policy, "WIKIDATA_MODEL_NEGATIVES", frozenset({("Q879", "toyota/4runner")}))
+    # Keyed on the model's own source id, not its address: a page rename must
+    # not re-arm a match a human rejected.
+    monkeypatch.setattr(policy, "WIKIDATA_MODEL_NEGATIVES", frozenset({("Q879", "model:1")}))
 
     _land_sweep(db, wikidata_source, "Q879", "Toyota 4Runner", makers=["Q53268"])
     stats = run_wikidata_models_pass(db)
