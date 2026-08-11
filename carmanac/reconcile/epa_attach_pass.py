@@ -270,6 +270,10 @@ class _EpaAttachPass:
             company_id = qid_to_company.get(policy.IDENTITY_MERGES.get(qid, qid))
             if company_id is not None:
                 self.registry_company[make_norm] = company_id
+            else:
+                # The affected rows still hit the loud `unbridged_make` flag;
+                # this makes the ENTRY diagnosable, not just its symptom.
+                log.warning("EPA_MAKE_MATCHES[%r] -> %s: no company holds that QID", make_norm, qid)
 
     def _load_models(self) -> None:
         """As-filed models per company, plus the rows slugs and candidates

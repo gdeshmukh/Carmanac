@@ -59,6 +59,7 @@ from carmanac.reconcile.bookkeeping import (
     alias_addresses,
     hold_address_lock,
     mark_reconciled,
+    validate_registry_pairs,
 )
 from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
 from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes
@@ -129,6 +130,7 @@ class WikipediaSectionsStats:
 class _SectionsPass:
     def __init__(self, session: Session):
         hold_address_lock(session)
+        validate_registry_pairs(session)
         self.session = session
         self.stats = WikipediaSectionsStats()
         self.source = get_source(session, SOURCE_NAME)
@@ -502,13 +504,9 @@ class _SectionsPass:
 
     def _process_article(self, record: RawRecord) -> None:
         qid = record.payload["qid"]
-        model_id = self.model_by_qid.get(qid)
-        if model_id is None:
-            self.stats.unrouted += 1
-            self.decisions.record(record, "waits_unrouted_article")
-            return
-        model = self.models[model_id]
-
+        # Redirect detection first (ADR 0019 §3 companion fix): an article
+        # that both lost its routing and got redirected must still tombstone
+        # its stale facts - the old order skipped the safety with the work.
         if not _same_subject(record.payload.get("requested_title", ""), record.payload["title"]):
             self._tombstone_stale_sections(qid, set(), record)
             self.stats.redirected += 1
@@ -521,6 +519,13 @@ class _SectionsPass:
                 },
             )
             return
+
+        model_id = self.model_by_qid.get(qid)
+        if model_id is None:
+            self.stats.unrouted += 1
+            self.decisions.record(record, "waits_unrouted_article")
+            return
+        model = self.models[model_id]
 
         parsed = parse_article(record.payload["title"], record.payload.get("wikitext", ""))
         if not parsed.sections:

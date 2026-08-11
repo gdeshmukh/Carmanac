@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from carmanac.config import settings
 from carmanac.db.models import Source
+from carmanac.reconcile import policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -144,6 +145,17 @@ def db(engine: Engine) -> Iterator[Session]:
                 """
             )
         )
+
+
+@pytest.fixture(autouse=True)
+def _empty_slug_registries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The slug-pair registries describe the PRODUCTION catalogue, and the
+    ADR 0019 §3 validation aborts any pass whose entries do not resolve - a
+    synthetic test spine never contains them. Tests exercising registry
+    behavior patch their own entries on top of these."""
+    monkeypatch.setattr(policy, "SECTION_ARTICLE_MODELS", {})
+    monkeypatch.setattr(policy, "WIKIDATA_MODEL_MATCHES", {})
+    monkeypatch.setattr(policy, "WIKIDATA_MODEL_NEGATIVES", frozenset())
 
 
 @pytest.fixture()

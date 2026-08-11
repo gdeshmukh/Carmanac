@@ -269,6 +269,74 @@ def main() -> int:
             )
         ):
             print(f"  {pass_name:<16} {outcome:<28}: {n}")
+
+        # Registry + address health (ADR 0019 §3): the always-on loud check,
+        # run where the data exists - CI's registries are monkeypatched.
+        problems: list[str] = []
+        live_pairs = {
+            f"{co}/{m}"
+            for co, m in s.execute(
+                text(
+                    "SELECT co.slug, m.slug FROM models m JOIN companies co ON co.id = m.company_id"
+                )
+            )
+        }
+        for name, entries in (
+            ("WIKIDATA_MODEL_MATCHES", policy.WIKIDATA_MODEL_MATCHES.items()),
+            ("WIKIDATA_MODEL_NEGATIVES", policy.WIKIDATA_MODEL_NEGATIVES),
+            ("SECTION_ARTICLE_MODELS", policy.SECTION_ARTICLE_MODELS.items()),
+        ):
+            for key, pair in entries:
+                if pair not in live_pairs:
+                    problems.append(f"{name} ({key}, {pair!r}): pair not live")
+        known_qids = {
+            qid
+            for (qid,) in s.execute(
+                text("SELECT external_id FROM external_ids WHERE external_id LIKE 'Q%'")
+            )
+        }
+        for name, qids in (
+            ("NOT_A_GENERATION", policy.NOT_A_GENERATION),
+            ("IDENTITY_MERGES canonical", set(policy.IDENTITY_MERGES.values())),
+        ):
+            for qid in qids:
+                if qid not in known_qids:
+                    problems.append(f"{name} {qid}: no external_ids row")
+        shadowed = s.execute(
+            text(
+                """
+                SELECT a.entity_kind, a.slug FROM slug_aliases a
+                WHERE EXISTS (
+                  SELECT 1 FROM companies c
+                  WHERE a.entity_kind = 'company' AND c.slug = a.slug
+                ) OR EXISTS (
+                  SELECT 1 FROM models m
+                  WHERE a.entity_kind = 'model' AND m.slug = a.slug
+                    AND m.company_id = a.scope_company_id
+                ) OR EXISTS (
+                  SELECT 1 FROM model_lines l
+                  WHERE a.entity_kind = 'model_line' AND l.slug = a.slug
+                    AND l.company_id = a.scope_company_id
+                ) OR EXISTS (
+                  SELECT 1 FROM generations g
+                  WHERE a.entity_kind = 'generation' AND g.slug = a.slug
+                    AND g.company_id = a.scope_company_id
+                ) OR EXISTS (
+                  SELECT 1 FROM configurations cf
+                  WHERE a.entity_kind = 'configuration' AND cf.slug = a.slug
+                )
+                """
+            )
+        ).all()
+        problems.extend(f"alias shadowed by a live {k} slug: {slug}" for k, slug in shadowed)
+        aliases = s.execute(text("SELECT count(*) FROM slug_aliases")).scalar()
+        print(f"slug aliases                  : {aliases}")
+        if problems:
+            print("REGISTRY/ADDRESS HEALTH: PROBLEMS")
+            for p in problems:
+                print(f"  !! {p}")
+        else:
+            print("registry/address health       : ok")
     return 0
 
 

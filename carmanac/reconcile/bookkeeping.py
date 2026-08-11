@@ -18,7 +18,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from carmanac.db.models import MatchDecision, RawRecord, ReconciledRecord, SlugAlias
+from carmanac.db.models import Company, MatchDecision, Model, RawRecord, ReconciledRecord, SlugAlias
 from carmanac.db.models.reconciliation import ALIAS_ARC_BY_KIND
 from carmanac.reconcile import policy
 
@@ -73,6 +73,53 @@ def hold_address_lock(session: Session) -> None:
         raise RuntimeError(
             "another address writer (a pass run or a rename/merge script) holds "
             "the advisory lock; retry when it finishes"
+        )
+
+
+def validate_registry_pairs(session: Session) -> None:
+    """ADR 0019 §3: every slug-pair registry entry must resolve against LIVE
+    pairs, or the consuming pass refuses to run.
+
+    Renames migrate their registry keys atomically (the rename scripts refuse
+    to execute ahead of the rewrite); this is the enforcement that it
+    happened. Deliberately not alias-aware: a key resolving only through
+    history would behave differently in a fresh environment, and a merge
+    could silently carry a negative judgment onto a row its author never
+    judged. A stale negative is the worst case - it re-arms the exact match
+    a human dismissed - so the whole run aborts, which is loud and cheap to
+    recover from. An empty models table is a fresh clone or test DB: nothing
+    to resolve against, nothing to write wrongly, skip.
+    """
+    live = {
+        f"{company_slug}/{model_slug}"
+        for company_slug, model_slug in session.execute(
+            select(Company.slug, Model.slug).join(Model, Model.company_id == Company.id)
+        )
+    }
+    if not live:
+        return
+    stale = sorted(
+        {
+            f"WIKIDATA_MODEL_MATCHES[{qid!r}] -> {pair!r}"
+            for qid, pair in policy.WIKIDATA_MODEL_MATCHES.items()
+            if pair not in live
+        }
+        | {
+            f"WIKIDATA_MODEL_NEGATIVES ({qid!r}, {pair!r})"
+            for qid, pair in policy.WIKIDATA_MODEL_NEGATIVES
+            if pair not in live
+        }
+        | {
+            f"SECTION_ARTICLE_MODELS[{qid!r}] -> {pair!r}"
+            for qid, pair in policy.SECTION_ARTICLE_MODELS.items()
+            if pair not in live
+        }
+    )
+    if stale:
+        raise RuntimeError(
+            "stale slug-pair registry keys - a rename outran its policy.py "
+            "rewrite, and running on would disarm recorded judgments "
+            "(ADR 0019 §3). Fix the entries and re-run:\n  " + "\n  ".join(stale)
         )
 
 

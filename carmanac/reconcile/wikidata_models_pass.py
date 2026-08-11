@@ -75,6 +75,7 @@ from carmanac.reconcile.bookkeeping import (
     hold_address_lock,
     mark_reconciled,
     trigram_candidates,
+    validate_registry_pairs,
 )
 from carmanac.reconcile.engine import assert_field_facts, current_records, slugify
 from carmanac.reconcile.matching import normalize_name
@@ -159,6 +160,7 @@ class _WikidataModelsPass:
 
     def __init__(self, session: Session):
         hold_address_lock(session)
+        validate_registry_pairs(session)
         self.session = session
         self.stats = WikidataModelsStats()
         self.source = get_source(session, wikidata_models.SOURCE_NAME)

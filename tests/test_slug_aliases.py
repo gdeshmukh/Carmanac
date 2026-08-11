@@ -168,9 +168,7 @@ def test_aliases_pin_their_target_row(db, companies):
 
     # Forward tesla's own address, then try to delete: the rename alias still
     # TARGETS the row, and its FK must block until a merge script re-points.
-    db.add(
-        SlugAlias(entity_kind="company", slug="tesla", company_id=rivian.id, reason="merge")
-    )
+    db.add(SlugAlias(entity_kind="company", slug="tesla", company_id=rivian.id, reason="merge"))
     db.flush()
     db.delete(tesla)
     with pytest.raises(IntegrityError):
