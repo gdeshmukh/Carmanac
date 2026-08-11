@@ -26,7 +26,7 @@ from carmanac.db.models import (
 )
 from carmanac.ingest.wikidata.land import canonicalize, content_hash
 from carmanac.reconcile import policy
-from carmanac.reconcile.engine import run_companies_pass, slugify
+from carmanac.reconcile.engine import nonconforming_slug, run_companies_pass, slugify
 from carmanac.reconcile.sources import wikidata
 from carmanac.reconcile.sources.wikidata import map_record
 
@@ -184,6 +184,19 @@ def test_pin_denies_misclassed_target():
 def test_empty_class_set_quarantines():
     """Zero evidence is not vacuous truth (strict-admission polarity)."""
     assert policy.classify(frozenset()) == policy.QUARANTINE
+
+
+def test_nonconforming_slug_covers_the_ruled_drift_classes():
+    """ADR 0019 §4. The year range is tested anywhere, not just as a prefix:
+    the Cadillac species wears it mid-slug."""
+    assert nonconforming_slug("e46") is None
+    assert nonconforming_slug("mx-5-na") is None
+    assert nonconforming_slug("civic-fifth-generation") is None
+    assert nonconforming_slug("2000-2007-subaru-impreza") == "year_range"
+    assert nonconforming_slug("de-ville-1961-64") == "year_range"
+    assert nonconforming_slug("category-honda-hr-v") == "source_artifact_title"
+    assert nonconforming_slug("civic-11th-generation") == "numeral_ordinal"
+    assert nonconforming_slug("") == "no_ascii_name"
 
 
 def test_slugify():

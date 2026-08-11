@@ -302,6 +302,14 @@ def main() -> int:
             for qid in qids:
                 if qid not in known_qids:
                     problems.append(f"{name} {qid}: no external_ids row")
+        for slug in sorted(policy.RESERVED_COMPANY_SLUGS):
+            if s.execute(text("SELECT 1 FROM companies WHERE slug = :s"), {"s": slug}).scalar():
+                problems.append(f"reserved company slug is live: {slug}")
+            if s.execute(
+                text("SELECT 1 FROM slug_aliases WHERE entity_kind = 'company' AND slug = :s"),
+                {"s": slug},
+            ).scalar():
+                problems.append(f"reserved company slug is aliased: {slug}")
         shadowed = s.execute(
             text(
                 """
@@ -324,6 +332,12 @@ def main() -> int:
                 ) OR EXISTS (
                   SELECT 1 FROM configurations cf
                   WHERE a.entity_kind = 'configuration' AND cf.slug = a.slug
+                ) OR EXISTS (
+                  SELECT 1 FROM engines e
+                  WHERE a.entity_kind = 'engine' AND e.slug = a.slug
+                ) OR EXISTS (
+                  SELECT 1 FROM transmissions t
+                  WHERE a.entity_kind = 'transmission' AND t.slug = a.slug
                 )
                 """
             )

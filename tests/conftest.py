@@ -127,6 +127,9 @@ def db(engine: Engine) -> Iterator[Session]:
         yield session
         session.rollback()
     with engine.begin() as conn:
+        # slug_aliases is guarded against TRUNCATE (ADR 0019): recorded address
+        # history is unrecomputable, so discarding it is always deliberate.
+        conn.execute(text("SET LOCAL carmanac.allow_address_drop = 'on'"))
         conn.execute(
             text(
                 """

@@ -12,7 +12,17 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from carmanac.db.models import Company, Generation, Model, ModelLine, SlugAlias
+from carmanac.db.models import (
+    CataloguePeriod,
+    Company,
+    Configuration,
+    Generation,
+    MarketRegion,
+    Model,
+    ModelLine,
+    PeriodKind,
+    SlugAlias,
+)
 from carmanac.reconcile.bookkeeping import alias_addresses
 
 pytestmark = pytest.mark.integration
@@ -233,3 +243,81 @@ def test_alias_addresses_helper_maps_scope_and_target(db, companies):
 
     assert alias_addresses(db, "model_line") == {(tesla.id, "model-s-line"): line.id}
     assert alias_addresses(db, "company") == {}
+
+
+def _configuration(db, company: Company, slug: str) -> Configuration:
+    """A leaf row on the real spine - the kind carrying almost every address."""
+    model = Model(company_id=company.id, slug=f"m-{slug}", name="M")
+    db.add(model)
+    db.flush()
+    kind = db.scalar(select(PeriodKind).where(PeriodKind.code == "model_year"))
+    period = CataloguePeriod(
+        model_id=model.id, period_kind_id=kind.id, start_year=2019, end_year=2019
+    )
+    db.add(period)
+    db.flush()
+    market = db.scalar(select(MarketRegion).where(MarketRegion.code == "US"))
+    config = Configuration(catalogue_period_id=period.id, market_region_id=market.id, slug=slug)
+    db.add(config)
+    db.commit()
+    return config
+
+
+def test_configuration_addresses_are_guarded(db, companies):
+    """The leaf kind carries 23,523 of the ~23,900 live addresses; without a
+    test here the whole kind could fall out of the trigger install unnoticed."""
+    tesla, _ = companies
+    config = _configuration(db, tesla, "tesla-model-s-2019-awd")
+
+    config.slug = "tesla-model-s-2019-long-range-awd"
+    db.commit()
+    (alias,) = _aliases(db, "configuration")
+    assert (alias.slug, alias.configuration_id) == ("tesla-model-s-2019-awd", config.id)
+
+    # The retired leaf address cannot be re-minted...
+    other = _configuration(db, tesla, "placeholder-slug")
+    other.slug = "tesla-model-s-2019-awd"
+    with pytest.raises(DBAPIError, match="cannot be taken over"):
+        db.flush()
+    db.rollback()
+
+    # ...and the row cannot be deleted out from under its address.
+    db.delete(config)
+    with pytest.raises(DBAPIError, match="would drop its address"):
+        db.flush()
+    db.rollback()
+
+
+def test_truncate_cannot_silently_discard_history(db, companies):
+    """Row triggers do not fire on TRUNCATE, and CASCADE from any address
+    table reaches slug_aliases - the one table nothing can recompute."""
+    tesla, _ = companies
+    tesla.slug = "tesla"
+    db.commit()
+
+    with pytest.raises(DBAPIError, match="discard recorded address history"):
+        db.execute(text("TRUNCATE configurations CASCADE"))
+    db.rollback()
+    assert len(_aliases(db, "company")) == 1
+
+    db.execute(text("SET LOCAL carmanac.allow_address_drop = 'on'"))
+    db.execute(text("TRUNCATE slug_aliases"))
+    db.commit()
+    assert not _aliases(db, "company")
+
+
+def test_rename_onto_a_hand_written_alias_raises(db, companies):
+    """An abandoned merge's forwarding alias is a recorded judgment; a rename
+    that would silently re-point it must fail instead."""
+    tesla, rivian = companies
+    db.add(
+        SlugAlias(
+            entity_kind="company", slug="tesla-q124981765", company_id=rivian.id, reason="merge"
+        )
+    )
+    db.commit()
+
+    tesla.slug = "tesla"
+    with pytest.raises(IntegrityError):
+        db.flush()
+    db.rollback()

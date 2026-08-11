@@ -109,8 +109,7 @@ updates write nothing:
   2. The new address equals an alias bound to **this** entity → delete that
      alias. A promise the entity itself re-fulfills is discharged, not
      broken; renaming back (`a → b → a`) is legal.
-  3. Insert the alias row for the old address (`reason = 'rename'`,
-     `ON CONFLICT` re-pointing an existing same-address alias at this row).
+  3. Insert the alias row for the old address (`reason = 'rename'`).
 - **BEFORE INSERT** on all seven tables: a new row's slug equals any alias
   in its scope → RAISE. This is what makes the mint sites' in-memory
   collision caches *safe* rather than merely polite: a rename committed
@@ -121,6 +120,17 @@ updates write nothing:
   session has set `carmanac.allow_address_drop` — the explicit, greppable
   escape reserved for ADR 0004's our-own-bug artifacts. Deleting a row that
   other aliases still target is blocked by the arc FKs themselves.
+- **BEFORE TRUNCATE** on `slug_aliases` itself, statement-level: row
+  triggers do not fire on TRUNCATE, and `TRUNCATE <address table> CASCADE`
+  reaches the alias table through the arc FKs — so without this guard the
+  one table nothing can recompute sits one statement away from empty,
+  silently. Same escape, so a deliberate reset stays possible and explicit.
+
+The rename trigger deliberately carries no `ON CONFLICT`: the old address
+can only already be aliased if someone wrote that row by hand (an abandoned
+merge's forwarding), and silently re-pointing it would overwrite a recorded
+judgment with a statement that never mentioned it. The unique constraint
+raises instead.
 
 **Who writes what.** A rename writes nothing by hand — the trigger emits the
 alias in the same statement, so a batch cannot half-apply. A **merge** script
@@ -298,14 +308,17 @@ company-scoped canonical, `x3-e83` is not stutter but self-description
 within BMW's namespace.
 
 **The drift ends mechanically, not by batch alone**: both mint sites gain a
-conformance guard — a computed slug that is year-range-prefixed, derived
-from a `Category:` title, or embeds the company name **flags instead of
-minting** (the sections pass's all-or-nothing rule extends to it). The
+conformance guard — a computed slug that carries a year range (anywhere:
+the Cadillac species wears it mid-slug, the Impreza heading in front),
+comes from a `Category:` title, or spells an ordinal as a numeral **flags
+instead of minting**. The rename batch tests the same function, so the
+class it sweeps and the class the mint refuses cannot drift apart (the sections pass's all-or-nothing rule extends to it). The
 rename batch is then a **recompute diff**, not a hand-picked list: every
 row where the stored slug fails conformance renames to its grammar form
-(the two leaked source artifacts, the two numeral ordinals, the
-company-name-embedding class, the `de-ville-1961-64` species — the dry-run
-enumerates exactly). The bare-code and name+code majorities stay. The four
+(the dry-run enumerates exactly). Rows whose stored slug is conforming but
+whose grammar would now compose differently are listed as **proposals**,
+never renamed: an address does not move because a display name drifted, and
+the bare-code species (`964`, `w210`) is a lawful realization, not drift. The bare-code and name+code majorities stay. The four
 demoted rows (ADR 0018) are skipped: they await re-kinding, and forcing
 generation grammar onto rows ruled not-generations is churn.
 

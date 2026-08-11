@@ -483,10 +483,12 @@ class _SectionsPass:
         # ADR 0013 §1 rule the Wikidata mint follows, so one kind stops
         # wearing two conventions and section-born slugs stop embedding
         # corporate-name marques.
+        # Stripping must leave a nameplate, not a bare number: "Mazda3" and
+        # "Polestar 2" strip to "3" and "2", which name nothing.
         name = model.name
         for prefix in self.company_prefixes.get(model.company_id, ()):
             stripped = strip_prefix(name, prefix, normalize_name)
-            if stripped != name:
+            if stripped != name and any(ch.isalpha() for ch in stripped):
                 name = stripped
                 break
         if section.codes:

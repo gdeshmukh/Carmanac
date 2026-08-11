@@ -97,7 +97,11 @@ class PassStats:
 # entirely (`renaultnissan...`).
 _DASHES = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212", "-"))
 
-_YEAR_RANGE_PREFIX = re.compile(r"^\d{4}-\d{4}(?:-|$)")
+# A year range anywhere in the slug, not just leading: the Cadillac species
+# wears it mid-slug (`de-ville-1961-64`) and the Impreza section heading wears
+# it in front. Two-digit end years are the common form.
+_YEAR_RANGE = re.compile(r"(?:^|-)\d{4}-\d{2,4}(?:-|$)")
+_NUMERAL_ORDINAL = re.compile(r"-\d+(?:st|nd|rd|th)-generation$")
 
 
 def slugify(name: str) -> str:
@@ -116,15 +120,21 @@ def slugify(name: str) -> str:
 
 def nonconforming_slug(slug: str) -> str | None:
     """ADR 0019 §4: the observed drift classes no generation mint may repeat.
-    A year-range prefix is a section heading slugged whole (its span belongs
-    in facts, never identity); a `category-` prefix is a leaked source page
-    title. Returns the reason, or None for a conforming slug."""
+    A year range is production time, which belongs in facts and never in
+    identity; a `category-` prefix is a leaked source page title; a numeral
+    ordinal is the wrong form of a word the grammar spells out. Returns the
+    reason, or None for a conforming slug.
+
+    The rename batch tests the same function, so the class it sweeps and the
+    class the mint refuses can never drift apart."""
     if not slug:
         return "no_ascii_name"
-    if _YEAR_RANGE_PREFIX.match(slug):
-        return "year_range_prefix"
+    if _YEAR_RANGE.search(slug):
+        return "year_range"
     if slug.startswith("category-"):
         return "source_artifact_title"
+    if _NUMERAL_ORDINAL.search(slug):
+        return "numeral_ordinal"
     return None
 
 

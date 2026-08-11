@@ -40,7 +40,7 @@ from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources.wikidata_models import strip_prefix
 from carmanac.reconcile.sources.wikipedia_sections import ORDINAL_WORDS
 
-_NUMERAL_ORDINAL = re.compile(r"^(?P<stem>.+)-(?P<n>\d+)(?:st|nd|rd|th)-generation$")
+_NUMERAL_ORDINAL = re.compile(r"-(?P<n>\d+)(?:st|nd|rd|th)-generation$")
 _SECTION_KEY = re.compile(r"^section:.+#(?P<ordinal>\d+)$")
 
 
@@ -100,19 +100,22 @@ def plan(session: Session) -> dict:
 
     renames: dict[int, tuple[str, str, str]] = {}  # id -> (old, new, reason)
     unresolved: list[tuple[Generation, str]] = []
+    proposals: list[tuple[Generation, str]] = []
 
     for g in generations:
-        numeral = _NUMERAL_ORDINAL.match(g.slug)
-        reason = nonconforming_slug(g.slug) or ("numeral_ordinal" if numeral else None)
-        if reason is None:
-            continue
+        numeral = _NUMERAL_ORDINAL.search(g.slug)
+        # The mint guard's own test, so the class this batch sweeps and the
+        # class the passes refuse can never drift apart.
+        reason = nonconforming_slug(g.slug)
         if g.id in demoted:
-            unresolved.append((g, f"{reason}; demoted (NOT_A_GENERATION) - awaits re-kinding"))
+            if reason:
+                unresolved.append((g, f"{reason}; demoted (NOT_A_GENERATION) - awaits re-kinding"))
             continue
 
         model_ids = linked_models.get(g.id, set())
         if len(model_ids) != 1:
-            unresolved.append((g, f"{reason}; {len(model_ids)} linked models"))
+            if reason:
+                unresolved.append((g, f"{reason}; {len(model_ids)} linked models"))
             continue
         model = models[next(iter(model_ids))]
         nameplate = model.name
@@ -129,14 +132,24 @@ def plan(session: Session) -> dict:
         elif numeral and 1 <= int(numeral.group("n")) <= len(ORDINAL_WORDS):
             display = f"{nameplate} ({ORDINAL_WORDS[int(numeral.group('n')) - 1]} generation)"
         else:
-            unresolved.append((g, f"{reason}; no codes and no ordinal on record"))
+            if reason:
+                unresolved.append((g, f"{reason}; no codes and no ordinal on record"))
             continue
 
         target = slugify(display)
-        if nonconforming_slug(target) is not None:
+        if target == g.slug:
+            continue
+        still = nonconforming_slug(target)
+        holder = occupied.get((g.company_id, target))
+        if reason is None:
+            # Conforming, but the grammar would compose it differently (a
+            # display name arbitrated since mint, the company-name-embedding
+            # class). Addresses do not move on drift alone - ruling first.
+            proposals.append((g, f"grammar would compose {target!r}"))
+            continue
+        if still is not None:
             unresolved.append((g, f"{reason}; recompute still nonconforming: {target!r}"))
             continue
-        holder = occupied.get((g.company_id, target))
         if holder is not None and holder != g.id:
             unresolved.append((g, f"{reason}; target {target!r} taken by generation {holder}"))
             continue
@@ -147,6 +160,7 @@ def plan(session: Session) -> dict:
         "generations": {g.id: g for g in generations},
         "renames": renames,
         "unresolved": unresolved,
+        "proposals": proposals,
     }
 
 
@@ -162,6 +176,9 @@ def main() -> int:
             print(f"  {old} -> {new}  [{reason}]")
         print(f"\nunresolved - print and wait ({len(p['unresolved'])}):")
         for g, why in p["unresolved"]:
+            print(f"  {g.slug}: {why}")
+        print(f"\nproposals - conforming, but the grammar differs ({len(p['proposals'])}):")
+        for g, why in p["proposals"]:
             print(f"  {g.slug}: {why}")
 
         if not args.execute:

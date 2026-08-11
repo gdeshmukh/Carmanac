@@ -66,6 +66,12 @@ DECLARE
     kind text := TG_ARGV[0];
     arc_col text := TG_ARGV[1];
     scoped boolean := TG_ARGV[2] = 'scoped';
+    -- Equality (or a bare IS NULL) so the lookup uses uq_slug_aliases_address.
+    -- `IS NOT DISTINCT FROM $2` is a DistinctExpr, which is never an index
+    -- qual, and this runs on every insert into every address table.
+    scope_pred text := CASE WHEN scoped
+        THEN 'scope_company_id = $2'
+        ELSE 'scope_company_id IS NULL AND $2 IS NULL' END;
     old_scope integer;
     new_scope integer;
     hit_id bigint;
@@ -83,10 +89,8 @@ BEGIN
 
     EXECUTE format(
         'SELECT id, %I FROM slug_aliases'
-        ' WHERE entity_kind = $1'
-        '   AND scope_company_id IS NOT DISTINCT FROM $2'
-        '   AND slug = $3',
-        arc_col)
+        ' WHERE entity_kind = $1 AND %s AND slug = $3',
+        arc_col, scope_pred)
     INTO hit_id, hit_target
     USING kind, new_scope, NEW.slug;
     IF hit_id IS NOT NULL THEN
@@ -101,11 +105,14 @@ BEGIN
         DELETE FROM slug_aliases WHERE id = hit_id;
     END IF;
 
+    -- No ON CONFLICT: the old address can only already be aliased if someone
+    -- wrote that row by hand (an abandoned merge forwarding), and silently
+    -- re-pointing it would overwrite a recorded judgment with a statement
+    -- that never mentioned it. Let the unique constraint raise.
     EXECUTE format(
         'INSERT INTO slug_aliases (entity_kind, scope_company_id, slug, %I, reason)'
-        ' VALUES ($1, $2, $3, $4, ''rename'')'
-        ' ON CONFLICT (entity_kind, scope_company_id, slug) DO UPDATE SET %I = $4',
-        arc_col, arc_col)
+        ' VALUES ($1, $2, $3, $4, ''rename'')',
+        arc_col)
     USING kind, old_scope, OLD.slug, NEW.id;
     RETURN NEW;
 END;
@@ -122,11 +129,12 @@ DECLARE
 BEGIN
     IF scoped THEN
         scope := (to_jsonb(NEW) ->> 'company_id')::integer;
+        SELECT id INTO hit FROM slug_aliases
+         WHERE entity_kind = kind AND scope_company_id = scope AND slug = NEW.slug;
+    ELSE
+        SELECT id INTO hit FROM slug_aliases
+         WHERE entity_kind = kind AND scope_company_id IS NULL AND slug = NEW.slug;
     END IF;
-    SELECT id INTO hit FROM slug_aliases
-     WHERE entity_kind = kind
-       AND scope_company_id IS NOT DISTINCT FROM scope
-       AND slug = NEW.slug;
     IF hit IS NOT NULL THEN
         RAISE EXCEPTION
             'new % slug "%" is a retired address (slug_aliases id %); '
@@ -144,6 +152,9 @@ DECLARE
     kind text := TG_ARGV[0];
     arc_col text := TG_ARGV[1];
     scoped boolean := TG_ARGV[2] = 'scoped';
+    scope_pred text := CASE WHEN scoped
+        THEN 'scope_company_id = $2'
+        ELSE 'scope_company_id IS NULL AND $2 IS NULL' END;
     scope integer;
     forwarded boolean;
 BEGIN
@@ -158,11 +169,9 @@ BEGIN
     -- pinned by the arc FKs.
     EXECUTE format(
         'SELECT EXISTS (SELECT 1 FROM slug_aliases'
-        ' WHERE entity_kind = $1'
-        '   AND scope_company_id IS NOT DISTINCT FROM $2'
-        '   AND slug = $3'
+        ' WHERE entity_kind = $1 AND %s AND slug = $3'
         '   AND %I IS DISTINCT FROM $4)',
-        arc_col)
+        scope_pred, arc_col)
     INTO forwarded
     USING kind, scope, OLD.slug, OLD.id;
     IF NOT forwarded THEN
@@ -177,6 +186,22 @@ END;
 $$ LANGUAGE plpgsql;
 """
 
+# Row-level triggers do not fire on TRUNCATE, and `TRUNCATE <address table>
+# CASCADE` reaches slug_aliases through the arc FKs - so without this the one
+# table nothing can recompute is one statement away from empty, silently.
+_TRUNCATE_FN = """
+CREATE OR REPLACE FUNCTION slug_alias_block_truncate() RETURNS trigger AS $$
+BEGIN
+    IF current_setting('carmanac.allow_address_drop', true) = 'on' THEN
+        RETURN NULL;
+    END IF;
+    RAISE EXCEPTION
+        'TRUNCATE would discard recorded address history, which no pass can '
+        'recompute; SET LOCAL carmanac.allow_address_drop = ''on'' if that is '
+        'really intended (ADR 0019, ADR 0004)';
+END;
+$$ LANGUAGE plpgsql;
+"""
 
 def upgrade() -> None:
     op.create_table(
@@ -284,6 +309,15 @@ def upgrade() -> None:
     op.execute(_RENAME_FN)
     op.execute(_MINT_FN)
     op.execute(_DROP_FN)
+    op.execute(_TRUNCATE_FN)
+    op.execute(
+        """
+        CREATE TRIGGER trg_slug_aliases_block_truncate
+        BEFORE TRUNCATE ON slug_aliases
+        FOR EACH STATEMENT
+        EXECUTE FUNCTION slug_alias_block_truncate();
+        """
+    )
     for table, kind, arc_col, scope in ADDRESS_TABLES:
         update_of = "slug, company_id" if scope == "scoped" else "slug"
         op.execute(
@@ -328,6 +362,8 @@ def downgrade() -> None:
         op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_slug_alias_rename ON {table};")
         op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_slug_alias_mint_guard ON {table};")
         op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_slug_alias_drop_guard ON {table};")
+    op.execute("DROP TRIGGER IF EXISTS trg_slug_aliases_block_truncate ON slug_aliases;")
+    op.execute("DROP FUNCTION IF EXISTS slug_alias_block_truncate();")
     op.execute("DROP FUNCTION IF EXISTS slug_alias_record_rename();")
     op.execute("DROP FUNCTION IF EXISTS slug_alias_block_mint();")
     op.execute("DROP FUNCTION IF EXISTS slug_alias_block_drop();")
