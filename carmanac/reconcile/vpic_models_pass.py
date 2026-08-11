@@ -183,7 +183,7 @@ class _VpicModelsPass:
             self._flag(record, "needs_curated_slug", {"model_name": name})
             return None
         if slug in policy.RESERVED_ROUTE_SEGMENTS:
-            # Models own the bare segment under /makes/<company>/ - except
+            # Models own the bare segment under /<company>/ - except
             # the literals other kinds live under (ADR 0019 §6).
             self._flag(record, "reserved_segment", {"model_name": name, "slug": slug})
             return None

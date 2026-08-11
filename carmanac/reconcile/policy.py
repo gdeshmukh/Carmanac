@@ -247,17 +247,34 @@ SECTION_ARTICLE_MODELS: dict[str, str] = {
 # resolving `namesake_collision` / `needs_curated_slug` admission flags.
 COMPANY_SLUG_OVERRIDES: dict[str, str] = {}
 
-# Bare slugs no company may hold (ADR 0019 §2): a contested namesake cluster
-# retires its bare base here - nobody owns `meteor`, and the reserved address
-# later serves a disambiguation page. Code, not data, so occupation survives
-# any rebuild. Grown by the company rename batch, one base per vacated
-# cluster, in the same commit that pins the members.
-RESERVED_COMPANY_SLUGS: frozenset[str] = frozenset()
+# Bare slugs no company may hold (ADR 0019). Two kinds live here: a contested
+# namesake cluster's bare base, retired so nobody owns `meteor` by arrival
+# order, and the site's own root literals - a company sits at `/<slug>`, so
+# anything the frontend answers at the root is an address no company can
+# take. Zero live company slugs collide with the literals, so they land as a
+# pure guard. Code, not data, so occupation survives any rebuild.
+RESERVED_COMPANY_SLUGS: frozenset[str] = frozenset(
+    {
+        "api",
+        "about",
+        "cars",
+        "compare",
+        "engines",
+        "makes",
+        "search",
+        "static",
+        "transmissions",
+        "_next",
+        "favicon.ico",
+        "robots.txt",
+        "sitemap.xml",
+    }
+)
 
-# Route segments under /makes/<company>/ that can never be a model or line
-# slug (ADR 0019 §6): models own the bare second segment, every other kind
-# lives under one of these literals. Checked at mint time; zero live
-# conflicts existed when the list landed.
+# Route segments under /<company>/ that can never be a model or line slug
+# (ADR 0019): models own the bare second segment, every other kind lives
+# under one of these literals. Checked at mint time; zero live conflicts
+# existed when the list landed.
 RESERVED_ROUTE_SEGMENTS: frozenset[str] = frozenset(
     {"generations", "lines", "codes", "engines", "transmissions", "platforms", "cars", "compare"}
 )

@@ -5,7 +5,8 @@
 
 ## Context
 
-An **address** is the part of a URL that names a thing: `bmw` in `/makes/bmw`.
+An **address** is the part of a URL that names a thing: `bmw` in `/bmw`, or
+`964` in `/porsche/generations/964`.
 It is stored as a slug on each row. No page exists yet — nothing is published,
 nothing links in — so every address in the database today has an audience of
 zero.
@@ -89,22 +90,57 @@ nameplates and only four a company with cars, and three of those are contested
 by two-statement Wikidata stubs. One query over unaddressed rows is how the
 rest get looked at.
 
-**The grammar.** Companies and models take their name. A generation is
-`<nameplate> (<codes>)` when chassis codes are known and `<nameplate>
-(<ordinal> generation)` otherwise, with the marque stripped — but never to
-bare digits, so `Mazda3` stays `mazda3` rather than becoming `3`. A car is
-`company-model-year[-trim][-drivetrain]`. Four shapes are refused outright as
+**The route map is the hierarchy, and an address says only what the path does
+not.**
+
+```
+/bmw                          the company
+/bmw/m3                       every M3
+/bmw/m3/2004                  that year's M3s
+/bmw/m3/2004/convertible-rwd  the car
+/bmw/generations/e46          the generation
+```
+
+Truncating any address gives the index above it, which is the property that
+makes the scheme worth having. Company slugs sit at the root, so root literals
+are reserved; models own the bare second segment under a company and every
+other kind lives under a literal (`/generations/`, `/lines/`, `/codes/`),
+which settles Lamborghini having both a model and a line called Huracán.
+
+**A car's address is the tail only** — trim, then drivetrain when the trim
+does not already say it (`AWD` + `awd` is one token, not two). It therefore
+needs to be unique only inside its model year, and can only be: the fleet's
+23,523 cars compose 2,588 distinct tails, and `fwd` fits 3,161 of them. So
+`uq_configurations_slug` becomes `unique (catalogue_period_id, slug)`, which
+is exactly what the URL promises. A car with nothing to distinguish it wears
+`base`, so a year page is always an index and never also a car.
+
+The de-stutter un-suppresses itself where suppressing would merge two cars in
+one year — six model years fleet-wide — so 23,511 of 23,523 addresses depend
+on nothing but their own row.
+
+**A generation's address is its bare chassis code.** `/porsche/generations/964`
+— which is what people call it, and the nameplate is already in the path. Two
+exceptions, both from the data: a code shared by two generations under one
+company (Celica and Supra are both A60, Camry and Camry Solara both XV20, nine
+such pairs) falls back to `<nameplate>-<code>`, which distinguishes them; and a
+generation carrying several codes falls back too, because taking the first
+would put array order — a scrape artifact — into a public URL. Generations
+stay company-anchored per ADR 0016, since which models one covers is collected
+evidence that moves.
+
+**The rest of the grammar.** Companies and models take their name, with the
+marque stripped from a nameplate but never down to bare digits, so `Mazda3`
+stays `mazda3` rather than becoming `3`. Four shapes are refused outright as
 source artifacts that reached a public address: an empty ASCII form, a year
 range, a `category-` page title, and a numeral ordinal.
 
-**Routes.** The canonical generation address is
-`/makes/<company>/generations/<slug>` — company-anchored, matching ADR 0016,
-because which models a generation covers is collected evidence that moves. The
-car page is `/cars/<slug>`; the mission's own noun is the car, and no public
-route speaks schema or carries a database id. Models own the bare second
-segment under `/makes/<company>/`; every other kind lives under a reserved
-literal (`/generations/`, `/lines/`, `/codes/`), which settles Lamborghini
-having both a model and a line called Huracán.
+**What has no grammar yet, stated rather than hidden.** The third segment
+under a model is a catalogue period, and all 18,751 live periods are US model
+years with `start_year = end_year`, so a bare year identifies one row. The
+schema permits a production period and a facelift phase to compose the same
+segment; neither exists yet, and the rule is owed when the first lands —
+along with a phase's own label, which the table has no column for.
 
 ## Consequences
 
@@ -118,18 +154,25 @@ having both a model and a line called Huracán.
   longer name rows by address.
 - Addresses move when their data moves. Anything that links to one before the
   read surface exists will break, which is currently nothing.
-- On first run over the live database: `tesla` and its 179 cars lose the QID
-  suffix, 1,207 car addresses recompute (hyphenation and renamed parents), 30
-  generations take the one grammar, and 122 companies, 5 generations and 1 car
-  end up unaddressed — the contested namesakes, the generations whose only
-  name is a year range, and one casefold-duplicate car. The second run
-  changes nothing.
+- On first run over the live database: every one of the 23,523 cars
+  re-addresses to its tail, 253 generations take their bare chassis code, and
+  122 companies, 5 generations and 1 car end up unaddressed — the contested
+  namesakes, the generations whose only name is a year range, and the
+  `E350 4Matic`/`E350 4matic` pair, which is duplicate data no token can
+  separate. The second run changes nothing.
+- A company rename now moves one address instead of 23,523: a car's stored
+  address no longer contains its parents. The car's URL still changes, because
+  the company is a path segment — but nothing stored has to move for it.
+- Two ugly classes are left honest rather than papered over. `/bmw/x5/2002/fwd`
+  is the address of a car no source has named beyond its drivetrain, and
+  `xDrive` is an option rather than a drivetrain fact. Both want vPIC's Body
+  Class and option data — a source question, not a grammar one.
 
 ## What this changes in earlier decisions
 
-1. **Charter** — a new invariant (slugs are addresses, not identity); the
-   route map gains `/cars/`, `/generations/`, `/lines/`, `/codes/` and loses
-   `-or-id`.
+1. **Charter** — a new invariant (slugs are addresses, not identity), and the
+   route map is rewritten: the `/makes/` and `/cars/` prefixes are gone, a
+   company sits at the root, and every segment adds only its own contribution.
 2. **ADR 0007 §7** — the QID suffix on collision is gone, and so is the
    non-ASCII fallback to an external id. Both leaked a source's ID scheme into
    public identity.

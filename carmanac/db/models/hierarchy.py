@@ -175,7 +175,7 @@ class ModelLine(Base, TimestampMixin):
     """A grouping row, NOT an entity in the hierarchy (ADR 0012 §4).
 
     "3 Series" is an aggregation over as-filed models (ADR 0011 §2), served
-    as a browse view over its members - /makes/bmw/3-series is a page over
+    as a browse view over its members - /bmw/lines/3-series is a page over
     memberships, never a sixth level. Nothing in the FK spine points here,
     and lines hold NO external ids: the series QID stays on the raw record,
     and identity resolves by the (company, slug) natural key. A source
