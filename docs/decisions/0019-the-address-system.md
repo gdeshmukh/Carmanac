@@ -20,6 +20,10 @@ the negative registry that is worse than losing a note: the rejected match
 becomes eligible again, and the reconciler can make exactly the mistake a
 human told it not to make, silently.
 
+Two of those three registries hold no entry yet and the third holds two, which
+is why this is the cheap moment rather than an emergency: they are where all
+the coming queue work lands.
+
 The slug got used because a code registry needs a handle on our rows and
 database ids are not reproducible across a rebuild. But our rows carry source
 identifiers too — every one of the 1,735 models has a vPIC `model:<id>` — and
@@ -56,7 +60,9 @@ model's own source id (`model:5881`), named in a trailing comment the way
 rather than by slug. Both sides of every recorded judgment are now source
 identifiers, so no rename can disarm one.
 
-**A row may have no address.** Every slug column is nullable. A company whose
+**A row may have no address.** Every slug column on the spine is nullable
+(companies, models, model_lines, generations, configurations; engines and
+transmissions hold no rows yet and follow when they do). A company whose
 name is contested, a generation whose only distinguishing fact is a production
 span, a car whose composed address is taken — each exists, carries its facts,
 and has `slug IS NULL` until an address is available. Unaddressed rows *are*
@@ -71,11 +77,17 @@ moving an incumbent for no reason is churn. The loser waits for a
 which are facts that get corrected. `RESERVED_COMPANY_SLUGS` holds bases no
 company may take.
 
+A company also claims the addresses of the other names it is filed under, so
+`audi` is not free for a namesake stub to take while Audi AG sits at
+`audi-ag` — it claims without taking, and a pin decides which row answers
+there.
+
 This replaces arrival order, which is what the QID suffix was hiding: whoever
 was ingested first kept the plain name. It is *not* a claim that the loser is
-less real — three of the six contested clusters that touch real cars turned
-out to be two-statement Wikidata stubs, and one query over unaddressed rows is
-how the rest get looked at.
+less real — of the 100 contested clusters only six contain a company with any
+nameplates and only four a company with cars, and three of those are contested
+by two-statement Wikidata stubs. One query over unaddressed rows is how the
+rest get looked at.
 
 **The grammar.** Companies and models take their name. A generation is
 `<nameplate> (<codes>)` when chassis codes are known and `<nameplate>
@@ -108,8 +120,10 @@ having both a model and a line called Huracán.
   read surface exists will break, which is currently nothing.
 - On first run over the live database: `tesla` and its 179 cars lose the QID
   suffix, 1,207 car addresses recompute (hyphenation and renamed parents), 30
-  generations take the one grammar, and 120 contested companies go
-  unaddressed pending pins. The second run changes nothing.
+  generations take the one grammar, and 122 companies, 5 generations and 1 car
+  end up unaddressed — the contested namesakes, the generations whose only
+  name is a year range, and one casefold-duplicate car. The second run
+  changes nothing.
 
 ## What this changes in earlier decisions
 
@@ -123,8 +137,10 @@ having both a model and a line called Huracán.
    on source ids, not slug pairs.
 4. **ADR 0017 §4** — `SECTION_ARTICLE_MODELS` likewise; the generation naming
    rule now strips the marque and applies at every site.
-5. **ADR 0010 §3** — a model slug collision still flags, but the row is no
-   longer withheld.
+5. **ADR 0010 §3** — unchanged, and now the one place a naming clash still
+   withholds a row: the vPIC models pass flags rather than creating. It is
+   left alone deliberately, because changing it moves data; it is owed the
+   same treatment and is noted in PROGRESS.
 
 Unchanged: which addresses are unique per company versus globally, the 1:1
 rule for external ids, evidence-gated generation placement, and

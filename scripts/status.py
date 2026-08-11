@@ -172,14 +172,14 @@ def main() -> int:
         # last line's denominator is visible all the way up. Curated article
         # routings (SECTION_ARTICLE_MODELS) count as reach - the AMG GT has
         # articles and placements without a 1:1 model QID.
-        routed = sorted({pair for pair in policy.SECTION_ARTICLE_MODELS.values()}) or ["-/-"]
+        routed = sorted(set(policy.SECTION_ARTICLE_MODELS.values())) or ["-"]
         routed_qids = sorted(policy.SECTION_ARTICLE_MODELS) or ["Q0"]
         funnel = s.execute(
             text(
                 """
                 WITH routed_models AS (
-                  SELECT m.id FROM models m JOIN companies co ON co.id = m.company_id
-                  WHERE co.slug || '/' || m.slug IN :routed
+                  SELECT DISTINCT ei.model_id AS id FROM external_ids ei
+                  WHERE ei.model_id IS NOT NULL AND ei.external_id IN :routed
                 ),
                 stages AS (
                   SELECT m.id,

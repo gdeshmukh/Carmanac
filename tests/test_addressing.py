@@ -20,6 +20,8 @@ from carmanac.db.models import (
     MarketRegion,
     Model,
     PeriodKind,
+    RawRecord,
+    Source,
 )
 from carmanac.reconcile.addressing import (
     configuration_slug,
@@ -29,6 +31,18 @@ from carmanac.reconcile.addressing import (
     slugify,
     strip_marque,
 )
+
+
+def vpic_source_id(db) -> int:
+    """The vPIC source row, created on demand: make names live on its raw
+    records, which is where a company's other filed names come from."""
+    source = db.scalar(select(Source).where(Source.name == "NHTSA vPIC"))
+    if source is None:
+        source = Source(name="NHTSA vPIC", tier=1)
+        db.add(source)
+        db.flush()
+    return source.id
+
 
 # --- grammar -----------------------------------------------------------------
 
@@ -153,3 +167,42 @@ def test_a_generation_with_no_composable_name_has_no_address(db, spine):
     db.commit()
     assert gen.slug is None
     assert db.scalar(select(Generation)) is not None
+
+
+@pytest.mark.integration
+def test_a_company_claims_the_addresses_of_its_other_filed_names(db, spine, wikidata_source):
+    """Audi AG is filed with vPIC as "AUDI", so `audi` is not a free address
+    for a zero-evidence namesake - even though the two names slugify apart
+    and never contest each other directly."""
+    vpic = vpic_source_id(db)
+    db.add(ExternalId(company_id=spine["real"].id, source_id=vpic, external_id="make:7"))
+    db.add(
+        RawRecord(
+            source_id=vpic,
+            external_id="make:7",
+            content_hash="h",
+            payload={"make_name": "EAGLE MOTORS"},
+        )
+    )
+    stub = Company(name="Eagle Motors")
+    db.add(stub)
+    db.commit()
+    recompute_addresses(db)
+    db.commit()
+    assert stub.slug is None, "the stub may not take a name the filed company answers to"
+    assert spine["real"].slug == "eagle", "and the filed company keeps its own"
+
+
+@pytest.mark.integration
+def test_addresses_may_permute_without_colliding(db, spine):
+    """A takes B's address while B moves. Both UPDATEs are legal only if every
+    mover releases before any mover takes."""
+    recompute_addresses(db)
+    db.commit()
+    real, stub = spine["real"], spine["stub"]
+    real.name = "Talon Cars"
+    stub.name = "Eagle"
+    db.commit()
+    recompute_addresses(db)
+    db.commit()
+    assert (real.slug, stub.slug) == ("talon-cars", "eagle")

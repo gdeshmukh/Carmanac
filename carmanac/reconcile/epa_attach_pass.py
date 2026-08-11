@@ -63,7 +63,7 @@ from carmanac.ingest.epa.bulk import EPA_SOURCE_NAME
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
-from carmanac.reconcile.addressing import slugify
+from carmanac.reconcile.addressing import configuration_slug
 from carmanac.reconcile.bookkeeping import DecisionLog
 from carmanac.reconcile.engine import current_records, supersede
 from carmanac.reconcile.matching import normalize_name
@@ -535,30 +535,24 @@ class _EpaAttachPass:
         return pid
 
     def _slug(self, group: _Group) -> str | None:
-        """Composed leaf address: company · model · year · [trim] ·
-        [drivetrain], every token through the shared slugify (the private
-        per-token grammar minted 38 double-hyphen slugs).
+        """The car's address at mint time, composed by the one grammar that
+        owns it. `recompute_addresses` re-derives the same string later, so
+        this is a convenience, not a second implementation.
 
-        None means "no address available" - the parents have none, or the
-        composed string is taken. The car is created either way; the counter
-        that used to absorb a collision papered over an unreconciled duplicate
-        (`E350 4Matic` twice), so a taken address flags instead."""
+        None means "no address available" - a parent has none, or the string
+        is taken. The car is created either way; the counter that used to
+        absorb a collision papered over an unreconciled duplicate (`E350
+        4Matic` twice), so a taken address flags instead."""
         model = self.models[group.model_id]
         company = self.companies[model.company_id]
-        if not company.slug or not model.slug:
-            return None
-        parts = [company.slug, model.slug, str(group.year)]
-        if group.trim:
-            trim_slug = slugify(group.trim)
-            if trim_slug:
-                parts.append(trim_slug)
-        code = self.drivetrain_code_by_id.get(group.drivetrain_id)
-        if code:
-            parts.append(code)
-        slug = "-".join(parts)
-        if slug in self.config_slugs:
-            return None
-        return slug
+        slug = configuration_slug(
+            company.slug,
+            model.slug,
+            group.year,
+            group.trim,
+            self.drivetrain_code_by_id.get(group.drivetrain_id),
+        )
+        return None if slug is None or slug in self.config_slugs else slug
 
     def _materialize(self, group: _Group) -> None:
         period_id = self._period_id(group.model_id, group.year)

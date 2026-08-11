@@ -91,6 +91,13 @@ log = logging.getLogger(__name__)
 
 PASS_NAME = "wikidata_models"
 
+
+def _filing_number(external_id: str) -> int:
+    """`model:999` sorts below `model:1000`. Lexicographic order would not,
+    and the two dual-filing models are exactly where that shows."""
+    return int(external_id.split(":", 1)[1])
+
+
 # What this pass asserts per entity kind, and therefore what it may tombstone.
 MODEL_COVERAGE: tuple[str, ...] = ("summary",)
 GENERATION_COVERAGE: tuple[str, ...] = (
@@ -245,22 +252,25 @@ class _WikidataModelsPass:
                 normalize_name(m.name), []
             ).append(m.id)
 
-        # What the curated registries key on: the model's own source id. A
-        # model carries one per source that filed it (vPIC's `model:<id>` for
-        # every row we hold); the lowest sorts first so the key is stable
-        # whichever order external ids landed in.
+        # What the curated registries key on: the model's own FILING id
+        # (vPIC's `model:<id>`, which all 1,735 live rows carry). A QID is a
+        # match someone made later, not the model's own identifier - keying
+        # on whichever id sorted first would have moved the key the day an
+        # entity attached, which is the same silent-unmaking a slug key had.
+        # Lookups still accept any id, so a registry entry written against a
+        # QID keeps resolving; only the canonical key is narrowed.
         self.model_source_key: dict[int, str] = {}
         self.model_by_source_key: dict[str, int] = {}
-        for external_id, model_id in sorted(
-            session.execute(
-                select(ExternalId.external_id, ExternalId.model_id).where(
-                    ExternalId.model_id.isnot(None)
-                )
-            ),
-            reverse=True,
+        for external_id, model_id in session.execute(
+            select(ExternalId.external_id, ExternalId.model_id).where(
+                ExternalId.model_id.isnot(None)
+            )
         ):
-            self.model_source_key[model_id] = external_id
             self.model_by_source_key[external_id] = model_id
+            if external_id.startswith("model:"):
+                current = self.model_source_key.get(model_id)
+                if current is None or _filing_number(external_id) < _filing_number(current):
+                    self.model_source_key[model_id] = external_id
 
         # Reverse of model_by_qid: the model's ONE QID (lowest wins if legacy
         # data ever holds several - the deterministic assert-anchor, same
@@ -575,7 +585,8 @@ class _WikidataModelsPass:
         """Readable model reference for decision detail and flag candidates -
         display only. Registry lookups use `_model_key`."""
         model = self.models[model_id]
-        return f"{self.companies[model.company_id].slug}/{model.slug}"
+        company = self.companies[model.company_id]
+        return f"{company.slug or company.name}/{model.slug or model.name}"
 
     def _model_key(self, model_id: int) -> str | None:
         """The model's own source id, which is what curated judgments key on.

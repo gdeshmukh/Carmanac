@@ -55,6 +55,19 @@ _NUMERAL_ORDINAL = re.compile(r"-\d+(?:st|nd|rd|th)-generation$")
 _SECTION_ORDINAL = re.compile(r"^section:.+#(?P<ordinal>\d+)$")
 _NAME_ORDINAL = re.compile(r"\b(?P<n>\d+)(?:st|nd|rd|th) generation\b", re.I)
 
+# The other name a company answers to. vPIC files the marque ("AUDI") where
+# Wikidata labels the legal entity ("Audi AG"), so this is both the stripping
+# input (ADR 0013 §1) and the set of addresses a company claims without
+# taking.
+_VPIC_MAKE_NAMES = text(
+    """SELECT DISTINCT ei.company_id, rr.payload->>'make_name'
+       FROM external_ids ei
+       JOIN sources s ON s.id = ei.source_id AND s.name = 'NHTSA vPIC'
+       JOIN raw_scrape.raw_records rr
+         ON rr.source_id = s.id AND rr.external_id = ei.external_id
+       WHERE ei.external_id LIKE 'make:%' AND ei.company_id IS NOT NULL"""
+)
+
 
 def slugify(name: str) -> str:
     """ASCII-folded, lowercased, hyphenated. Empty when a name has no ASCII
@@ -178,8 +191,13 @@ def _company_evidence(session: Session) -> dict[int, tuple[int, int]]:
 
 
 def recompute_addresses(session: Session) -> AddressStats:
-    """Re-derive every address from current data. Idempotent by construction:
-    a second run changes nothing unless the data changed."""
+    """Re-derive company, generation and configuration addresses from current
+    data. Idempotent by construction: a second run changes nothing unless the
+    data changed.
+
+    Models and model_lines are NOT re-derived yet - their slug comes from a
+    name their own pass owns, and moving that here means moving the
+    flag-instead-of-mint behaviour with it (ADR 0010 §3). Owed, not done."""
     stats = AddressStats()
     qid_by_company: dict[int, set[str]] = {}
     for company_id, external_id in session.execute(
@@ -209,6 +227,19 @@ def recompute_addresses(session: Session) -> AddressStats:
         if slug and slug not in policy.RESERVED_COMPANY_SLUGS:
             wanted.setdefault(slug, []).append(company.id)
 
+    # A company also CLAIMS the address of every other name it is recorded
+    # under - Audi AG is filed with vPIC as "AUDI". It never takes those
+    # addresses (one row, one address), but they are not free either: without
+    # this, `audi` was unclaimed by the company with 55 nameplates and a
+    # filing, and a zero-statement namesake stub took it.
+    claimed_elsewhere: dict[str, list[int]] = {}
+    for company_id, forms in _name_forms(session).items():
+        own = slugify(session.get(Company, company_id).name)
+        for form in forms:
+            slug = slugify(form)
+            if slug and slug != own:
+                claimed_elsewhere.setdefault(slug, []).append(company_id)
+
     company_slug: dict[int, str | None] = dict.fromkeys(evidence, None)
     company_slug.update(pinned)
     pinned_slugs = set(pinned.values())
@@ -220,14 +251,26 @@ def recompute_addresses(session: Session) -> AddressStats:
         # tie. Between two equally evidence-less namesakes there is no honest
         # ranking, and moving the incumbent would be churn for nothing.
         winner = max(claimants, key=lambda cid: (*evidence[cid], holder[cid] == slug))
+        others = claimed_elsewhere.get(slug, ())
+        if others and max(evidence[cid] for cid in others) > evidence[winner]:
+            # Someone with a better claim wears this name too. Nobody takes
+            # it mechanically; a pin decides which row answers there.
+            stats.contested += len(claimants)
+            continue
         company_slug[winner] = slug
         stats.contested += len(claimants) - 1
 
-    for company in session.scalars(select(Company)):
-        target = company_slug.get(company.id)
-        if company.slug != target:
-            company.slug = target
-            stats.companies_addressed += 1
+    # Two phases: every mover releases its address before any mover takes one.
+    # `companies.slug` is unique, so a permutation (A takes B's address while
+    # B moves) would otherwise fail on whichever UPDATE the ORM emitted first.
+    movers = [c for c in session.scalars(select(Company)) if c.slug != company_slug.get(c.id)]
+    for company in movers:
+        company.slug = None
+    session.flush()
+    for company in movers:
+        company.slug = company_slug.get(company.id)
+        stats.companies_addressed += 1
+    session.flush()
 
     # --- generations -------------------------------------------------------
     prefixes = _strip_prefixes(session)
@@ -253,6 +296,7 @@ def recompute_addresses(session: Session) -> AddressStats:
         linked.setdefault(generation_id, set()).add(model_id)
 
     taken: dict[tuple[int, str], int] = {}
+    targets: dict[int, str | None] = {}
     for generation in sorted(session.scalars(select(Generation)), key=lambda g: g.id):
         target = None
         model_ids = linked.get(generation.id, set())
@@ -278,12 +322,22 @@ def recompute_addresses(session: Session) -> AddressStats:
                     target = candidate
         if target is None and generation.slug and not nonconforming_slug(generation.slug):
             # Nothing composable, but what it wears is clean: keep it rather
-            # than un-addressing a page over missing links.
-            target = generation.slug
-            taken[(generation.company_id, target)] = generation.id
-        if generation.slug != target:
-            generation.slug = target
-            stats.generations_addressed += 1
+            # than un-addressing a page over missing links - unless the
+            # composed grammar has already handed that string to another row,
+            # which is the one way this fallback could double-assign.
+            key = (generation.company_id, generation.slug)
+            if taken.get(key, generation.id) == generation.id:
+                taken[key] = generation.id
+                target = generation.slug
+        targets[generation.id] = target
+
+    movers = [g for g in session.scalars(select(Generation)) if g.slug != targets.get(g.id)]
+    for generation in movers:
+        generation.slug = None
+    session.flush()
+    for generation in movers:
+        generation.slug = targets.get(generation.id)
+        stats.generations_addressed += 1
     session.flush()
 
     # --- configurations ----------------------------------------------------
@@ -318,11 +372,25 @@ def recompute_addresses(session: Session) -> AddressStats:
             stats.contested += 1
         if slug != target:
             updates.append((cfg_id, target))
+    moving = {cfg_id: session.get(Configuration, cfg_id) for cfg_id, _ in updates}
+    for config in moving.values():
+        config.slug = None
+    session.flush()
     for cfg_id, target in updates:
-        session.get(Configuration, cfg_id).slug = target
+        moving[cfg_id].slug = target
     stats.configurations_addressed = len(updates)
     session.flush()
     return stats
+
+
+def _name_forms(session: Session) -> dict[int, set[str]]:
+    """Every name a company is recorded under besides its own: today that is
+    its vPIC make name(s), which is how "Audi AG" also answers to "AUDI"."""
+    forms: dict[int, set[str]] = {}
+    for company_id, make_name in session.execute(_VPIC_MAKE_NAMES):
+        if make_name:
+            forms.setdefault(company_id, set()).add(make_name)
+    return forms
 
 
 def _strip_prefixes(session: Session) -> dict[int, tuple[str, ...]]:
@@ -332,16 +400,7 @@ def _strip_prefixes(session: Session) -> dict[int, tuple[str, ...]]:
         cid: {normalize_name(name)}
         for cid, name in session.execute(select(Company.id, Company.name))
     }
-    for company_id, make_name in session.execute(
-        text(
-            """SELECT DISTINCT ei.company_id, rr.payload->>'make_name'
-               FROM external_ids ei
-               JOIN sources s ON s.id = ei.source_id AND s.name = 'NHTSA vPIC'
-               JOIN raw_scrape.raw_records rr
-                 ON rr.source_id = s.id AND rr.external_id = ei.external_id
-               WHERE ei.external_id LIKE 'make:%' AND ei.company_id IS NOT NULL"""
-        )
-    ):
+    for company_id, make_name in session.execute(_VPIC_MAKE_NAMES):
         if make_name:
             norms.setdefault(company_id, set()).add(normalize_name(make_name))
     return {cid: tuple(sorted(ns, key=len, reverse=True)) for cid, ns in norms.items()}

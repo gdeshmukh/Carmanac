@@ -15,7 +15,7 @@ The scope is deliberately ambitious. That is the point.
 | | |
 | --- | --- |
 | Schema | 35 tables, 172 indexes, Postgres 17 + pgvector |
-| Migrations | Alembic, head `ea565b7ea489` (16 revisions) |
+| Migrations | Alembic, head `f3c81a4d6b27` (20 revisions) |
 | Sources | Wikidata (SPARQL), NHTSA vPIC (API), EPA fueleconomy.gov (bulk CSV) |
 | Raw records | 78,691 landed, untransformed |
 | Reconciler | 6 passes, deterministic and idempotent (v12) |
@@ -136,6 +136,9 @@ $P scripts/pipeline/ingest_epa_vehicles.py     && $P scripts/pipeline/reconcile_
 # generation time from Wikipedia infoboxes, then placement by dated overlap
 $P scripts/pipeline/ingest_wikipedia_infoboxes.py && $P scripts/pipeline/reconcile_wikipedia_infoboxes.py
 $P scripts/pipeline/reconcile_generation_placement.py
+
+# page addresses, composed from everything above — always last
+$P scripts/pipeline/recompute_addresses.py
 ```
 
 `scripts/pipeline/` holds these re-runnable steps. `scripts/decisions/` holds the applied-judgment scripts — the executable half of an ADR, run once against live data and kept as the record of what was done.

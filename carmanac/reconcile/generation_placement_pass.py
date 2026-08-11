@@ -368,12 +368,14 @@ class _PlacementPass:
     def _assert_placement(self, configuration: Configuration, candidate: _Candidate | None) -> None:
         """Write/refresh/withdraw the placement assertion + column. The pass
         is the sole placer, so the column follows the recomputed answer."""
-        observed = (
-            None
-            if candidate is None
-            else f"{self.generations[candidate.generation_id].slug}"
-            f"[{candidate.span.start}–{candidate.span.end or 'present'}]"
-        )
+        if candidate is None:
+            observed = None
+        else:
+            generation = self.generations[candidate.generation_id]
+            # An unaddressed generation is still a real placement; naming it
+            # by row keeps the decision log honest instead of writing "None".
+            named = generation.slug or f"#{generation.id}"
+            observed = f"{named}[{candidate.span.start}–{candidate.span.end or 'present'}]"
         live = self.live_placements.get(configuration.id)
         target = None if candidate is None else candidate.generation_id
         record_id = None if candidate is None else candidate.raw_record_id

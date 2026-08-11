@@ -630,7 +630,11 @@ class _SectionsPass:
                 {
                     "title": parsed.title,
                     "unreconciled": unresolved,
-                    "existing_generations": sorted(self.generations[g].slug for g in competitors),
+                    # A generation with no address is still a competitor;
+                    # name it by what it is rather than where it lives.
+                    "existing_generations": sorted(
+                        self.generations[g].slug or f"#{g}" for g in competitors
+                    ),
                 },
             )
             self.stats.flagged_articles += 1

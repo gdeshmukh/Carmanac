@@ -2,10 +2,11 @@
 
 A slug is the public address of a page and nothing else. Nothing joins on it,
 no registry keys on it, and no row may fail to exist because its address is
-taken - which is what these two columns being NOT NULL enforced by accident.
-A company or a configuration is created because a source asserted it; the
-address arrives when one is available, and stays NULL when the name is
-contested.
+taken - which is what NOT NULL on these five spine columns enforced by
+accident. A company or a configuration is created because a source asserted
+it; the address arrives when one is available, and stays NULL when the name is
+contested. `engines` and `transmissions` hold no rows yet and follow when the
+ADR that starts minting them lands.
 
 The unique constraints stay: an address that resolves to two rows is useless.
 Postgres allows unlimited NULLs under a UNIQUE constraint, so unaddressed rows
