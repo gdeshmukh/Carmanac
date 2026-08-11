@@ -297,7 +297,7 @@ class _EpaAttachPass:
             )
         }
         self.config_by_key: dict[tuple, int] = {}
-        self.config_slugs: set[str] = set()
+        self.config_slugs: set[tuple[int, str]] = set()
         for cfg_id, period_id, trim, market_id, dt_id, body_id, slug in session.execute(
             select(
                 Configuration.id,
@@ -311,7 +311,7 @@ class _EpaAttachPass:
         ):
             self.config_by_key[(period_id, trim, market_id, dt_id, body_id)] = cfg_id
             if slug:
-                self.config_slugs.add(slug)
+                self.config_slugs.add((period_id, slug))
 
         self.vehicle_external: set[str] = set(
             session.scalars(
@@ -534,25 +534,17 @@ class _EpaAttachPass:
             self.stats.periods_created += 1
         return pid
 
-    def _slug(self, group: _Group) -> str | None:
+    def _slug(self, period_id: int, group: _Group) -> str | None:
         """The car's address at mint time, composed by the one grammar that
         owns it. `recompute_addresses` re-derives the same string later, so
         this is a convenience, not a second implementation.
 
-        None means "no address available" - a parent has none, or the string
-        is taken. The car is created either way; the counter that used to
-        absorb a collision papered over an unreconciled duplicate (`E350
-        4Matic` twice), so a taken address flags instead."""
-        model = self.models[group.model_id]
-        company = self.companies[model.company_id]
-        slug = configuration_slug(
-            company.slug,
-            model.slug,
-            group.year,
-            group.trim,
-            self.drivetrain_code_by_id.get(group.drivetrain_id),
-        )
-        return None if slug is None or slug in self.config_slugs else slug
+        None means the tail is already taken INSIDE this model year, which is
+        the only scope an address has to be unique in. The car is created
+        either way; the counter that used to absorb a collision papered over
+        an unreconciled duplicate (`E350 4Matic` twice), so it flags."""
+        slug = configuration_slug(group.trim, self.drivetrain_code_by_id.get(group.drivetrain_id))
+        return None if (period_id, slug) in self.config_slugs else slug
 
     def _materialize(self, group: _Group) -> None:
         period_id = self._period_id(group.model_id, group.year)
@@ -578,7 +570,7 @@ class _EpaAttachPass:
 
         rep = min(group.members, key=lambda m: m[0].id)[0]
         if created:
-            slug = self._slug(group)
+            slug = self._slug(period_id, group)
             if slug is None:
                 # The car lands regardless - an address is a page's name, and
                 # a car is not less real for wanting one that is taken.
@@ -602,7 +594,7 @@ class _EpaAttachPass:
             cfg_id = config.id
             self.config_by_key[natural_key] = cfg_id
             if slug:
-                self.config_slugs.add(slug)
+                self.config_slugs.add((period_id, slug))
             self.stats.configurations_created += 1
             self.config_cols[cfg_id] = {c: agreed.get(c) for c in SPEC_COLUMNS}
             # Field-level provenance (ADR 0002) from a representative record:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from carmanac.db.models import (
     CataloguePeriod,
@@ -78,11 +79,15 @@ def test_generation_display_prefers_codes_then_ordinal_then_nothing():
     assert generation_display("Impreza", None, None) == "", "a span alone is not a name"
 
 
-def test_configuration_slug_needs_its_parents_to_have_addresses():
-    assert configuration_slug("tesla", "model-s", 2015, "70D", "awd") == (
-        "tesla-model-s-2015-70d-awd"
-    )
-    assert configuration_slug(None, "model-s", 2015, None, None) is None
+def test_configuration_slug_is_only_what_separates_siblings():
+    """The company, model and year are path segments, so the tail carries
+    neither. It never comes back empty: a car with nothing to say for itself
+    is `base`, so a year page is always an index and never also a car."""
+    assert configuration_slug("70D", "awd") == "70d-awd"
+    assert configuration_slug("Convertible", "rwd") == "convertible-rwd"
+    assert configuration_slug("AWD", "awd") == "awd", "the trim already says it"
+    assert configuration_slug(None, "rwd") == "rwd"
+    assert configuration_slug(None, None) == "base"
 
 
 # --- the projection ----------------------------------------------------------
@@ -134,7 +139,7 @@ def test_a_car_is_addressed_from_its_parents_and_recompute_converges(db, spine):
     recompute_addresses(db)
     db.commit()
     config = db.scalar(select(Configuration))
-    assert config.slug == "eagle-talon-1992-tsi"
+    assert config.slug == "tsi"
 
     stats = recompute_addresses(db)
     assert (stats.companies_addressed, stats.configurations_addressed) == (0, 0), (
@@ -143,17 +148,21 @@ def test_a_car_is_addressed_from_its_parents_and_recompute_converges(db, spine):
 
 
 @pytest.mark.integration
-def test_renaming_a_company_re_addresses_its_cars(db, spine):
-    """The trade this ADR accepts: an address follows its data, because it is
-    a projection and nothing is published."""
+def test_renaming_a_company_moves_its_page_and_no_car_slug(db, spine):
+    """Scoping the tail to the model year buys this: a company rename moves
+    exactly one address instead of every car under it. The cars' URLs still
+    change - the company segment is in the path - but nothing stored moves,
+    so the rename is one row, not 23,523."""
     recompute_addresses(db)
     db.commit()
+    before = db.scalar(select(Configuration)).slug
     spine["real"].name = "Eagle Motors"
     db.commit()
-    recompute_addresses(db)
+    stats = recompute_addresses(db)
     db.commit()
     assert spine["real"].slug == "eagle-motors"
-    assert db.scalar(select(Configuration)).slug == "eagle-motors-talon-1992-tsi"
+    assert db.scalar(select(Configuration)).slug == before
+    assert stats.configurations_addressed == 0
 
 
 @pytest.mark.integration
@@ -206,3 +215,38 @@ def test_addresses_may_permute_without_colliding(db, spine):
     recompute_addresses(db)
     db.commit()
     assert (real.slug, stub.slug) == ("talon-cars", "eagle")
+
+
+@pytest.mark.integration
+def test_one_tail_may_repeat_across_years_but_not_inside_one(db, spine):
+    """`rwd` names thousands of cars; the URL scopes it. What may not happen
+    is two cars answering at one address inside one model year."""
+    period = db.scalar(select(CataloguePeriod))
+    kind = db.scalar(select(PeriodKind).where(PeriodKind.code == "model_year"))
+    market = db.scalar(select(MarketRegion).where(MarketRegion.code == "US"))
+    other = CataloguePeriod(
+        model_id=period.model_id, period_kind_id=kind.id, start_year=1993, end_year=1993
+    )
+    db.add(other)
+    db.flush()
+    db.add(Configuration(catalogue_period_id=other.id, market_region_id=market.id, trim_name="TSi"))
+    db.commit()
+    recompute_addresses(db)
+    db.commit()
+    assert [c.slug for c in db.scalars(select(Configuration).order_by(Configuration.id))] == [
+        "tsi",
+        "tsi",
+    ]
+
+    db.add(
+        Configuration(
+            catalogue_period_id=other.id,
+            market_region_id=market.id,
+            trim_name="TSi",
+            drivetrain_id=None,
+            slug="tsi",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.flush()
+    db.rollback()

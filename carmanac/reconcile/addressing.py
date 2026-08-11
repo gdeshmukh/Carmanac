@@ -28,7 +28,6 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
-    CataloguePeriod,
     Company,
     Configuration,
     Drivetrain,
@@ -54,6 +53,7 @@ _YEAR_RANGE = re.compile(r"(?:^|-)\d{4}-\d{2,4}(?:-|$)")
 _NUMERAL_ORDINAL = re.compile(r"-\d+(?:st|nd|rd|th)-generation$")
 _SECTION_ORDINAL = re.compile(r"^section:.+#(?P<ordinal>\d+)$")
 _NAME_ORDINAL = re.compile(r"\b(?P<n>\d+)(?:st|nd|rd|th) generation\b", re.I)
+_WORD_ORDINAL = re.compile(r"\b(?P<word>{}) generation\b".format("|".join(ORDINAL_WORDS)), re.I)
 
 # The other name a company answers to. vPIC files the marque ("AUDI") where
 # Wikidata labels the legal entity ("Audi AG"), so this is both the stripping
@@ -126,25 +126,51 @@ def generation_display(nameplate: str, chassis_codes: list[str] | None, ordinal:
     return ""
 
 
+def generation_address(display: str, chassis_codes: list[str] | None, sole_code: bool) -> str:
+    """A generation's address is its chassis code alone - `/porsche/911/964`,
+    and 964 is what people call it. The nameplate is already in the path.
+
+    `sole_code` is the caller's answer to "does any other generation under
+    this company carry this code": platform sharing means codes are not
+    unique (Celica and Supra are both A60, Camry and Camry Solara both XV20 -
+    nine such pairs live), and those fall back to the composed display name,
+    which distinguishes them. Multi-code generations fall back too: picking
+    the first would put array order - a scrape artifact - in a public URL.
+    """
+    if chassis_codes and len(chassis_codes) == 1 and sole_code:
+        return slugify(chassis_codes[0])
+    return slugify(display)
+
+
+# The only tail a car with nothing to distinguish it can wear. Free by
+# measurement: no live trim slugifies to it.
+UNNAMED_CONFIGURATION = "base"
+
+
 def configuration_slug(
-    company_slug: str | None,
-    model_slug: str | None,
-    year: int,
-    trim: str | None,
-    drivetrain_code: str | None,
-) -> str | None:
-    """company · model · year · [trim] · [drivetrain], every token through
-    the same slugify. None when a parent has no address to build on."""
-    if not company_slug or not model_slug:
-        return None
-    parts = [company_slug, model_slug, str(year)]
-    if trim:
-        trim_slug = slugify(trim)
-        if trim_slug:
-            parts.append(trim_slug)
-    if drivetrain_code:
+    trim: str | None, drivetrain_code: str | None, *, destutter: bool = True
+) -> str:
+    """The car's address WITHIN its model year: `/bmw/m3/2004/<this>`.
+
+    Company, model and year are path segments, so the tail carries only what
+    separates a car from its siblings - trim, then drivetrain. The drivetrain
+    token drops when the trim already says it (`awd awd`, 4,233 live rows);
+    it stays otherwise, because trim alone leaves 160 model years with two
+    cars wearing one address.
+
+    `destutter=False` is what the caller passes when suppressing the repeat
+    would merge two cars: a stuttering address beats no address, and beats
+    two cars sharing one.
+
+    Never None: a car with nothing to say for itself gets `base` rather than
+    no address, so a year page is always an index and never also a car.
+    """
+    trim_slug = slugify(trim) if trim else ""
+    tokens = trim_slug.split("-") if trim_slug else []
+    parts = [trim_slug] if trim_slug else []
+    if drivetrain_code and not (destutter and drivetrain_code in tokens):
         parts.append(drivetrain_code)
-    return "-".join(parts)
+    return "-".join(parts) or UNNAMED_CONFIGURATION
 
 
 @dataclass
@@ -295,6 +321,16 @@ def recompute_addresses(session: Session) -> AddressStats:
     ):
         linked.setdefault(generation_id, set()).add(model_id)
 
+    # Which chassis codes more than one generation under a company carries.
+    # Platform sharing makes a code a poor unique name on its own (Celica and
+    # Supra are both A60), so those generations keep the composed form.
+    code_holders: dict[tuple[int, str], set[int]] = {}
+    for generation in session.scalars(select(Generation)):
+        for code in generation.chassis_codes or ():
+            code_holders.setdefault((generation.company_id, slugify(code)), set()).add(
+                generation.id
+            )
+
     taken: dict[tuple[int, str], int] = {}
     targets: dict[int, str | None] = {}
     for generation in sorted(session.scalars(select(Generation)), key=lambda g: g.id):
@@ -311,10 +347,19 @@ def recompute_addresses(session: Session) -> AddressStats:
                 # The ordinal is a fact the display name carries; reading it
                 # back is not the same as reading the slug, which is only an
                 # address and may already be wrong.
-                in_name = _NAME_ORDINAL.search(generation.name)
-                ordinal = int(in_name.group("n")) if in_name else None
+                numeral = _NAME_ORDINAL.search(generation.name)
+                word = _WORD_ORDINAL.search(generation.name)
+                if numeral:
+                    ordinal = int(numeral.group("n"))
+                elif word:
+                    ordinal = ORDINAL_WORDS.index(word.group("word").lower()) + 1
             display = generation_display(nameplate, generation.chassis_codes, ordinal)
-            candidate = slugify(display) if display else ""
+            codes = generation.chassis_codes
+            sole = (
+                bool(codes)
+                and len(code_holders.get((generation.company_id, slugify(codes[0])), ())) == 1
+            )
+            candidate = generation_address(display, codes, sole) if display else ""
             if candidate and not nonconforming_slug(candidate):
                 key = (generation.company_id, candidate)
                 if taken.get(key, generation.id) == generation.id:
@@ -342,32 +387,37 @@ def recompute_addresses(session: Session) -> AddressStats:
 
     # --- configurations ----------------------------------------------------
     drivetrains = dict(session.execute(select(Drivetrain.id, Drivetrain.code)).all())
-    company_by_id = {c.id: c for c in session.scalars(select(Company))}
-    seen: dict[str, int] = {}
+    seen: dict[tuple[int, str], int] = {}
     rows = session.execute(
         select(
             Configuration.id,
             Configuration.slug,
             Configuration.trim_name,
             Configuration.drivetrain_id,
-            CataloguePeriod.start_year,
-            Model.slug,
-            Model.company_id,
-        )
-        .join(CataloguePeriod, Configuration.catalogue_period_id == CataloguePeriod.id)
-        .join(Model, CataloguePeriod.model_id == Model.id)
-        .order_by(Configuration.id)
+            Configuration.catalogue_period_id,
+        ).order_by(Configuration.id)
     ).all()
-    updates: list[tuple[int, str | None]] = []
-    for cfg_id, slug, trim, dt_id, year, model_slug, cid in rows:
-        target = configuration_slug(
-            company_by_id[cid].slug, model_slug, year, trim, drivetrains.get(dt_id)
+    # Where de-stuttering would make two cars in one year share an address,
+    # every car in that year keeps its drivetrain token. Measured: 6 of 10,873
+    # model years, so 23,511 addresses still depend on nothing but their own
+    # row.
+    destutter_ok: dict[int, bool] = {}
+    per_period: dict[int, list[str]] = {}
+    for _, _, trim, dt_id, period_id in rows:
+        per_period.setdefault(period_id, []).append(
+            configuration_slug(trim, drivetrains.get(dt_id))
         )
-        if target is not None and seen.setdefault(target, cfg_id) != cfg_id:
-            # Two cars composing one address means the natural key split rows
-            # a source considers the same car (`E350 4Matic` twice, cased two
-            # ways). That is an entity-resolution question; neither row gets
-            # the address until it is answered.
+    for period_id, tails in per_period.items():
+        destutter_ok[period_id] = len(set(tails)) == len(tails)
+
+    updates: list[tuple[int, str | None]] = []
+    for cfg_id, slug, trim, dt_id, period_id in rows:
+        target = configuration_slug(trim, drivetrains.get(dt_id), destutter=destutter_ok[period_id])
+        if seen.setdefault((period_id, target), cfg_id) != cfg_id:
+            # Two cars composing one address inside one model year means the
+            # natural key split rows a source considers the same car (`E350
+            # 4Matic` twice, cased two ways). That is an entity-resolution
+            # question; neither row gets the address until it is answered.
             target = None
             stats.contested += 1
         if slug != target:

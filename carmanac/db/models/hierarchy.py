@@ -491,10 +491,10 @@ class Configuration(Base, TimestampMixin):
             name="uq_configurations_natural_key",
             postgresql_nulls_not_distinct=True,
         ),
-        # Slug is now a display artifact, but the public route is a flat
-        # /configurations/<slug> lookup, so it still needs to resolve without
-        # knowing the model year first.
-        UniqueConstraint("slug", name="uq_configurations_slug"),
+        # The route carries the model year (/bmw/m3/2004/convertible-rwd), so
+        # the address only has to be unique inside it - and can only be:
+        # `fwd` names 3,161 cars across the fleet.
+        UniqueConstraint("catalogue_period_id", "slug", name="uq_configurations_period_slug"),
         Index(
             "idx_configurations_trim_name_trgm",
             "trim_name",

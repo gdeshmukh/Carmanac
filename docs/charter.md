@@ -238,24 +238,32 @@ then flag for review.
 
 ## URL / Page Structure
 
-The route map mirrors the entity hierarchy (ADR 0019 fixed the open pieces:
-addresses are slug-only, and ids never appear in public routes):
+The route map **is** the entity hierarchy — each segment adds only what the
+ones before it do not already say (ADR 0019). Truncating any address gives
+the index above it: `/bmw/m3/2004` is that year's M3s, `/bmw/m3` is every
+M3, `/bmw` is the company.
 
-- `/makes/<company-slug>` — company page (a make is a company holding the
-  `manufacturer` role)
-- `/makes/<company-slug>/<model-slug>` — model page (models own the bare
-  second segment; other kinds live under reserved literals)
-- `/makes/<company-slug>/generations/<generation-slug>` — the generation
-  page's canonical address (company-anchored, matching ADR 0016; stable
-  against link/placement churn). `/makes/<c>/<model>/<generation-slug>`
-  stays a valid non-canonical form for every live-linked model — a
-  contextual form, not a durable promise.
-- `/makes/<company-slug>/lines/<line-slug>` — line browse view
-- `/makes/<company-slug>/codes/<code>` — chassis-code view (a query, not an
-  entity: no row of its own)
-- `/cars/<configuration-slug>` — configuration detail (the focal page)
-- `/engines/<engine-slug>` — engine detail + list of configurations using it
+- `/<company>` — company page (a make is a company holding the `manufacturer`
+  role). Company slugs live at the root, so root literals are reserved.
+- `/<company>/<model>` — model page, every car under the nameplate
+- `/<company>/<model>/<year>` — the model year, an index over its cars
+- `/<company>/<model>/<year>/<car>` — configuration detail (**the focal
+  page**). The address is only the tail — trim, then drivetrain when the trim
+  does not already say it — so it need only be unique inside that year, and
+  a car with nothing to distinguish it is `base`.
+- `/<company>/generations/<generation>` — generation page, company-anchored
+  per ADR 0016. The address is the bare chassis code (`/porsche/generations/964`)
+  when exactly one generation under that company carries it; shared codes
+  (Celica and Supra are both A60) fall back to `<nameplate>-<code>`.
+- `/<company>/lines/<line>` — line browse view
+- `/<company>/codes/<code>` — chassis-code view (a query, not an entity)
+- `/engines/<engine>` — engine detail + list of configurations using it
 - `/compare?cars=a,b,c` — comparison view
+
+Models own the bare second segment; every other kind under a company lives
+under a reserved literal, and under a model the third segment is always a
+period. Non-model-year periods (production periods, facelift phases) have no
+segment grammar yet — none exist, and the rule is owed when the first lands.
 
 ## Working Rules
 
