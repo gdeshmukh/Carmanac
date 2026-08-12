@@ -12,13 +12,12 @@ moves on.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from carmanac.ingest.http import PoliteClient
-from carmanac.ingest.landing import content_hash, get_source, upsert_raw_records
+from carmanac.ingest.landing import LandResult, content_hash, get_source, upsert_raw_records
 from carmanac.ingest.wikipedia.infoboxes import API_URL, SOURCE_NAME, article_title
 from carmanac.reconcile import policy
 
@@ -48,14 +47,7 @@ _TARGETS_SQL = """
 """
 
 
-@dataclass(frozen=True)
-class ArticleLandResult:
-    fetched: int
-    inserted: int
-    skipped_missing: int
-
-
-def land_nameplate_articles(session: Session, *, already_landed: bool = True) -> ArticleLandResult:
+def land_nameplate_articles(session: Session, *, already_landed: bool = True) -> LandResult:
     """Fetch and land one `article:<QID>` record per target nameplate page.
 
     `already_landed` skips QIDs with a current article record - the
@@ -134,4 +126,12 @@ def land_nameplate_articles(session: Session, *, already_landed: bool = True) ->
     if pending:
         inserted += upsert_raw_records(session, pending)
         session.commit()
-    return ArticleLandResult(fetched=fetched, inserted=inserted, skipped_missing=skipped)
+    return LandResult(fetched=fetched, inserted=inserted, skipped_missing=skipped)
+
+
+if __name__ == "__main__":
+    import sys
+
+    from carmanac.runner import run
+
+    run(land_nameplate_articles, already_landed="--refresh" not in sys.argv[1:])

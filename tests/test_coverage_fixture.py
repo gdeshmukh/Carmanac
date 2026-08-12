@@ -3,8 +3,8 @@
 The fixture guards the fetch; these tests guard the fixture - a malformed or
 shrunken KNOWN_MARQUES would quietly weaken the coverage check it powers.
 The actual coverage enforcement runs after every landing
-(scripts/pipeline/ingest_wikidata_makes.py exits nonzero on a miss); it cannot run in
-CI, where no landed data exists.
+(`python -m carmanac.ingest.wikidata.land` exits nonzero on a miss); it
+cannot run in CI, where no landed data exists.
 """
 
 from __future__ import annotations

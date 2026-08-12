@@ -785,3 +785,9 @@ def run_wikipedia_sections_pass(session: Session) -> WikipediaSectionsStats:
     stats = _SectionsPass(session).run()
     log.info("wikipedia sections pass done: %s", stats.summary())
     return stats
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_wikipedia_sections_pass)

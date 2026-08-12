@@ -157,3 +157,9 @@ class _VpicYearsPass:
 
 def run_vpic_years_pass(session: Session) -> VpicYearsPassStats:
     return _VpicYearsPass(session).run()
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_vpic_years_pass)

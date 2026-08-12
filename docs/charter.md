@@ -231,6 +231,13 @@ then flag for review.
   (API-based ingestion lives in `carmanac/ingest/<source>/` — importable
   Python needing a DB session, unlike Scrapy spiders which run under Scrapy's
   own runner.)
+- **Pipeline steps are runnable modules**: each ingest module and reconcile
+  pass carries its own entry point (`python -m carmanac.reconcile.matching`),
+  sharing `carmanac/runner.py`. `scripts/` holds only what is not pipeline —
+  status/backup and the standing judgment tools in `scripts/decisions/`
+  (registry-driven, dry-run gated). One-shot correction scripts do not
+  accumulate: a correction either becomes pass/registry behaviour or is not
+  worth keeping after it runs (git history is the record).
 - **Migrations** via Alembic only. Auto-generated, then hand-reviewed.
 - **Commits**: Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`).
 - **Decisions**: Significant decisions get an ADR in `docs/decisions/` before

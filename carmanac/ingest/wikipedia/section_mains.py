@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from carmanac.db.models import ExternalId, Generation, RawRecord
 from carmanac.ingest.http import PoliteClient
-from carmanac.ingest.landing import content_hash, get_source, upsert_raw_records
+from carmanac.ingest.landing import LandResult, content_hash, get_source, upsert_raw_records
 from carmanac.ingest.wikipedia.infoboxes import API_URL, SOURCE_NAME
 from carmanac.reconcile.sources.wikipedia_sections import parse_article
 
@@ -40,13 +40,6 @@ class SectionMainTarget:
     qid: str
     ordinal: int
     title: str  # the {{Main}} target page
-
-
-@dataclass(frozen=True)
-class SectionMainLandResult:
-    fetched: int
-    inserted: int
-    skipped_missing: int
 
 
 def section_main_targets(session: Session) -> list[SectionMainTarget]:
@@ -107,7 +100,7 @@ def section_main_targets(session: Session) -> list[SectionMainTarget]:
     return targets
 
 
-def land_section_mains(session: Session, *, already_landed: bool = True) -> SectionMainLandResult:
+def land_section_mains(session: Session, *, already_landed: bool = True) -> LandResult:
     """Fetch and land one `section-main:<QID>#<ordinal>` record per target.
 
     `already_landed` skips keys with a landed record - the resumability
@@ -182,4 +175,12 @@ def land_section_mains(session: Session, *, already_landed: bool = True) -> Sect
     if pending:
         inserted += upsert_raw_records(session, pending)
         session.commit()
-    return SectionMainLandResult(fetched=fetched, inserted=inserted, skipped_missing=skipped)
+    return LandResult(fetched=fetched, inserted=inserted, skipped_missing=skipped)
+
+
+if __name__ == "__main__":
+    import sys
+
+    from carmanac.runner import run
+
+    run(land_section_mains, already_landed="--refresh" not in sys.argv[1:])

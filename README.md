@@ -99,7 +99,7 @@ python -m venv .venv
 .venv/bin/alembic upgrade head
 
 # 4. reference data the reconciler joins against
-.venv/bin/python scripts/pipeline/seed_countries.py
+.venv/bin/python -m carmanac.db.seed
 ```
 
 Then check the live state at any time:
@@ -110,38 +110,41 @@ Then check the live state at any time:
 
 ### Filling it
 
-Each source is a fetch-and-land step followed by a reconciliation pass. Every step is idempotent — unchanged payloads land as no-ops, and a second reconciliation run over unchanged data settles to exact zero writes. Run them in this order; later passes depend on earlier ones having resolved identity.
+Each source is a fetch-and-land step followed by a reconciliation pass, and each step is its own module, runnable directly — the ingest modules under `carmanac/ingest/<source>/`, the passes under `carmanac/reconcile/`. Every step is idempotent — unchanged payloads land as no-ops, and a second reconciliation run over unchanged data settles to exact zero writes. Run them in this order; later passes depend on earlier ones having resolved identity.
 
 ```bash
 P=.venv/bin/python
 
 # companies, from Wikidata (~7,200 entities, seconds)
-$P scripts/pipeline/ingest_wikidata_makes.py   && $P scripts/pipeline/reconcile_companies.py
+$P -m carmanac.ingest.wikidata.land   && $P -m carmanac.reconcile.engine
 
 # cross-source identity: vPIC makes matched to those companies
-$P scripts/pipeline/ingest_vpic_makes.py       && $P scripts/pipeline/reconcile_vpic_makes.py
+$P -m carmanac.ingest.vpic.land       && $P -m carmanac.reconcile.matching
 
 # nameplates under matched makes (~500 requests, several minutes)
-$P scripts/pipeline/ingest_vpic_models.py      && $P scripts/pipeline/reconcile_vpic_models.py
+$P -m carmanac.ingest.vpic.models     && $P -m carmanac.reconcile.vpic_models_pass
 
 # generations and model lines, from the Wikidata models sweep
-$P scripts/pipeline/ingest_wikidata_models.py  && $P scripts/pipeline/reconcile_wikidata_models.py
+$P -m carmanac.ingest.wikidata.models && $P -m carmanac.reconcile.wikidata_models_pass
 
 # the year spine (one request per make/year — the full backfill runs ~3 hours)
-$P scripts/pipeline/ingest_vpic_model_years.py && $P scripts/pipeline/reconcile_vpic_years.py
+$P -m carmanac.ingest.vpic.years      && $P -m carmanac.reconcile.vpic_years_pass
 
 # configurations, from the EPA bulk CSV (one request, ~50k rows)
-$P scripts/pipeline/ingest_epa_vehicles.py     && $P scripts/pipeline/reconcile_epa_vehicles.py
+$P -m carmanac.ingest.epa.bulk        && $P -m carmanac.reconcile.epa_attach_pass
 
-# generation time from Wikipedia infoboxes, then placement by dated overlap
-$P scripts/pipeline/ingest_wikipedia_infoboxes.py && $P scripts/pipeline/reconcile_wikipedia_infoboxes.py
-$P scripts/pipeline/reconcile_generation_placement.py
+# generation time from Wikipedia infoboxes; more generations minted from
+# nameplate articles' sections, dated via their {{Main}} target pages
+$P -m carmanac.ingest.wikipedia.infoboxes     && $P -m carmanac.reconcile.wikipedia_infobox_pass
+$P -m carmanac.ingest.wikipedia.articles      && $P -m carmanac.reconcile.wikipedia_sections_pass
+$P -m carmanac.ingest.wikipedia.section_mains && $P -m carmanac.reconcile.wikipedia_sections_pass
 
-# page addresses, composed from everything above — always last
-$P scripts/pipeline/recompute_addresses.py
+# placement by dated overlap, then page addresses — always last
+$P -m carmanac.reconcile.generation_placement_pass
+$P -m carmanac.reconcile.addressing
 ```
 
-`scripts/pipeline/` holds these re-runnable steps. `scripts/decisions/` holds the applied-judgment scripts — the executable half of an ADR, run once against live data and kept as the record of what was done.
+The Wikipedia landers take `--refresh` to re-fetch pages already held (revisions move; unchanged pages land as hash-rejected no-ops). `scripts/decisions/` holds the standing judgment tools — registry-driven and dry-run gated, the executable half of their ADRs.
 
 ### Tests
 
@@ -159,12 +162,11 @@ The suite runs against a **real Postgres**, not a mock. It builds its own `carma
 ```
 carmanac/
   db/models/        SQLAlchemy models — the source of schema truth
-  ingest/           per-source fetch + land (wikidata/, vpic/, epa/)
+  ingest/           per-source fetch + land (wikidata/, vpic/, epa/, wikipedia/)
   reconcile/        the engine, the per-source passes, and policy.py
 alembic/versions/   migrations (hand-reviewed; some hand-written)
 docs/decisions/     ADRs — the design rationale
-scripts/pipeline/   re-runnable ingest and reconcile steps
-scripts/decisions/  applied one-off judgments, kept as record
+scripts/decisions/  standing judgment tools, dry-run gated
 infra/              docker-compose + Postgres bootstrap
 ```
 

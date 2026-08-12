@@ -15,14 +15,13 @@ shape).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from urllib.parse import unquote
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from carmanac.ingest.http import PoliteClient
-from carmanac.ingest.landing import content_hash, get_source, upsert_raw_records
+from carmanac.ingest.landing import LandResult, content_hash, get_source, upsert_raw_records
 
 log = logging.getLogger(__name__)
 
@@ -53,21 +52,12 @@ _TARGETS_SQL = """
 """
 
 
-@dataclass(frozen=True)
-class InfoboxLandResult:
-    fetched: int
-    inserted: int
-    skipped_missing: int
-
-
 def article_title(article_url: str) -> str:
     """`https://en.wikipedia.org/wiki/BMW_3_Series_(E30)` -> the page title."""
     return unquote(article_url.rsplit("/wiki/", 1)[-1])
 
 
-def land_generation_infoboxes(
-    session: Session, *, already_landed: bool = True
-) -> InfoboxLandResult:
+def land_generation_infoboxes(session: Session, *, already_landed: bool = True) -> LandResult:
     """Fetch and land one `infobox:<QID>` record per target article.
 
     `already_landed` skips QIDs that have a current infobox record - the
@@ -146,4 +136,12 @@ def land_generation_infoboxes(
     if pending:
         inserted += upsert_raw_records(session, pending)
         session.commit()
-    return InfoboxLandResult(fetched=fetched, inserted=inserted, skipped_missing=skipped)
+    return LandResult(fetched=fetched, inserted=inserted, skipped_missing=skipped)
+
+
+if __name__ == "__main__":
+    import sys
+
+    from carmanac.runner import run
+
+    run(land_generation_infoboxes, already_landed="--refresh" not in sys.argv[1:])

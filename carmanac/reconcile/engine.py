@@ -650,3 +650,10 @@ def run_companies_pass(session: Session, mapper: ModuleType) -> PassStats:
     session.commit()
     log.info("companies pass done: %s", stats.summary())
     return stats
+
+
+if __name__ == "__main__":
+    from carmanac.reconcile.sources import wikidata
+    from carmanac.runner import run
+
+    run(run_companies_pass, mapper=wikidata)

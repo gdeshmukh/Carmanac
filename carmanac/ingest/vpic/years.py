@@ -169,3 +169,9 @@ def land_model_years(
         len(passenger_ids),
     )
     return LandResult(fetched=fetched, inserted=inserted)
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(land_model_years)

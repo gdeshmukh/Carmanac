@@ -809,3 +809,9 @@ class _EpaAttachPass:
 
 def run_epa_attach_pass(session: Session) -> EpaAttachStats:
     return _EpaAttachPass(session).run()
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_epa_attach_pass)
