@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "16"
+RECONCILER_VERSION = "17"
 
 # --- identity --------------------------------------------------------------
 
@@ -190,6 +190,22 @@ VPIC_MATCHES: dict[str, str] = {
     "13765": "Q265465",  # SANTANA -> Santana Motor
     "13766": "Q265465",  # LAND ROVER SANTANA -> Santana Motor (licensee-built)
     "13771": "Q134100360",  # SLATE -> Slate Auto
+}
+
+# Curated same-nameplate merges at the model level (ADR 0010 §2.3's "merge"
+# resolution): member `model:<ModelId>` -> the canonical `model:<ModelId>`
+# whose row it attaches to. The models pass consults this before minting, so
+# a rebuild from raw reproduces the judgment mechanically instead of
+# re-opening the collision flag a human already answered. Both sides are
+# vPIC identifiers, never slugs (ADR 0019). Grown by resolving model-level
+# `slug_collision` flags as merges.
+VPIC_MODEL_MERGES: dict[str, str] = {
+    # The Santana verdict (2026-07-30): both its MakeIds filed the same three
+    # licensee-built wheelbase models - one page per wheelbase, LAND ROVER
+    # SANTANA's ModelId attaches to the row its SANTANA twin created.
+    "model:36864": "model:36863",  # 110" WB
+    "model:36866": "model:36865",  # 90" WB
+    "model:37552": "model:37551",  # 88" WB
 }
 
 # Curated EPA-make matches (ADR 0014 §3): normalized EPA make string ->
