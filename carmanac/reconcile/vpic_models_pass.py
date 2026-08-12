@@ -4,7 +4,10 @@ Nameplates under makes we already hold. For every landed vPIC passenger model
 record, the pass is:
 
     1. the make must be MATCHED     - `make:<id>` -> company via external_ids
-    2. identity ladder              - `model:<id>` -> the existing row, refresh
+    2. identity ladder              - `model:<id>` -> the existing row, refresh;
+                                      a ruled same-nameplate member
+                                      (`policy.VPIC_MODEL_MERGES`) attaches to
+                                      its canonical twin's row
     3. otherwise create             - slug = slugify(model_name), per company
     4. slug collision under one company -> `match_review`, never auto-suffix
 
@@ -21,6 +24,7 @@ its licensee-built `110" WB` arrives from both), and minting `110-wb-2` would
 manufacture exactly the duplicate identity the company/brand merges just spent
 a session cleaning up. The lower ModelId keeps the slug - ascending order is
 the engine's own deterministic tiebreak - and the higher one waits for a human.
+A merge verdict lands in `VPIC_MODEL_MERGES`, so only unruled pairs ever flag.
 
 **`models.name` is a reconciled fact** (§3), asserted into `field_provenance`
 under the model arc and projected onto the column, so Wikidata can arbitrate
@@ -63,6 +67,7 @@ class VpicModelsPassStats:
 
     processed: int = 0
     skipped_unmatched_make: int = 0
+    merge_waits: int = 0
     models_created: int = 0
     models_matched: int = 0
     assertions_inserted: int = 0
@@ -73,7 +78,8 @@ class VpicModelsPassStats:
     def summary(self) -> str:
         return (
             f"processed={self.processed} "
-            f"skipped_unmatched_make={self.skipped_unmatched_make} | "
+            f"skipped_unmatched_make={self.skipped_unmatched_make} "
+            f"merge_waits={self.merge_waits} | "
             f"models_created={self.models_created} matched={self.models_matched} "
             f"assertions={self.assertions_inserted} "
             f"(superseded={self.assertions_superseded}) "
@@ -162,9 +168,18 @@ class _VpicModelsPass:
     # --- identity (§2) -------------------------------------------------------
 
     def _resolve_model(self, record: RawRecord, company_id: int) -> Model | None:
-        """The identity ladder. None means the record was flagged and creates
-        nothing this run."""
+        """The identity ladder. None means the record was flagged (or is
+        waiting) and creates nothing this run."""
         model_id = self.model_by_external.get(record.external_id)
+        if model_id is None and record.external_id in policy.VPIC_MODEL_MERGES:
+            model_id = self._attach_to_canonical(record)
+            if model_id is None:
+                # The canonical row does not exist yet (its make unmatched, or
+                # its record not landed). Waiting beats minting the duplicate
+                # the verdict exists to prevent; the canonical's absence is
+                # already represented by its own open question.
+                self.stats.merge_waits += 1
+                return None
         if model_id is not None:
             self.stats.models_matched += 1
             self._dismiss_flags(record)
@@ -222,6 +237,25 @@ class _VpicModelsPass:
         self._dismiss_flags(record)
         return model
 
+    def _attach_to_canonical(self, record: RawRecord) -> int | None:
+        """A ruled same-nameplate member gains the canonical twin's row: its
+        `model:<id>` external id lands there, so later kinds (`modelyears:`)
+        resolve through it. None while the canonical row does not exist."""
+        canonical = policy.VPIC_MODEL_MERGES[record.external_id]
+        model_id = self.model_by_external.get(canonical)
+        if model_id is None:
+            return None
+        self.session.add(
+            ExternalId(
+                model_id=model_id,
+                source_id=self.source.id,
+                external_id=record.external_id,
+            )
+        )
+        self.session.flush()
+        self.model_by_external[record.external_id] = model_id
+        return model_id
+
     # --- assertions + projection (§3) ----------------------------------------
 
     def _assert_name(self, model: Model, record: RawRecord) -> None:
@@ -274,7 +308,11 @@ class _VpicModelsPass:
         records = [
             r for r in current_records(self.session, self.source.id) if self._is_model_record(r)
         ]
-        records.sort(key=lambda r: int(r.payload["model_id"]))  # ascending ModelId
+        # Ascending ModelId, ruled merge members last: a member needs its
+        # canonical twin's row to exist, whatever their relative ids.
+        records.sort(
+            key=lambda r: (r.external_id in policy.VPIC_MODEL_MERGES, int(r.payload["model_id"]))
+        )
         log.info(
             "vPIC models pass: %d model records (reconciler v%s)",
             len(records),
@@ -307,3 +345,9 @@ def run_vpic_models_pass(session: Session) -> VpicModelsPassStats:
     session.commit()
     log.info("vPIC models pass done: %s", stats.summary())
     return stats
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_vpic_models_pass)

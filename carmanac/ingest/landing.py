@@ -29,14 +29,23 @@ _CHUNK_SIZE = 500
 
 @dataclass(frozen=True)
 class LandResult:
-    """What one landing run did. `fetched - inserted` is the unchanged count."""
+    """What one landing run did. `fetched - inserted` is the unchanged count.
+    `skipped_missing` counts targets with no live page (sitelink rot); only
+    the Wikipedia landers have any."""
 
     fetched: int
     inserted: int
+    skipped_missing: int = 0
 
     @property
     def unchanged(self) -> int:
         return self.fetched - self.inserted
+
+    def summary(self) -> str:
+        line = f"fetched={self.fetched} inserted={self.inserted} unchanged={self.unchanged}"
+        if self.skipped_missing:
+            line += f" skipped_missing={self.skipped_missing}"
+        return line
 
 
 def content_hash(payload: dict[str, Any]) -> str:

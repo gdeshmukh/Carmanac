@@ -11,20 +11,20 @@ country that existed at the time - Trabant is East Germany (DD), Moskvitch is
 the Soviet Union (SU), Yugo is Yugoslavia (YU) - and Wikidata records those
 P297 codes on the former states.
 
-Idempotent: existing codes are left untouched (ON CONFLICT DO NOTHING), so the
-five hand-seeded demo rows keep their ids and nothing downstream moves.
+Idempotent: existing codes are left untouched (ON CONFLICT DO NOTHING), so
+re-running moves nothing downstream.
 """
 
 from __future__ import annotations
 
 import pycountry
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Session
 
 from carmanac.db.models import Country
-from carmanac.db.session import SessionLocal
 
 
-def seed_countries() -> tuple[int, int]:
+def seed_countries(session: Session) -> tuple[int, int]:
     """Insert every ISO 3166 country not already present. Returns (inserted, total)."""
     rows = [{"code": c.alpha_2, "name": c.name} for c in pycountry.countries]
     rows += [
@@ -35,18 +35,20 @@ def seed_countries() -> tuple[int, int]:
         if c.alpha_2 not in {r["code"] for r in rows}
     ]
 
-    with SessionLocal() as session:
-        stmt = (
-            pg_insert(Country)
-            .values(rows)
-            .on_conflict_do_nothing(index_elements=["code"])
-            .returning(Country.id)
-        )
-        inserted = len(session.execute(stmt).all())
-        session.commit()
+    stmt = (
+        pg_insert(Country)
+        .values(rows)
+        .on_conflict_do_nothing(index_elements=["code"])
+        .returning(Country.id)
+    )
+    inserted = len(session.execute(stmt).all())
+    session.commit()
     return inserted, len(rows)
 
 
 if __name__ == "__main__":
-    inserted, total = seed_countries()
+    from carmanac.db.session import SessionLocal
+
+    with SessionLocal() as session:
+        inserted, total = seed_countries(session)
     print(f"countries: {inserted} inserted, {total - inserted} already present")

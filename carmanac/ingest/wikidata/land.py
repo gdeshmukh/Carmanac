@@ -124,3 +124,40 @@ def land_makes(session: Session, client: SparqlClient | None = None) -> LandResu
     result = LandResult(fetched=len(bindings), inserted=inserted)
     log.info("Landed %d new raw record(s); %d unchanged", result.inserted, result.unchanged)
     return result
+
+
+def main() -> int:
+    """Land the makes, then fail loudly if any known marque is missing.
+    Coverage losses are silent by nature - the rows simply are not there -
+    so a miss must be a failing exit, not a log line (coverage.py)."""
+    import sys
+
+    from carmanac.db.session import SessionLocal
+    from carmanac.ingest.http import IngestHTTPError
+    from carmanac.ingest.wikidata.coverage import KNOWN_MARQUES, missing_marques
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    try:
+        with SessionLocal() as session:
+            result = land_makes(session)
+            missing = missing_marques(session)
+    except (IngestHTTPError, LookupError) as exc:
+        raise SystemExit(f"{exc}") from exc
+
+    print(result.summary())
+    if missing:
+        print(f"COVERAGE CHECK FAILED: {len(missing)} known marque(s) missing:", file=sys.stderr)
+        for qid, name in missing:
+            print(f"  {name} ({qid})", file=sys.stderr)
+        print(
+            "Triage: fix a fetch axis, pin the QID in queries.py, or move the "
+            "entry to NOT_IN_WIKIDATA with a note.",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"coverage check: all {len(KNOWN_MARQUES)} known marques present")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

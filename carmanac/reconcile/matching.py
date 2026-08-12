@@ -297,3 +297,9 @@ def run_vpic_match_pass(session: Session) -> MatchStats:
     session.commit()
     log.info("vPIC match pass done: %s", stats.summary())
     return stats
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_vpic_match_pass)

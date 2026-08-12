@@ -1,13 +1,11 @@
-"""One-time collapse: fold already-materialized IDENTITY_MERGES members into
-their canonical companies.
+"""Collapse already-materialized IDENTITY_MERGES members into their
+canonical companies.
 
 The engine handles merges correctly only for records it has not yet
 materialized: its identity ladder checks `external_ids` before the merge
 registry, so a member QID that already created its own company row keeps
-resolving to that row forever. The 2026-07-29 batch of company/brand merges
-targets exactly such rows - both sides of each pair were admitted and
-materialized before the merge was curated - so the duplicates must be
-collapsed once, here, after which re-runs stay converged.
+resolving to that row forever. A merge curated after both sides materialized
+needs this collapse run once, after which re-runs stay converged.
 
 Per member with its own company row:
 
@@ -23,9 +21,10 @@ Per member with its own company row:
   and the rest on the next pass. Identity (id, slug) is preserved.
 
 Everything deleted is derived; raw records are untouched (ADR 0004). Re-run
-`scripts/pipeline/reconcile_companies.py` afterwards to let the canonical records
-re-assert, then `scripts/pipeline/reconcile_vpic_makes.py` to convert the match flags
-the duplicates were blocking. Runs dry by default; pass --execute to apply.
+the companies pass (`python -m carmanac.reconcile.engine`) afterwards to let
+the canonical records re-assert, then the vPIC match pass
+(`python -m carmanac.reconcile.matching`) to convert the match flags the
+duplicates were blocking. Runs dry by default; pass --execute to apply.
 """
 
 from __future__ import annotations
@@ -148,8 +147,8 @@ def main() -> int:
             return 0
         session.commit()
         print(
-            "done; re-run scripts/pipeline/reconcile_companies.py then "
-            "scripts/pipeline/reconcile_vpic_makes.py to converge"
+            "done; re-run the companies pass (python -m carmanac.reconcile.engine) "
+            "then the vPIC match pass (python -m carmanac.reconcile.matching) to converge"
         )
     return 0
 

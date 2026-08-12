@@ -145,25 +145,26 @@ def test_matched_make_later_picks_up_its_models(db, wikidata_source, vpic_source
 
 
 def test_slug_collision_flags_rather_than_suffixes(db, wikidata_source, vpic_source):
-    """§2.3, the Santana shape: two MakeIds resolving to one company deliver
-    the same nameplate twice. The lower ModelId keeps the slug; the higher one
-    is flagged for merge-or-suffix and creates NO row - an auto-suffixed
-    `110-wb-2` would manufacture duplicate identity."""
+    """§2.3, the Santana shape before any ruling: two MakeIds resolving to one
+    company deliver the same nameplate twice. The lower ModelId keeps the slug;
+    the higher one is flagged for merge-or-suffix and creates NO row - an
+    auto-suffixed `120-wb-2` would manufacture duplicate identity. (The ids
+    are deliberately outside VPIC_MODEL_MERGES: a ruled pair never flags.)"""
     santana = _matched_make(db, wikidata_source, vpic_source, "Q265465", "Santana Motor", 13765)
     _second_santana_makeid(db, vpic_source)
 
-    _land_model(db, vpic_source, 36863, '110" WB', 13765, "SANTANA")
-    _land_model(db, vpic_source, 36864, '110" WB', 13766, "LAND ROVER SANTANA")
+    _land_model(db, vpic_source, 41001, '120" WB', 13765, "SANTANA")
+    _land_model(db, vpic_source, 41002, '120" WB', 13766, "LAND ROVER SANTANA")
 
     stats = run_vpic_models_pass(db)
     assert stats.models_created == 1 and stats.flags_opened == 1
 
     model = db.scalars(select(Model)).one()
-    assert (model.company_id, model.slug) == (santana.id, "110-wb")
+    assert (model.company_id, model.slug) == (santana.id, "120-wb")
     ids = {
         e.external_id for e in db.scalars(select(ExternalId).where(ExternalId.model_id.isnot(None)))
     }
-    assert ids == {"model:36863"}  # the lower ModelId won
+    assert ids == {"model:41001"}  # the lower ModelId won
 
     flag = db.scalars(
         select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
@@ -171,7 +172,7 @@ def test_slug_collision_flags_rather_than_suffixes(db, wikidata_source, vpic_sou
     assert flag.status == "open"
     assert flag.model_id is None and flag.raw_record_id is not None  # record-scoped
     assert flag.detail["reason"] == "slug_collision"
-    assert flag.detail["slug"] == "110-wb"
+    assert flag.detail["slug"] == "120-wb"
     assert flag.detail["existing_model"]["id"] == model.id
 
     # Re-running must not ask the same question twice.
@@ -196,12 +197,12 @@ def test_collision_flag_dismissed_when_a_human_merges(db, wikidata_source, vpic_
     next run climbs rung 1, refreshes, and dismisses the stale question."""
     santana = _matched_make(db, wikidata_source, vpic_source, "Q265465", "Santana Motor", 13765)
     _second_santana_makeid(db, vpic_source)
-    _land_model(db, vpic_source, 36863, '110" WB', 13765, "SANTANA")
-    _land_model(db, vpic_source, 36864, '110" WB', 13766, "LAND ROVER SANTANA")
+    _land_model(db, vpic_source, 41001, '120" WB', 13765, "SANTANA")
+    _land_model(db, vpic_source, 41002, '120" WB', 13766, "LAND ROVER SANTANA")
     run_vpic_models_pass(db)
 
     model = db.scalars(select(Model)).one()
-    db.add(ExternalId(model_id=model.id, source_id=vpic_source.id, external_id="model:36864"))
+    db.add(ExternalId(model_id=model.id, source_id=vpic_source.id, external_id="model:41002"))
     db.commit()
 
     stats = run_vpic_models_pass(db)
@@ -211,6 +212,81 @@ def test_collision_flag_dismissed_when_a_human_merges(db, wikidata_source, vpic_
     assert flag.status == "dismissed" and flag.resolved_at is not None
     assert db.scalar(select(func.count()).select_from(Model)) == 1
     assert santana.id == model.company_id
+
+
+def test_curated_merge_resolves_ruled_collision(db, wikidata_source, vpic_source):
+    """The Santana verdict as the pass now applies it: the member ModelId in
+    VPIC_MODEL_MERGES attaches to its canonical twin's row mechanically - one
+    row, both external ids, no flag - so a rebuild from raw reproduces the
+    human's answer instead of re-asking the question."""
+    santana = _matched_make(db, wikidata_source, vpic_source, "Q265465", "Santana Motor", 13765)
+    _second_santana_makeid(db, vpic_source)
+    _land_model(db, vpic_source, 36863, '110" WB', 13765, "SANTANA")
+    _land_model(db, vpic_source, 36864, '110" WB', 13766, "LAND ROVER SANTANA")
+
+    stats = run_vpic_models_pass(db)
+    assert stats.models_created == 1 and stats.models_matched == 1
+    assert stats.flags_opened == 0 and stats.merge_waits == 0
+
+    model = db.scalars(select(Model)).one()
+    assert (model.company_id, model.slug) == (santana.id, "110-wb")
+    ids = {
+        e.external_id for e in db.scalars(select(ExternalId).where(ExternalId.model_id.isnot(None)))
+    }
+    assert ids == {"model:36863", "model:36864"}
+
+    # Both records assert the same name onto the one row: one live assertion.
+    assertions = db.scalars(
+        select(FieldProvenance).where(FieldProvenance.model_id == model.id)
+    ).all()
+    assert len(assertions) == 1 and assertions[0].observed_value == '110" WB'
+
+    rerun = run_vpic_models_pass(db)
+    assert rerun.models_created == 0 and rerun.models_matched == 2
+    assert db.scalar(select(func.count()).select_from(Model)) == 1
+
+
+def test_curated_merge_waits_until_canonical_exists(db, wikidata_source, vpic_source):
+    """A member whose canonical row does not exist creates nothing and opens
+    no flag - waiting beats minting the duplicate the verdict exists to
+    prevent. When the canonical lands, the next run attaches mechanically."""
+    _matched_make(db, wikidata_source, vpic_source, "Q265465", "Santana Motor", 13765)
+    _second_santana_makeid(db, vpic_source)
+    _land_model(db, vpic_source, 36864, '110" WB', 13766, "LAND ROVER SANTANA")
+
+    stats = run_vpic_models_pass(db)
+    assert stats.merge_waits == 1 and stats.models_created == 0 and stats.flags_opened == 0
+    assert db.scalar(select(func.count()).select_from(Model)) == 0
+
+    _land_model(db, vpic_source, 36863, '110" WB', 13765, "SANTANA")
+    stats = run_vpic_models_pass(db)
+    assert stats.models_created == 1 and stats.models_matched == 1 and stats.merge_waits == 0
+    ids = {
+        e.external_id for e in db.scalars(select(ExternalId).where(ExternalId.model_id.isnot(None)))
+    }
+    assert ids == {"model:36863", "model:36864"}
+
+
+def test_curated_merge_member_may_precede_canonical_in_id_order(db, wikidata_source, vpic_source):
+    """Members sort after everything else, so a merge lands in one run even
+    when the member's ModelId is the lower of the pair."""
+    _matched_make(db, wikidata_source, vpic_source, "Q265465", "Santana Motor", 13765)
+    _second_santana_makeid(db, vpic_source)
+    _land_model(db, vpic_source, 50001, "Anibal", 13766, "LAND ROVER SANTANA")
+    _land_model(db, vpic_source, 50002, "Anibal", 13765, "SANTANA")
+
+    policy.VPIC_MODEL_MERGES["model:50001"] = "model:50002"
+    try:
+        stats = run_vpic_models_pass(db)
+    finally:
+        del policy.VPIC_MODEL_MERGES["model:50001"]
+
+    assert stats.models_created == 1 and stats.models_matched == 1
+    assert stats.flags_opened == 0 and stats.merge_waits == 0
+    ids = {
+        e.external_id for e in db.scalars(select(ExternalId).where(ExternalId.model_id.isnot(None)))
+    }
+    assert ids == {"model:50001", "model:50002"}
 
 
 def test_renamed_model_supersedes_rather_than_appends(db, wikidata_source, vpic_source):

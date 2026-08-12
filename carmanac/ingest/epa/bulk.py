@@ -79,3 +79,9 @@ def land_vehicles(
     result = LandResult(fetched=len(rows), inserted=inserted)
     log.info("Landed %d new raw record(s); %d unchanged", result.inserted, result.unchanged)
     return result
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(land_vehicles)

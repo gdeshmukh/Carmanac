@@ -531,3 +531,9 @@ def run_generation_placement_pass(session: Session) -> GenerationPlacementStats:
     stats = _PlacementPass(session).run()
     log.info("generation placement pass done: %s", stats.summary())
     return stats
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_generation_placement_pass)

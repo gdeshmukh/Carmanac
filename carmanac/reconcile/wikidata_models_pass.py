@@ -1231,3 +1231,9 @@ def run_wikidata_models_pass(session: Session) -> WikidataModelsStats:
     session.commit()
     log.info("wikidata models pass done: %s", stats.summary())
     return stats
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_wikidata_models_pass)

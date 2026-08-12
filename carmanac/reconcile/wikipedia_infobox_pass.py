@@ -227,3 +227,9 @@ def run_wikipedia_infobox_pass(session: Session) -> WikipediaInfoboxStats:
     session.commit()
     log.info("wikipedia infobox pass done: %s", stats.summary())
     return stats
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(run_wikipedia_infobox_pass)

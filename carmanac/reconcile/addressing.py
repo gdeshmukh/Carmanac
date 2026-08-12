@@ -454,3 +454,9 @@ def _strip_prefixes(session: Session) -> dict[int, tuple[str, ...]]:
         if make_name:
             norms.setdefault(company_id, set()).add(normalize_name(make_name))
     return {cid: tuple(sorted(ns, key=len, reverse=True)) for cid, ns in norms.items()}
+
+
+if __name__ == "__main__":
+    from carmanac.runner import run
+
+    run(recompute_addresses)

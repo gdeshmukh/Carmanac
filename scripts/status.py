@@ -102,7 +102,7 @@ def main() -> int:
                 SELECT
                   (SELECT count(*) FROM external_ids ei JOIN sources so ON so.id = ei.source_id
                    WHERE so.name = 'NHTSA vPIC' AND ei.external_id LIKE 'make:%'),
-                  (SELECT count(*) FROM raw_scrape.raw_records rr
+                  (SELECT count(DISTINCT rr.external_id) FROM raw_scrape.raw_records rr
                    JOIN sources so ON so.id = rr.source_id
                    WHERE so.name = 'NHTSA vPIC' AND rr.external_id LIKE 'make:%')
                 """
@@ -116,7 +116,7 @@ def main() -> int:
                 SELECT
                   (SELECT count(*) FROM external_ids ei JOIN sources so ON so.id = ei.source_id
                    WHERE so.name = 'NHTSA vPIC' AND ei.external_id LIKE 'model:%'),
-                  (SELECT count(*) FROM raw_scrape.raw_records rr
+                  (SELECT count(DISTINCT rr.external_id) FROM raw_scrape.raw_records rr
                    JOIN sources so ON so.id = rr.source_id
                    WHERE so.name = 'NHTSA vPIC' AND rr.external_id LIKE 'model:%')
                 """
@@ -131,7 +131,10 @@ def main() -> int:
                   (SELECT count(DISTINCT model_id) FROM catalogue_periods),
                   (SELECT count(*) FROM match_decisions
                    WHERE pass_name = 'epa_attach' AND outcome = 'attached'),
-                  (SELECT count(*) FROM raw_scrape.raw_records rr
+                  -- Distinct vehicles, not raw rows: retention keeps every
+                  -- content revision, so a source-side refresh would
+                  -- otherwise double-count the fleet.
+                  (SELECT count(DISTINCT rr.external_id) FROM raw_scrape.raw_records rr
                    JOIN sources so ON so.id = rr.source_id
                    WHERE so.name = 'EPA fueleconomy.gov'
                      AND rr.external_id LIKE 'vehicle:%')
