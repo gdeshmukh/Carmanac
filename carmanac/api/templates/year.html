@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ period.model_name }} {{ year }} — Carmanac{% endblock %}
+{% block content %}
+<h1>{{ period.model_name }} &middot; {{ year }}</h1>
+<p class="sub">{{ period.company_name }} &middot; {{ cars | length }} cars this model year</p>
+
+{% if cars %}
+<table>
+  <tr><th>Car</th><th>Drivetrain</th><th>Body</th><th>Fuel</th><th>Power (hp)</th><th>Generation</th></tr>
+  {% for car in cars %}
+  <tr>
+    <td>{% if car.address %}<a href="{{ car.address }}">{{ car.trim_name or "base" }}</a>
+        {% else %}{{ car.trim_name or "base" }} <span class="unaddressed">(no address)</span>{% endif %}</td>
+    <td>{{ car.drivetrain | dash }}</td>
+    <td>{{ car.body_style | dash }}</td>
+    <td>{{ car.fuel_type | dash }}</td>
+    <td>{{ car.power_hp | dash }}</td>
+    <td>{% if car.generation_id %}
+          {% if car.generation_slug %}<a href="/{{ car.company_slug }}/generations/{{ car.generation_slug }}">{{ car.generation_name or car.generation_slug }}</a>
+          {% else %}{{ car.generation_name or "(unnamed)" }}{% endif %}
+        {% else %}<span class="null">&mdash;</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="null">A catalogue period exists for this year, but no cars have landed in it yet.</p>
+{% endif %}
+{% endblock %}

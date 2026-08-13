@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ model.model_name }} — Carmanac{% endblock %}
+{% block content %}
+<h1>{{ model.model_name }}</h1>
+<p class="sub">{{ model.configurations }} configurations &middot; {{ model.placed }} placed
+  {% if model.first_year %}&middot; {{ model.first_year }}–{{ model.last_year }}{% endif %}</p>
+
+<h2>Years</h2>
+{% if years %}
+<table>
+  <tr><th>Year</th><th>Cars</th></tr>
+  {% for y in years %}
+  <tr>
+    <td>{% if y.kind == "model_year" %}
+        <a href="/{{ model.company_slug }}/{{ model.model_slug }}/{{ y.start_year }}">{{ y.start_year }}</a>
+        {% else %}{{ y.start_year | dash }}–{{ y.end_year | dash }} <span class="sub">({{ y.kind }})</span>{% endif %}</td>
+    <td>{{ y.cars }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="null">No catalogue periods on record for this model yet.</p>
+{% endif %}
+{% endblock %}

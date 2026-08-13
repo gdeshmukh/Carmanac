@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ generation.name or generation.slug }} — Carmanac{% endblock %}
+{% block content %}
+<h1>{{ generation.name or generation.slug }}</h1>
+<p class="sub">
+  {% if generation.chassis_codes %}{{ generation.chassis_codes | join(", ") }} &middot; {% endif %}
+  {# end_year NULL means still in production, per the generations model. #}
+  {% if generation.start_year %}{{ generation.start_year }}–{{ generation.end_year or "present" }}
+  {% else %}<span class="null">span not on record</span>{% endif %}
+</p>
+{% if generation.summary %}<p>{{ generation.summary }}</p>{% endif %}
+
+<h2>Models</h2>
+{% if models %}
+<p>
+  {% for m in models %}
+  {% if m.model_slug and m.company_slug %}<a href="/{{ m.company_slug }}/{{ m.model_slug }}">{{ m.name }}</a>
+  {% else %}{{ m.name }}{% endif %}{% if not loop.last %} &middot; {% endif %}
+  {% endfor %}
+</p>
+{% else %}
+<p class="null">No live model links yet.</p>
+{% endif %}
+
+<h2>Placed cars</h2>
+{% if years %}
+{% for year, year_cars in years.items() %}
+<h3>{{ year }}</h3>
+<table>
+  <tr><th>Model</th><th>Car</th><th>Drivetrain</th><th>Body</th><th>Power (hp)</th></tr>
+  {% for car in year_cars %}
+  <tr>
+    <td>{{ car.model_name }}</td>
+    <td>{% if car.address %}<a href="{{ car.address }}">{{ car.trim_name or "base" }}</a>
+        {% else %}{{ car.trim_name or "base" }} <span class="unaddressed">(no address)</span>{% endif %}</td>
+    <td>{{ car.drivetrain | dash }}</td>
+    <td>{{ car.body_style | dash }}</td>
+    <td>{{ car.power_hp | dash }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endfor %}
+{% else %}
+<p class="null">No configurations placed in this generation yet.</p>
+{% endif %}
+{% endblock %}

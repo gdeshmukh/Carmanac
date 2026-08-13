@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Carmanac{% endblock %}</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 64rem; margin: 2rem auto; padding: 0 1rem; }
+  nav { color: #666; margin-bottom: 1.5rem; }
+  table { border-collapse: collapse; }
+  th, td { text-align: left; padding: 0.25rem 1.25rem 0.25rem 0; border-bottom: 1px solid #ddd; }
+  dt { color: #666; }
+  .sub { color: #666; }
+  .null, .unaddressed { color: #999; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Carmanac</a>{% for label, href in crumbs %} /
+  {% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}{{ label }}{% endif %}{% endfor %}
+</nav>
+{% block content %}{% endblock %}
+</body>
+</html>

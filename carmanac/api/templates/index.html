@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Carmanac</h1>
+<p class="sub">{{ totals.companies_with_cars }} companies with cars &middot;
+  {{ totals.configurations }} configurations &middot; {{ totals.placed }} placed in a generation</p>
+
+<h2>Cars</h2>
+<p class="sub">Showing {{ cars | length }} of {{ totals.configurations }}, newest first.</p>
+<table>
+  <tr><th>Year</th><th>Company</th><th>Model</th><th>Car</th></tr>
+  {% for car in cars %}
+  <tr>
+    <td>{{ car.start_year }}</td>
+    <td>{{ car.company_name }}</td>
+    <td>{{ car.model_name }}</td>
+    <td><a href="{{ car.address }}">{{ car.trim_name or "base" }}</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
