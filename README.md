@@ -108,6 +108,13 @@ Then check the live state at any time:
 .venv/bin/python scripts/status.py
 ```
 
+And browse it — the first entity pages, served locally (scaffolding; the real
+frontend comes later):
+
+```bash
+.venv/bin/python -m carmanac.api    # http://127.0.0.1:8000
+```
+
 ### Filling it
 
 Each source is a fetch-and-land step followed by a reconciliation pass, and each step is its own module, runnable directly — the ingest modules under `carmanac/ingest/<source>/`, the passes under `carmanac/reconcile/`. Every step is idempotent — unchanged payloads land as no-ops, and a second reconciliation run over unchanged data settles to exact zero writes. Run them in this order; later passes depend on earlier ones having resolved identity.

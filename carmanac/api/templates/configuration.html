@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ car.model_name }} {{ car.trim_name or "base" }} ({{ car.start_year }}) — Carmanac{% endblock %}
+{% block content %}
+<h1>{{ car.start_year }} {{ car.company_name }} {{ car.model_name }} {{ car.trim_name or "" }}</h1>
+<p class="sub">{{ car.address }}</p>
+
+<h2>Identity</h2>
+<dl>
+  <dt>Trim</dt><dd>{{ car.trim_name | dash }}</dd>
+  <dt>Market</dt><dd>{{ car.market }}</dd>
+  <dt>Model year</dt><dd>{{ car.start_year }}</dd>
+</dl>
+
+<h2>Generation</h2>
+{% if car.generation_id %}
+<p>
+  {% if car.generation_slug %}<a href="/{{ car.company_slug }}/generations/{{ car.generation_slug }}">{{ car.generation_name or car.generation_slug }}</a>
+  {% else %}{{ car.generation_name or "(unnamed)" }} <span class="unaddressed">(no address)</span>{% endif %}
+  {% if car.chassis_codes %}&middot; {{ car.chassis_codes | join(", ") }}{% endif %}
+</p>
+{% else %}
+<p class="null">Not placed — no source has placed this car in a generation.</p>
+{% endif %}
+
+<h2>Body</h2>
+<dl>
+  <dt>Body style</dt><dd>{{ car.body_style | dash }}</dd>
+  <dt>Doors</dt><dd>{{ car.doors | dash }}</dd>
+  <dt>Seats</dt><dd>{{ car.seating_capacity | dash }}</dd>
+</dl>
+
+<h2>Powertrain</h2>
+<dl>
+  <dt>Engine</dt><dd>{{ car.engine_displacement_cc | dash("cc") }}</dd>
+  <dt>Cylinders</dt><dd>{{ car.cylinders | dash }}</dd>
+  <dt>Power</dt><dd>{{ car.power_hp | dash("hp") }}</dd>
+  <dt>Torque</dt><dd>{{ car.torque_nm | dash("Nm") }}</dd>
+  <dt>Fuel</dt><dd>{{ car.fuel_type | dash }}</dd>
+  <dt>Transmission</dt><dd>{{ car.transmission_type | dash }}</dd>
+  <dt>Drivetrain</dt><dd>{{ car.drivetrain | dash }}</dd>
+</dl>
+
+<h2>Economy</h2>
+<dl>
+  <dt>City</dt><dd>{{ car.mpg_city | dash("mpg") }}</dd>
+  <dt>Highway</dt><dd>{{ car.mpg_highway | dash("mpg") }}</dd>
+  <dt>Combined</dt><dd>{{ car.mpg_combined | dash("mpg") }}</dd>
+  <dt>MPGe</dt><dd>{{ car.mpge_combined | dash }}</dd>
+  <dt>Electric range</dt><dd>{{ car.electric_range_km | dash("km") }}</dd>
+</dl>
+
+<h2>Dimensions</h2>
+<dl>
+  <dt>Curb weight</dt><dd>{{ car.curb_weight_kg | dash("kg") }}</dd>
+  <dt>Length</dt><dd>{{ car.length_mm | dash("mm") }}</dd>
+  <dt>Width</dt><dd>{{ car.width_mm | dash("mm") }}</dd>
+  <dt>Height</dt><dd>{{ car.height_mm | dash("mm") }}</dd>
+  <dt>Wheelbase</dt><dd>{{ car.wheelbase_mm | dash("mm") }}</dd>
+</dl>
+{% endblock %}

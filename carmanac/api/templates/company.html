@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ company.company_name }} — Carmanac{% endblock %}
+{% block content %}
+<h1>{{ company.company_name }}</h1>
+<p class="sub">{{ company.models }} models &middot; {{ company.configurations }} configurations
+  &middot; {{ company.placed }} placed</p>
+
+<h2>Models</h2>
+{% if models %}
+<table>
+  <tr><th>Model</th><th>Years</th><th>Cars</th><th>Placed</th></tr>
+  {% for m in models %}
+  <tr>
+    <td>{% if m.model_slug %}<a href="/{{ company.company_slug }}/{{ m.model_slug }}">{{ m.model_name }}</a>
+        {% else %}{{ m.model_name }} <span class="unaddressed">(no address)</span>{% endif %}</td>
+    <td>{% if m.first_year %}{{ m.first_year }}–{{ m.last_year }}{% else %}<span class="null">&mdash;</span>{% endif %}</td>
+    <td>{{ m.configurations }}</td>
+    <td>{{ m.placed }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="null">No models on record.</p>
+{% endif %}
+
+<h2>Generations</h2>
+{% if generations %}
+<table>
+  <tr><th>Generation</th><th>Chassis codes</th><th>Years</th><th>Cars placed</th></tr>
+  {% for g in generations %}
+  <tr>
+    <td>{% if g.slug %}<a href="/{{ company.company_slug }}/generations/{{ g.slug }}">{{ g.name or g.slug }}</a>
+        {% else %}{{ g.name or "(unnamed)" }} <span class="unaddressed">(no address)</span>{% endif %}</td>
+    <td>{% if g.chassis_codes %}{{ g.chassis_codes | join(", ") }}{% else %}<span class="null">&mdash;</span>{% endif %}</td>
+    <td>{% if g.start_year %}{{ g.start_year }}–{{ g.end_year or "present" }}{% else %}<span class="null">&mdash;</span>{% endif %}</td>
+    <td>{{ g.placed }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="null">No generations on record.</p>
+{% endif %}
+{% endblock %}
