@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.templating import Jinja2Templates
@@ -55,7 +55,7 @@ def crumbs(path: str) -> list[tuple[str, str | None]]:
     when it is the page you are on, or when it is the bare `generations`
     literal, which is a reserved segment rather than a route."""
     segments = [s for s in path.strip("/").split("/") if s]
-    trail = []
+    trail: list[tuple[str, str | None]] = []
     for i, segment in enumerate(segments):
         last = i == len(segments) - 1
         href = None if last or segment == "generations" else "/" + "/".join(segments[: i + 1])
@@ -63,7 +63,7 @@ def crumbs(path: str) -> list[tuple[str, str | None]]:
     return trail
 
 
-def _render(request: Request, name: str, context: dict | None) -> Response:
+def _render(request: Request, name: str, context: dict[str, Any] | None) -> Response:
     if context is None:
         raise HTTPException(status_code=404)
     context["crumbs"] = crumbs(request.url.path)

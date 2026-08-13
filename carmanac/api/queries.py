@@ -11,6 +11,7 @@ through the ORM, which already has their classes.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import RowMapping, select, text
@@ -21,7 +22,7 @@ from carmanac.db.models import Company, Generation, GenerationModelLink, Model
 CAR_LIST_LIMIT = 50
 
 
-def _rows(session: Session, sql: str, **params: Any) -> list[RowMapping]:
+def _rows(session: Session, sql: str, **params: Any) -> Sequence[RowMapping]:
     return session.execute(text(sql), params).mappings().all()
 
 

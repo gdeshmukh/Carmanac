@@ -20,8 +20,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Carmanac", docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(router)
 
-    @app.exception_handler(StarletteHTTPException)
-    async def not_found(request: Request, exc: StarletteHTTPException) -> Response:
+    @app.exception_handler(StarletteHTTPException)  # the decorator is the access
+    async def not_found(  # pyright: ignore[reportUnusedFunction]
+        request: Request, exc: StarletteHTTPException
+    ) -> Response:
         if exc.status_code != 404:
             return await http_exception_handler(request, exc)
         # The crumbs still render on a 404, so a dead address offers the
