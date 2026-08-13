@@ -4,16 +4,17 @@
 <p class="sub">{{ totals.companies_with_cars }} companies with cars &middot;
   {{ totals.configurations }} configurations &middot; {{ totals.placed }} placed in a generation</p>
 
-<h2>Cars</h2>
-<p class="sub">Showing {{ cars | length }} of {{ totals.configurations }}, newest first.</p>
+<h2>Companies</h2>
+<p class="sub">{{ companies | length }} companies with filed models.</p>
 <table>
-  <tr><th>Year</th><th>Company</th><th>Model</th><th>Car</th></tr>
-  {% for car in cars %}
+  <tr><th>Company</th><th>Models</th><th>With cars</th><th>Cars</th><th>Placed</th></tr>
+  {% for c in companies %}
   <tr>
-    <td>{{ car.start_year }}</td>
-    <td>{{ car.company_name }}</td>
-    <td>{{ car.model_name }}</td>
-    <td><a href="{{ car.address }}">{{ car.trim_name or "base" }}</a></td>
+    <td><a href="/{{ c.company_slug }}">{{ c.company_name }}</a></td>
+    <td>{{ c.models }}</td>
+    <td>{{ c.models_with_cars }}</td>
+    <td>{{ c.configurations }}</td>
+    <td>{{ c.placed }}</td>
   </tr>
   {% endfor %}
 </table>

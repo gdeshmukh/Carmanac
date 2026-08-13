@@ -19,8 +19,6 @@ from sqlalchemy.orm import Session
 
 from carmanac.db.models import Company, Generation, GenerationModelLink, Model
 
-CAR_LIST_LIMIT = 50
-
 
 def _rows(session: Session, sql: str, **params: Any) -> Sequence[RowMapping]:
     return session.execute(text(sql), params).mappings().all()
@@ -38,16 +36,14 @@ def root_index(session: Session) -> dict[str, Any]:
                   coalesce(sum(placed), 0) AS placed
            FROM v_company_coverage""",
     )
-    cars = _rows(
+    companies = _rows(
         session,
-        """SELECT company_name, model_name, start_year, trim_name, address
-           FROM v_configuration_full
-           WHERE address IS NOT NULL
-           ORDER BY start_year DESC, company_slug, model_slug, car_slug
-           LIMIT :limit""",
-        limit=CAR_LIST_LIMIT,
+        """SELECT company_slug, company_name, models, models_with_cars, configurations, placed
+           FROM v_company_coverage
+           WHERE models > 0
+           ORDER BY company_name""",
     )
-    return {"totals": totals, "cars": cars}
+    return {"totals": totals, "companies": companies}
 
 
 def company_page(session: Session, company_slug: str) -> dict[str, Any] | None:
