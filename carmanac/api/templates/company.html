@@ -24,20 +24,5 @@
 {% endif %}
 
 <h2>Generations</h2>
-{% if generations %}
-<table>
-  <tr><th>Generation</th><th>Chassis codes</th><th>Years</th><th>Cars placed</th></tr>
-  {% for g in generations %}
-  <tr>
-    <td>{% if g.slug %}<a href="/{{ company.company_slug }}/generations/{{ g.slug }}">{{ g.name or g.slug }}</a>
-        {% else %}{{ g.name or "(unnamed)" }} <span class="unaddressed">(no address)</span>{% endif %}</td>
-    <td>{% if g.chassis_codes %}{{ g.chassis_codes | join(", ") }}{% else %}<span class="null">&mdash;</span>{% endif %}</td>
-    <td>{% if g.start_year %}{{ g.start_year }}–{{ g.end_year or "present" }}{% else %}<span class="null">&mdash;</span>{% endif %}</td>
-    <td>{{ g.placed }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% else %}
-<p class="null">No generations on record.</p>
-{% endif %}
+<p><a href="/{{ company.company_slug }}/generations">View all generations on record</a></p>
 {% endblock %}

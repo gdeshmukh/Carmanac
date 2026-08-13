@@ -258,6 +258,7 @@ M3, `/bmw` is the company.
   page**). The address is only the tail — trim, then drivetrain when the trim
   does not already say it — so it need only be unique inside that year, and
   a car with nothing to distinguish it is `base`.
+- `/<company>/generations` — every generation landed under the company
 - `/<company>/generations/<generation>` — generation page, company-anchored
   per ADR 0016. The address is the bare chassis code (`/porsche/generations/964`)
   when exactly one generation under that company carries it; shared codes

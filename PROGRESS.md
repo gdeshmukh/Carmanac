@@ -98,6 +98,10 @@ End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
 
+### 2026-08-13 (the generation landing inventory gets its own page)
+
+- Added `/<company>/generations` as the company-wide generation index, moving the existing inventory table off the company page so it has one query and one rendering home. It lists every landed generation, including undated or unaddressed rows, with chassis codes, span, and placed-car count; generation-page breadcrumbs now link back to it. Live BMW check: 14 generations, zero unaddressed. **215 tests green; ruff + format clean.**
+
 ### 2026-08-13 (the pages exist: a FastAPI read layer over the views, and the route map is clickable)
 
 - **The read layer is thin by construction** (F2's second slice, branch `feat/entity-pages` — split out mid-session so the pages ride their own PR; the views had already merged as PR #39): `carmanac/api/` is three small modules — `queries.py` (read-only SQL over the three views, plus the two lookups they can't carry), `routes.py` (handlers that resolve an address, 404 or render), `app.py` (the wiring) — served by `python -m carmanac.api` per the scripts-triage idiom (entry points on the modules that own the logic). Read-only by construction, not by discipline: the per-request session closes without commit, so a page cannot write even by accident.
@@ -308,4 +312,3 @@ the completed F1-F9 fix queue and the 2026-07 review findings.
 - Verified: `alembic check` clean, downgrade/upgrade round trip, pre-migration seed data survived the rename intact, seed script idempotent on the new shape, arc CHECK expressions rewritten, trigger fires on the renamed table. **87 tests green** (3 new: open-ended-period NULLS NOT DISTINCT collision, end-before-start CHECK, both kinds coexisting on one generation — the ADR's mixed-granularity claim as a permanent test).
 - Test-fixture lesson re-learned from conftest's own docstring: migration-seeded lookups (now incl. `period_kinds`) are deliberately NOT truncated between tests — fixtures select them like production code does, never re-insert.
 - **Configuration-level ingestion is now unblocked** (year-level vPIC, EPA). Next: vPIC models fetch-and-land.
-

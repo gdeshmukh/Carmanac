@@ -61,6 +61,13 @@ def company_page(session: Session, company_slug: str) -> dict[str, Any] | None:
         "SELECT * FROM v_model_coverage WHERE company_slug = :slug ORDER BY model_name",
         slug=company_slug,
     )
+    return {"company": company, "models": models}
+
+
+def generations_page(session: Session, company_slug: str) -> dict[str, Any] | None:
+    company = session.scalars(select(Company).where(Company.slug == company_slug)).one_or_none()
+    if company is None:
+        return None
     generations = _rows(
         session,
         """SELECT g.name, g.slug, g.chassis_codes, g.start_year, g.end_year,
@@ -70,9 +77,9 @@ def company_page(session: Session, company_slug: str) -> dict[str, Any] | None:
            WHERE g.company_id = :cid
            GROUP BY g.id
            ORDER BY g.start_year NULLS LAST, g.name""",
-        cid=company["company_id"],
+        cid=company.id,
     )
-    return {"company": company, "models": models, "generations": generations}
+    return {"company": company, "generations": generations}
 
 
 def model_page(session: Session, company_slug: str, model_slug: str) -> dict[str, Any] | None:

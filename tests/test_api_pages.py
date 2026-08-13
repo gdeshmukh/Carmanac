@@ -95,6 +95,7 @@ def client(db, seeded):
         "/bmw/m3/2004/base",
         "/bmw/z1",  # empty model
         "/bmw/z1/1990",  # year with no cars
+        "/bmw/generations",
         "/bmw/generations/e46",
         # Numeric generation slug: a 200 proves the generations route beat
         # /{model}/{year:int}, which would 404 on model "generations".

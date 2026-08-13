@@ -2,11 +2,11 @@
 404 when nothing answers, and render a template otherwise.
 
 The route map is ADR 0019's. Routes are matched in registration order, which
-is how the reserved literal works: `/{company}/generations/{generation}` is
-registered before `/{company}/{model}/{year}`, so `/porsche/generations/964`
-reaches the generation handler instead of parsing as model "generations",
-year 964. The `:int` converter means a non-numeric third segment matches no
-route at all and 404s.
+is how the reserved literal works: the generation routes are registered before
+`/{company}/{model}/{year}`, so `/porsche/generations/964` reaches the
+generation handler instead of parsing as model "generations", year 964. The
+`:int` converter means a non-numeric third segment matches no route at all and
+404s.
 """
 
 from __future__ import annotations
@@ -51,14 +51,13 @@ Db = Annotated[Session, Depends(get_session)]
 
 def crumbs(path: str) -> list[tuple[str, str | None]]:
     """One crumb per path segment, each linking to the index above it - the
-    ADR 0019 truncation property rendered as navigation. A crumb has no link
-    when it is the page you are on, or when it is the bare `generations`
-    literal, which is a reserved segment rather than a route."""
+    ADR 0019 truncation property rendered as navigation. The current page is
+    the only crumb without a link."""
     segments = [s for s in path.strip("/").split("/") if s]
     trail: list[tuple[str, str | None]] = []
     for i, segment in enumerate(segments):
         last = i == len(segments) - 1
-        href = None if last or segment == "generations" else "/" + "/".join(segments[: i + 1])
+        href = None if last else "/" + "/".join(segments[: i + 1])
         trail.append((segment, href))
     return trail
 
@@ -73,6 +72,11 @@ def _render(request: Request, name: str, context: dict[str, Any] | None) -> Resp
 @router.get("/")
 def root(request: Request, db: Db) -> Response:
     return _render(request, "index.html", queries.root_index(db))
+
+
+@router.get("/{company_slug}/generations")
+def generations(request: Request, db: Db, company_slug: str) -> Response:
+    return _render(request, "generations.html", queries.generations_page(db, company_slug))
 
 
 @router.get("/{company_slug}/generations/{generation_slug}")
