@@ -1,18 +1,7 @@
-"""The five-level entity hierarchy - the spine of the schema.
+"""The four-level entity hierarchy - the spine of the schema.
 
-    companies -> models -> generations -> catalogue_periods -> configurations
+    companies -> models -> catalogue_periods -> configurations
 
-These are IDENTITY tables (ADR 0002). They hold identity plus their descriptive
-and spec columns as the *current best value*. They carry no row-level
-provenance and no `superseded_by`: a make either exists or it does not, and
-"which source told us BMW was founded in 1916" is a field-level fact recorded in
-`field_provenance`, not a property of the identity row. Entities are upserted by
-natural key. External identifiers (Wikidata QID, NHTSA id, ...) live in
-`external_ids` (ADR 0003), not as columns here.
-
-Every spec-bearing row still foreign-keys back toward `configurations`, because
-a configuration (period x trim x market x drivetrain) is the only level at
-which a single spec value is unambiguous.
 """
 
 from __future__ import annotations
