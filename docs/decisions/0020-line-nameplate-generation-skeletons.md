@@ -1,6 +1,7 @@
 # ADR 0020 — Generation skeletons read from Wikipedia articles
 
-- Status: Proposed
+- Status: Proposed; amended 2026-08-14 (configuration–engine links from the
+  article tables; the first engine and transmission entities)
 - Date: 2026-08-13
 - Depends on: ADR 0011 (models are as-filed; lines are not models), ADR 0016
   (generations belong to a company, not a model), ADR 0017/0018 (Wikipedia
@@ -115,3 +116,208 @@ generations to place cars into. Deterministic passes stay LLM-free.
   it visible. The planned reviewer surface should show the wait pools
   beside the flag queues, and every surface should print names, never
   source-internal ids.
+
+---
+
+## Amendment (2026-08-14): configurations get their engines, from the article tables
+
+- Extends: the decision above; ADR 0007 §8/F7 (association facts are
+  per-source assertion rows — `configuration_engines` has waited empty for
+  this); ADR 0015 (which promised an engines decision to whatever source
+  first names engines: this is it); ADR 0017 §1 (identity is inherited,
+  never name-matched)
+- Considered and rejected on the way here: generation-grain spec facts (a
+  `generation_attributes` table was drafted and struck the same day). A
+  generation's page exists to sort a model's cars into configurations, not
+  to carry specifications. Facts about what a car came with belong on the
+  configuration.
+
+### The problem
+
+A configuration should know what engine it came with. Wikidata was the
+intended source for that connection and cannot carry it: its statements
+are thin here, and checking one means trusting an opaque claim. Wikipedia
+states the same connection in a form a person can open and verify — most
+model articles carry a table associating each variant with its engine,
+years, and displacement. The E46 3 Series page is the famous example, but
+the pattern is the ordinary one on model pages:
+
+    Model | Engine code      | Year(s)   | Power | Displacement
+    T5    | [[B5254T3]]      | 2005–2007 | ...   | 2521 cc
+
+We hold 434 full model articles in raw and read none of their tables.
+Censused 2026-08-14, with a deliberately rough throwaway parser:
+
+- 97 articles carry model+engine tables — 223 tables, roughly 1,700
+  engine rows. 95 of the 97 are already attached to our models through
+  Wikidata ids, so the anchor is inherited identity, not name matching.
+  88 of those models have configurations: about 2,800 configurations
+  sit under table-bearing pages.
+- Matching rows to configurations on physical keys alone (catalogue years
+  overlap, displacement agrees, petrol/diesel not contradicted): **562
+  configurations connect to exactly one engine** — 179 match a single
+  row, 383 match several rows that all name the same engine (one engine,
+  several tunes or years). 293 land on rows naming different engines and
+  stay open. 676 configurations carry no displacement on our side and
+  cannot be physically matched (mostly EVs and thin filings). The rest
+  find no candidate row at all — largely honest misses, since these are
+  mostly European-market tables and many US filings' engines simply are
+  not in them.
+- Trim names are useless as keys and are not used: our filings say "AWD"
+  or "Premium" where the table says "T5" or "2.0T". In the whole census,
+  trim agreement never resolved an ambiguity.
+- The engine cells are wikilinks: 115 distinct targets, of which 44 are
+  maker-titled family articles ("Volvo Modular engine", "Mazda F engine",
+  "BMW B47") — the rest generic technology or list pages. 210 distinct
+  variant codes ride in the link anchors ("Volvo Modular engine#B5254T7").
+
+Terms. A **family article** is Wikipedia's page for one maker's engine or
+transmission family; the maker's name leads the title. A **variant code**
+is the per-engine designation inside a family ("B5254T7"), usually a
+section anchor on the family article. To **mint** is to create an
+`engines` or `transmissions` row. To **anchor** is to decide which
+configuration a table row is talking about.
+
+### Decision 1 — configuration–engine links from the tables, on physical keys only
+
+A new deterministic pass reads the model+engine tables of attached
+articles. A table row is a claim: "the variant with these years, this
+displacement, this fuel came with this engine." A configuration takes an
+engine link when the physical keys — catalogue-period years overlap,
+displacement within tolerance, petrol/diesel not contradicted — leave
+exactly one engine identity standing across every candidate row. Several
+rows naming one engine are one answer. Beyond that:
+
+- Rows naming different engines: the configuration asserts nothing and
+  the pass logs it. This is a real review queue — a person reading the
+  page can often settle it — but it is a decision-log queue, not a flag,
+  until we see its size in practice. Open cases are not parked: every
+  re-run re-attempts them, and a grown registry or a variant code
+  settles many mechanically.
+- No candidate rows: nothing is asserted and nothing is logged as wrong.
+  A US-market filing whose engine is absent from a European table is the
+  table being what it is, not an error.
+- Trim and badge names are never keys, per the census.
+
+Links land as per-source assertion rows in the existing
+`configuration_engines` / `configuration_transmissions`, with the article
+record as `raw_record` — every link points at a page and table a reviewer
+can open, which is the whole reason Wikipedia beats Wikidata here.
+Supersession handles corrections; re-runs converge to exact no-op.
+
+### Decision 2 — engine and transmission entities: a strict minting ladder
+
+Entities are minted only from unambiguous identity signals, on a ladder
+checked per link target. The discriminating signal is the target title:
+Wikipedia titles family articles with the maker's name first, and the
+model is already attached to its company, so the mechanical test is
+whether the title begins with that company's name — an exact casefolded
+prefix against a row we already hold, no new name-matching surface.
+
+1. **Registry rung, checked first (ships empty).** A committed registry
+   of per-title human judgments: mint as engine of company X, mint as
+   transmission of company X, or never mint. Cross-maker engines,
+   supplier-branded gearboxes ("ZF 8HP transmission", "Lineartronic"),
+   and corrections to rung 2 all land here. Recorded judgments, applied
+   deterministically, replayed on rebuild; the pass's log of failing
+   titles is this registry's review queue. Entries are cheap to produce:
+   an LLM classifies the distinct target titles in batch — engine family
+   of X, transmission family of X, generic technology, list page — and
+   the batch is reviewed and committed like any dry-run (LLM proposes,
+   human confirms, registries record: the 2026-08-07 ruling). The LLM
+   classifies text that exists; it never generates a fact, and no pass
+   calls one at run time.
+2. **Prefix rung (mechanical).** A target whose title starts with the
+   attached company's name mints, or attaches to, a family entity:
+   - Identity is the normalized title, keyed in `external_ids` under
+     Wikipedia (English) as `engine-article:<key>` /
+     `transmission-article:<key>`. The key is the title casefolded,
+     underscores to spaces, with one trailing " engine" /
+     " transmission" stripped — "Mercedes-Benz OM642" and "Mercedes-Benz
+     OM642 engine" both occur and are one family, one row. Dedup is
+     global: every page linking "Volvo Modular engine" resolves to the
+     same row.
+   - Fields: name (the title as first observed), slug (from the key),
+     `manufacturer_company_id` (the attached company). ADR 0015 rejected
+     inferring an engine's maker from the car's company when the source
+     named none; here the title names the maker, and the rung fires only
+     when that name is the attached company's — read off the article,
+     not assumed from ownership.
+3. **Everything else mints nothing.** Generic technology links
+   ("Straight-four engine", "Turbocharger"), list pages, bare text: all
+   preserved in raw, waiting.
+
+The minted grain starts at the **family** — that is what a model-page
+cell links — and deepens in Decision 3. The generation infoboxes'
+engine fields (78 family targets in the earlier census) stay unread:
+they assert generation-grain claims this schema deliberately gives no
+home. No LLM anywhere on the ladder.
+
+### Decision 3 — dive into the families: fetch their articles, mint the variants
+
+The minted families are themselves a fetch list: each entity's external
+id names its article. Those pages carry the deeper facts at exactly the
+grain a configuration wants — one section per variant code on most
+pages, a spec table on some — so the arc does not stop at the disk:
+
+- Each family article named by a minted or registry-confirmed entity is
+  fetched into raw under the Wikipedia source, through the standing
+  landing discipline (raw first, passes read raw, refetch supersedes).
+- A family pass reads the per-code sections and any spec tables.
+  Variants mint as `engines` rows keyed
+  `engine-article:<family key>#<code>`, carrying `family_code` always,
+  and displacement and cylinders where the section or row states them —
+  never decoded out of the code itself. A code anchors to a heading
+  after undoing MediaWiki's space-to-underscore encoding; explicit
+  `{{anchor}}` ids inside headings count too. A section that states no
+  displacement mints its variant lean rather than not at all. The
+  family row stays as the article's identity anchor.
+- The tables pass re-runs: where a model-page row carried a variant
+  code, the configuration's link repoints to that variant, superseding
+  the family-grain link. Rows without codes keep the family link —
+  still true, just coarser. This is also how a configuration's "deeper
+  facts" arrive: through its engine link, never as copied columns.
+- Wikidata's role here is identity corroboration only — family articles
+  have QIDs via sitelinks, attached for free when useful. It is not
+  less processing (the fetch machinery is the same either way), and it
+  is thinner exactly where the variant tables are rich; the facts stay
+  on pages a reviewer can open.
+
+Power and torque stay unextracted everywhere — model-page tables and
+variant tables alike — until the rating-standards decision (the owed
+sibling to ADR 0009).
+
+### What does not change
+
+Generations carry no spec facts; their pages sort cars into
+configurations, and these links are what make that sorting mean
+something. The main decision above (skeletons, placement) proceeds
+independently — and when its rollout fetches the per-generation pages of
+line-filed nameplates, their tables feed this same pass unchanged.
+EPA still mints nothing. Sources beyond Wikipedia — other websites, and
+any orchestration over them — wait for their own decision. Deterministic
+passes stay LLM-free: classification happens offline into committed
+registries, never at run time.
+
+### Consequences
+
+- Zero schema changes: `engines`, `transmissions`,
+  `configuration_engines`, `configuration_transmissions`, and both
+  external-id arcs already exist. The arc is one pass and one registry.
+- The first rows ever in `engines` and `transmissions` — on today's
+  pile, up to 44 engine families and a handful of transmission families,
+  each arriving with at least one configuration trying to link to it.
+  The `/engines/<engine>` route gets its first subjects.
+- Around 560 configurations gain engine links from census-grade parsing;
+  a production parser (rowspans, more units) and a populated registry
+  raise that; market mismatch bounds it.
+- The review surfaces are lists the pass already logs: prefix-failing
+  titles for the registry (115 engine and ~50 transmission distinct
+  titles today — one batch classification and one review, not a grind),
+  ambiguous configurations for a human read of the page.
+- The family fetch list starts at roughly the minted 44 and grows with
+  the registry. A live probe over the pages the engine cells name found
+  every title but one real; four in five code anchors land on a
+  per-variant section, and three in five of those sections state
+  displacement. The 210 variant codes already seen on model pages are
+  the first candidates to repoint links onto.
