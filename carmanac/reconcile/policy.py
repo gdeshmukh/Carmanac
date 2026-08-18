@@ -321,6 +321,177 @@ NOT_A_GENERATION: dict[str, str] = {
     "Q1626577": "powertrain_lineage",  # Honda Civic Hybrid
 }
 
+# --- powertrain family articles (ADR 0020 amendment §2) ----------------------
+
+# Verdicts for every link target the model-page engine/transmission cells
+# name, classified in batch from the 2026-08-14 census and committed only
+# after review. Keys are titles normalized exactly as the pass normalizes
+# them: casefolded, underscores to spaces, one trailing " engine" or
+# " transmission" stripped - so "BMW B38" and "BMW B38 engine" are one key,
+# and "Toyota A" names an engine family here and a transmission family below
+# without colliding (the external-id prefix keeps the kinds apart).
+#
+# Values are the maker's company slug, or None where no single maker exists
+# in `companies` (joint ventures, suppliers we do not hold) - the family
+# then mints with no manufacturer rather than a guessed one.
+ENGINE_FAMILY_ARTICLES: dict[str, str | None] = {
+    "bmw b37": "bmw",
+    "bmw b38": "bmw",
+    "bmw b47": "bmw",
+    "bmw b48": "bmw",
+    "bmw b57": "bmw",
+    "bmw b58": "bmw",
+    "bmw m43": "bmw",
+    "bmw m44": "bmw",
+    "bmw m47": "bmw",
+    "bmw m50": "bmw",
+    "bmw m52": "bmw",
+    "bmw m54": "bmw",
+    "bmw m57": "bmw",
+    "bmw n20": "bmw",
+    "bmw n46": "bmw",
+    "bmw n47": "bmw",
+    "bmw n52": "bmw",
+    "bmw n55": "bmw",
+    "bmw n57": "bmw",
+    "bmw n63": "bmw",
+    "bmw s68": "bmw",
+    "cadillac high technology": "cadillac",
+    "chrysler hemi": "chrysler",
+    "chrysler la": "chrysler",
+    "chrysler powertech": "chrysler",
+    "chrysler slant 6": "chrysler",
+    "chrysler world": "chrysler",
+    "ferrari f154": "ferrari",
+    "ferrari f160": "ferrari",
+    "ford dld": "ford",
+    "ford ecoboost": "ford",
+    "ford sigma": "ford",
+    "gm ecotec": "general-motors",
+    "gm premium v": "general-motors",  # redirects to Northstar engine series
+    "hyundai gamma": "hyundai",
+    "hyundai kappa": "hyundai",
+    "hyundai nu": "hyundai",
+    "hyundai smartstream": "hyundai",
+    "hyundai u": "hyundai",
+    "jaguar aj-v8": "jaguar",
+    "lamborghini v12": "lamborghini",
+    "lancia flat-4": "lancia",
+    "magnum v10": "dodge",
+    "mazda b": "mazda",
+    "mazda c": "mazda",
+    "mazda diesel engines": "mazda",  # umbrella article, one family entity
+    "mazda f": "mazda",
+    "mazda k": "mazda",
+    "mazda l": "mazda",
+    "mazda z": "mazda",
+    "mercedes-benz m159": "mercedes-benz",
+    "mercedes-benz m176/m177/m178": "mercedes-benz",
+    "mercedes-benz m274": "mercedes-benz",
+    "mitsubishi 4g9": "mitsubishi-motors",
+    "nissan vr": "nissan",
+    "porsche v8 engines": "porsche",  # umbrella article, one family entity
+    "psa ew/dw": "groupe-psa",
+    "psa hdi": "groupe-psa",  # diesel brand article; leniently a family
+    "simca type 180": "simca",
+    "skyactiv": "mazda",  # brand article covering the Skyactiv engine line
+    "toyota a": "toyota",
+    "toyota ar": "toyota",
+    "toyota c": "toyota",
+    "toyota dynamic force": "toyota",
+    "toyota gd": "toyota",
+    "toyota gr": "toyota",
+    "toyota kd": "toyota",
+    "toyota l": "toyota",
+    "toyota nr": "toyota",
+    "toyota s": "toyota",
+    "toyota tr": "toyota",
+    "toyota zr": "toyota",
+    "viper": "dodge",
+    "volvo b8444s": "volvo-cars",
+    "volvo d5": "volvo-cars",
+    "volvo engine architecture": "volvo-cars",
+    "volvo modular": "volvo-cars",
+    "volvo si6": "volvo-cars",
+    "cummins b series": None,  # supplier; no companies row
+    "douvrin": None,  # PSA-Renault joint venture
+    "prv": None,  # Peugeot-Renault-Volvo joint venture
+    "rolls-royce–bentley l-series v8": None,  # shared by both marques
+}
+
+TRANSMISSION_FAMILY_ARTICLES: dict[str, str | None] = {
+    "ford mtx-75": "ford",
+    "multitronic": "audi-ag",  # Audi's CVT line; the title alone names no maker
+    "toyota a": "toyota",
+    "toyota s": "toyota",
+    "zf 8hp": None,  # supplier; no companies row
+}
+
+# The never-mint side of the same batch: targets that are real links but not
+# powertrain families. Checked before the family registries and the prefix
+# rung, so a generic title can never mint no matter whose page links it.
+# Verdict slugs are documentation and are never matched against.
+NOT_A_POWERTRAIN: dict[str, str] = {
+    "flat-4": "layout",
+    "i4": "layout",
+    "inline-four": "layout",
+    "straight-4": "layout",
+    "straight-6": "layout",
+    "straight-three": "layout",
+    "straight-four": "layout",
+    "straight-six": "layout",
+    "straight-twin": "layout",
+    "v10": "layout",
+    "v12": "layout",
+    "v6": "layout",
+    "v8": "layout",
+    "vr6": "layout",
+    "wankel": "layout",
+    "carburetor": "technology",
+    "dohc": "technology",
+    "dual vvt-i": "technology",
+    "jetronic": "technology",
+    "multiair": "technology",
+    "naturally aspirated": "technology",
+    "overhead valve": "technology",
+    "pressure wave supercharger": "technology",
+    "quad-turbo": "technology",
+    "stratified charge": "technology",
+    "supercharged": "technology",
+    "turbocharger": "technology",
+    "turbodiesel": "technology",
+    "twin turbo": "technology",
+    "twin-turbo": "technology",
+    "twin-turbocharged": "technology",
+    "variable displacement": "technology",
+    "variable geometry turbocharger": "technology",
+    "variable-geometry turbocharger": "technology",
+    "vvt-i": "technology",
+    "automatic": "technology",
+    "continuously variable": "technology",
+    "dual clutch": "technology",
+    "dual-clutch": "technology",
+    "manual": "technology",
+    "semi-automatic": "technology",
+    "diesel": "fuel",
+    "petrol": "fuel",
+    "flexible-fuel vehicle": "vehicle_class",
+    "hybrid electric vehicle": "vehicle_class",
+    "list of psa engines": "list_page",
+    "list of vm motori engines": "list_page",
+    "list of volkswagen group diesel engines": "list_page",
+    "list of volkswagen group petrol engines": "list_page",
+    "all-wheel drive": "drivetrain",
+    "front-wheel drive": "drivetrain",
+    "quattro (four wheel drive system)": "drivetrain",
+    "rear-wheel drive": "drivetrain",
+    "aisin warner": "company_not_family",
+    "volkswagen": "company_not_family",
+    "north america": "place",
+    "cubic centimeter": "unit",
+    "getrag powershift 6dct450": "dead_link",  # title no longer exists
+}
+
 # --- admission (ADR 0007 §3) ------------------------------------------------
 
 # The classes the fetch targets. Any of these also asserts the `manufacturer`
