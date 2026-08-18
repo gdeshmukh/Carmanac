@@ -57,7 +57,17 @@ def company_page(session: Session, company_slug: str) -> dict[str, Any] | None:
         "SELECT * FROM v_model_coverage WHERE company_slug = :slug ORDER BY model_name",
         slug=company_slug,
     )
-    return {"company": company, "models": models}
+    # The coverage view counts cars; it does not say who the company is. Most
+    # companies have no cars and never will from the sources we hold, so their
+    # own facts are the whole page rather than a header above a table.
+    facts = _row(
+        session,
+        """SELECT c.founded_year, c.defunct_year, c.website, c.summary, co.name AS country
+           FROM companies c LEFT JOIN countries co ON co.id = c.country_id
+           WHERE c.slug = :slug""",
+        slug=company_slug,
+    )
+    return {"company": company, "models": models, "facts": facts}
 
 
 def generations_page(session: Session, company_slug: str) -> dict[str, Any] | None:
