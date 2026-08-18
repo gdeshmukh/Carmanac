@@ -46,6 +46,14 @@ PASSENGER_VEHICLE_TYPES: tuple[str, ...] = (
     "multipurpose passenger vehicle (mpv)",
 )
 
+# The MODEL scope is wider than the MAKE scope, and deliberately so. vPIC's
+# "truck" type spans a Tacoma and a Peterbilt alike - it carries no weight
+# class - so fetching it for every make would admit haulage and bus builders
+# the charter excludes. Fetched per already-landed make it cannot: the makes
+# are car/mpv registrants, and the class-3 line is drawn in reconciliation,
+# where the models pass has EPA's light-duty ratings to draw it with.
+MODEL_VEHICLE_TYPES: tuple[str, ...] = (*PASSENGER_VEHICLE_TYPES, "truck")
+
 
 def _merge_makes(
     per_type: dict[str, list[dict[str, Any]]],

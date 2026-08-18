@@ -1,10 +1,16 @@
-"""Land vPIC passenger-vehicle MODELS in `raw_scrape.raw_records`.
+"""Land vPIC vehicle MODELS in `raw_scrape.raw_records`.
 
 The first model-level data in the project - the cars themselves, at nameplate
 granularity. For every landed vPIC make, `GetModelsForMakeIdYear/makeId/{id}/
-vehicletype/{car|mpv}` returns that make's models of that type; the union is
-the make's passenger nameplates (same two-type scope as the makes fetch,
-measured on Honda 2026-07-29: 14 car + 10 MPV -> 21 distinct, Accord in both).
+vehicletype/{car|mpv|truck}` returns that make's models of that type; the
+union is the make's nameplates (measured on Honda 2026-07-29: 14 car + 10 MPV
+-> 21 distinct, Accord in both).
+
+The truck type is fetched but NOT admitted wholesale. vPIC files a Tacoma and
+a class-8 tractor under the one name, so the type earns nothing on its own -
+Ford returns 114 truck models, of which 93 are haulage rigs, bus chassis and
+motorhome frames. Which of them are cars is a reconciliation question, and
+the models pass answers it against EPA's light-duty scope.
 
 **All 247 landed makes are fetched, not just the 134 matched ones.** Landing
 is generous by design (raw is cheap, Tier 1 is a re-fetchable cache), and
@@ -36,7 +42,7 @@ from carmanac.ingest.landing import (
     upsert_raw_records,
 )
 from carmanac.ingest.vpic.client import VpicClient
-from carmanac.ingest.vpic.land import PASSENGER_VEHICLE_TYPES, VPIC_SOURCE_NAME
+from carmanac.ingest.vpic.land import MODEL_VEHICLE_TYPES, VPIC_SOURCE_NAME
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +107,7 @@ def land_passenger_models(session: Session, client: VpicClient | None = None) ->
     rows: list[dict[str, Any]] = []
     try:
         for i, make_id in enumerate(make_ids, 1):
-            for vt in PASSENGER_VEHICLE_TYPES:
+            for vt in MODEL_VEHICLE_TYPES:
                 rows.extend(
                     client.get_results(f"GetModelsForMakeIdYear/makeId/{make_id}/vehicletype/{vt}")
                 )
