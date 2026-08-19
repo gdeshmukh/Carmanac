@@ -2,8 +2,15 @@
 {% block title %}{{ company.company_name }} — Carmanac{% endblock %}
 {% block content %}
 <h1>{{ company.company_name }}</h1>
-<p class="sub">{{ company.models }} models &middot; {{ company.configurations }} configurations
-  &middot; {{ company.placed }} placed</p>
+{% if facts and facts.summary %}<p class="summary">{{ facts.summary }}</p>{% endif %}
+<p class="sub">
+  {%- if facts and facts.country %}{{ facts.country }} &middot; {% endif -%}
+  {%- if facts and facts.defunct_year %}{{ facts.founded_year or '?' }}–{{ facts.defunct_year }} &middot;
+  {% elif facts and facts.founded_year %}founded {{ facts.founded_year }} &middot; {% endif -%}
+  {{ company.models }} models &middot; {{ company.configurations }} configurations
+  &middot; {{ company.placed }} placed
+  {%- if facts and facts.website %} &middot; <a href="{{ facts.website }}" rel="external nofollow">site</a>{% endif -%}
+</p>
 
 <h2>Models</h2>
 {% if models %}
@@ -20,7 +27,13 @@
   {% endfor %}
 </table>
 {% else %}
-<p class="null">No models on record.</p>
+{# An empty catalogue is a fact about our sources, not about the company. Say
+   which, or the page reads as a claim that the marque built nothing. #}
+<p class="null">No source we hold files cars for this company.</p>
+<p class="sub">Every model on Carmanac today comes from the United States
+  vehicle registry and its fuel-economy ratings. Marques that never sold there,
+  and those that ended before those records begin, have a company page and no
+  catalogue yet.</p>
 {% endif %}
 
 <h2>Generations</h2>

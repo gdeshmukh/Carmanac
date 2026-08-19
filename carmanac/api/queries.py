@@ -31,17 +31,31 @@ def _row(session: Session, sql: str, **params: Any) -> RowMapping | None:
 def root_index(session: Session) -> dict[str, Any]:
     totals = _row(
         session,
-        """SELECT count(*) FILTER (WHERE configurations > 0) AS companies_with_cars,
-                  coalesce(sum(configurations), 0) AS configurations,
-                  coalesce(sum(placed), 0) AS placed
+        """SELECT count(*) FILTER (WHERE models > 0) AS companies,
+                  coalesce(sum(configurations), 0) AS configurations
            FROM v_company_coverage""",
     )
     companies = _rows(
         session,
-        """SELECT company_slug, company_name, models, models_with_cars, configurations, placed
-           FROM v_company_coverage
-           WHERE models > 0
-           ORDER BY company_name""",
+        """SELECT coverage.company_slug, coverage.company_name, coverage.configurations,
+                  logo.url AS logo_url
+           FROM v_company_coverage coverage
+           LEFT JOIN (
+               SELECT DISTINCT ON (attachment.company_id)
+                      attachment.company_id,
+                      coalesce(asset.storage_url, asset.rendition_url) AS url
+               FROM media_attachments attachment
+               JOIN media_assets asset
+                 ON asset.id = attachment.media_asset_id
+                AND asset.superseded_by IS NULL
+               JOIN sources source ON source.id = attachment.source_id
+               WHERE attachment.role = 'company_logo'
+                 AND attachment.superseded_by IS NULL
+               ORDER BY attachment.company_id, source.tier,
+                        attachment.scraped_at DESC, attachment.id DESC
+           ) logo ON logo.company_id = coverage.company_id
+           WHERE coverage.models > 0
+           ORDER BY coverage.configurations DESC, coverage.company_name""",
     )
     return {"totals": totals, "companies": companies}
 
@@ -57,7 +71,17 @@ def company_page(session: Session, company_slug: str) -> dict[str, Any] | None:
         "SELECT * FROM v_model_coverage WHERE company_slug = :slug ORDER BY model_name",
         slug=company_slug,
     )
-    return {"company": company, "models": models}
+    # The coverage view counts cars; it does not say who the company is. Most
+    # companies have no cars and never will from the sources we hold, so their
+    # own facts are the whole page rather than a header above a table.
+    facts = _row(
+        session,
+        """SELECT c.founded_year, c.defunct_year, c.website, c.summary, co.name AS country
+           FROM companies c LEFT JOIN countries co ON co.id = c.country_id
+           WHERE c.slug = :slug""",
+        slug=company_slug,
+    )
+    return {"company": company, "models": models, "facts": facts}
 
 
 def generations_page(session: Session, company_slug: str) -> dict[str, Any] | None:

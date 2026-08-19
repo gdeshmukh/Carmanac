@@ -165,9 +165,10 @@ Core tables (Phase 1 target):
   derived side records catalogue placement (own entry under the builder vs.
   stays under the base make), never legal status — that lives in
   `company_role_assignments`.
-- `media_assets`, `media_attachments` — images and documents (owner's manuals,
-  brochures), with licence and attribution. Attached to any entity via an
-  exclusive arc.
+- `media_assets`, `media_attachments` — versioned media observations and the
+  per-source claims that attach them to an entity in a specific role. Both carry
+  exact raw-record provenance and same-source supersession; licences,
+  attribution and reuse notices stay with the asset (ADR 0021).
 - `sources` — every data source (URL, tier, scraped_at). Referenced by every
   fact.
 - `configuration_attributes` — EAV for long-tail specs.

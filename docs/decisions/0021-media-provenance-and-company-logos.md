@@ -1,0 +1,90 @@
+# ADR 0021 — Media provenance and company logos
+
+- Status: Accepted
+- Date: 2026-08-19
+- Depends on: ADR 0002 (provenance attaches to facts), ADR 0003 (raw records and
+  external IDs), ADR 0007 §8 (per-source assertion stores)
+
+## Context
+
+The schema reserved `media_assets` and `media_attachments` before any media was
+ingested. It held file locations and optional reuse metadata but stopped halfway
+through the project's later provenance design: an asset carried a source and raw
+record, while the attachment did not. The important statement — “this file is
+this company's logo” — therefore had no source, no exact scrape and no
+same-source history.
+
+The first real use is a company logo. Wikidata exposes logo image statements as
+P154 values pointing to Wikimedia Commons files. Matching those files to
+companies by label, tag, filename or slug would reopen an identity problem the
+database has already solved: every displayed company already has one or more
+Wikidata QIDs in `external_ids`.
+
+P154 is also not guaranteed to be singular. A company may have historical and
+current marks, color variants or several live statements. A fetch order is not
+a selection rule.
+
+## Decision
+
+1. **The asset and its attachment are separate facts.** `media_assets` records
+   one source's observation of a file, its display rendition, technical metadata
+   and any supplied reuse terms. `media_attachments` records one source's
+   assertion that the asset serves a role on exactly one entity. Both carry `source_id`,
+   `raw_record_id`, `scraped_at` and `confidence_score`, and both retain
+   same-source history through `superseded_by`.
+   Deleting an asset is restricted while any attachment fact references it;
+   supersession, not cascading deletion, is the normal lifecycle.
+
+2. **The first role is `company_logo`, not `logo`.** It is valid only on the
+   company arc. A future model logo will require an explicit `model_logo` role
+   and its own constraint; it will not inherit company-logo behavior by accident.
+
+3. **Company correspondence is QID-exact.** The fetch population is the
+   Wikidata QIDs already attached through `external_ids` to companies that hold
+   models. P154 statements return Commons filenames. No company name, media tag,
+   filename or public slug participates in the match. Curated identity-merge
+   members still land, and the canonical QID contributes by default. A
+   role-specific `COMPANY_LOGO_SOURCE_QIDS` registry may point that company to
+   another already-attached Wikidata QID when the legal entity carries a group
+   wordmark instead of the marque mark, or the marque omits P154. This changes
+   only `company_logo`; it does not merge identities or relax QID matching.
+
+4. **The two source claims stay distinct.** Wikidata is the source for the
+   company-to-file attachment. Wikimedia Commons is the source for the file,
+   rendition URL, dimensions, content hash, licence and attribution. Each gets
+   its own raw record. The attachment points to the Wikidata record; the asset
+   points to the Commons record.
+
+5. **One mechanically selected file attaches.** Deprecated and point-in-time
+   statements are ineligible. A currently valid statement wins; preferred rank
+   wins over normal rank among current statements. If none is current, the file
+   with the most recent past end date is the fallback, with rank breaking only
+   same-date ties. Exactly one technically displayable Commons file attaches;
+   several winners open a `multi_value` flag on `company_logo`. Reviewed ties
+   are recorded by exact QID and Commons filename in `COMPANY_LOGO_FILES`; an
+   entry applies only while that file remains one of the mechanically selected
+   candidates. No winner leaves the company without a logo. Licence,
+   attribution and reuse metadata are retained when Commons supplies them, but
+   missing rights fields do not block collection or attachment. A later
+   publication policy can use those fields without changing the fact model.
+   The pass never chooses by response order.
+
+6. **Source-hosted renditions are the first storage mode.** `rendition_url`
+   records the Commons thumbnail used for display and `source_url` records its
+   description page. `storage_url` remains nullable for a future owned copy.
+   File bytes do not enter Postgres. Public deployment may add durable object
+   storage without changing the provenance or attachment model.
+
+## Consequences
+
+- Media now follows the same entity/fact and per-source supersession rules as
+  the rest of the database before the first media row lands.
+- A changed P154 statement retires the prior Wikidata attachment; a corrected
+  Commons description retires the prior asset observation. History remains
+  queryable from both.
+- Missing or ambiguous logos remain visible data gaps. The frontend must not
+  manufacture a mark or silently substitute a Wikipedia-local non-free file.
+- Missing rights metadata remains an explicit NULL rather than an ingestion
+  failure or a database constraint.
+- The homepage reads live `company_logo` attachments and remains a thin company
+  inventory. Its layout is outside this decision.
