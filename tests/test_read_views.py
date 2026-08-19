@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select, text
 
+from carmanac.api.queries import root_index
 from carmanac.db.models import (
     CataloguePeriod,
     Company,
@@ -96,3 +97,19 @@ def test_model_coverage_separates_filled_from_empty(db, seeded):
 def test_company_coverage_counts_models_with_cars(db, seeded):
     row = db.execute(text("SELECT * FROM v_company_coverage WHERE company_slug = 'bmw'")).one()
     assert (row.models, row.models_with_cars, row.configurations, row.placed) == (2, 1, 2, 1)
+
+
+def test_root_inventory_orders_companies_by_configuration_count(db, seeded):
+    company = Company(slug="aardvark", name="Aardvark")
+    db.add(company)
+    db.flush()
+    db.add(Model(company_id=company.id, slug="one", name="One"))
+    db.flush()
+
+    context = root_index(db)
+
+    assert context["totals"]["companies"] == 2
+    assert [(row["company_slug"], row["configurations"]) for row in context["companies"]] == [
+        ("bmw", 2),
+        ("aardvark", 0),
+    ]

@@ -1,21 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Carmanac</h1>
-<p class="sub">{{ totals.companies_with_cars }} companies with cars &middot;
-  {{ totals.configurations }} configurations &middot; {{ totals.placed }} placed in a generation</p>
+<p class="sub">{{ totals.companies }} companies &middot; {{ totals.configurations }} configurations</p>
 
-<h2>Companies</h2>
-<p class="sub">{{ companies | length }} companies with filed models.</p>
-<table>
-  <tr><th>Company</th><th>Models</th><th>With cars</th><th>Cars</th><th>Placed</th></tr>
+<ul class="companies">
   {% for c in companies %}
-  <tr>
-    <td><a href="/{{ c.company_slug }}">{{ c.company_name }}</a></td>
-    <td>{{ c.models }}</td>
-    <td>{{ c.models_with_cars }}</td>
-    <td>{{ c.configurations }}</td>
-    <td>{{ c.placed }}</td>
-  </tr>
+  <li>
+    <a class="company" href="/{{ c.company_slug }}">
+      <span class="company-logo" aria-hidden="true">
+        {% if c.logo_url %}<img src="{{ c.logo_url }}" alt="" loading="lazy" decoding="async">{% endif %}
+      </span>
+      <span class="company-name">{{ c.company_name }}</span>
+      <span class="company-count">{{ c.configurations }} configuration{% if c.configurations != 1 %}s{% endif %}</span>
+    </a>
+  </li>
   {% endfor %}
-</table>
+</ul>
 {% endblock %}
