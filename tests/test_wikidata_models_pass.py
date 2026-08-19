@@ -778,8 +778,11 @@ def test_company_mapped_qid_waits(db, wikidata_source, vpic_source):  # noqa: F8
 
 
 def test_mint_creates_nameplates_under_registry_company(
-    db, wikidata_source, vpic_source, monkeypatch
-):  # noqa: F811
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
     """Under a registry company, entities that fell through every rung mint
     nameplate rows: name is the prefix-stripped label, asserted with
     provenance, the QID attaches, and a re-run refreshes instead of
@@ -817,8 +820,11 @@ def test_mint_creates_nameplates_under_registry_company(
 
 
 def test_mint_label_twins_flag_as_a_group_and_none_mints(
-    db, wikidata_source, vpic_source, monkeypatch
-):  # noqa: F811
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
     """Two different-era cars sharing a nameplate label: minting either would
     enthrone an arbitrary era at the plain address, so the whole group flags
     and waits for one naming ruling - never first-wins, never a suffix."""
@@ -889,8 +895,11 @@ def test_mint_occupied_slug_flags_instead_of_minting(db, wikidata_source, vpic_s
 
 
 def test_mint_strips_the_marque_word_of_a_longer_company_name(
-    db, wikidata_source, vpic_source, monkeypatch
-):  # noqa: F811
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
     """'Škoda 100' under the company filed as 'Škoda Auto': the recorded-name
     strip cannot fire, the shared-token fallback cuts the marque word."""
     skoda = _matched_make(db, wikidata_source, vpic_source, "Q29637", "Škoda Auto", 903)
@@ -925,8 +934,11 @@ def test_mint_era_siblings_contest_as_one_group(db, wikidata_source, vpic_source
 
 
 def test_mint_paren_sibling_of_an_existing_model_contests(
-    db, wikidata_source, vpic_source, monkeypatch
-):  # noqa: F811
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
     """'A110 (2017)' beside a HELD A110 is the same question as beside a
     candidate one - the era-stripped base is occupied, so it flags."""
     alpine = _matched_make(db, wikidata_source, vpic_source, "Q26944", "Alpine", 905)
