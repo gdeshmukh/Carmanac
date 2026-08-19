@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from carmanac.api.queries import root_index
 from carmanac.db.models import (
     Company,
     ExternalId,
@@ -186,6 +187,16 @@ def test_unique_logo_attaches_with_both_provenances(db, wikidata_source, logo_gr
     assert asset.rights_notice == "trademarked"
 
 
+def test_root_inventory_reads_the_live_company_logo(db, wikidata_source, logo_graph):
+    _land(db, [_binding("Q100", "Example.svg")], {"Example.svg": _page("Example.svg")})
+    run_company_logos_pass(db, as_of=date(2026, 8, 19))
+
+    company = root_index(db)["companies"][0]
+
+    assert company["company_slug"] == "example"
+    assert company["logo_url"] == "https://upload.wikimedia.org/thumb/Example.svg.png"
+
+
 def test_company_match_is_qid_exact_even_when_names_are_equal(db, wikidata_source, logo_graph):
     company, _ = logo_graph
     namesake = Company(name=company.name, slug="example-namesake")
@@ -267,17 +278,18 @@ def test_multiple_current_files_flag_instead_of_using_response_order(
     ]
 
 
-def test_unlicensed_file_does_not_become_a_media_asset(db, logo_graph):
+def test_missing_rights_metadata_does_not_block_a_logo(db, logo_graph):
     _land(
         db,
         [_binding("Q100", "Unknown.svg")],
-        {"Unknown.svg": _page("Unknown.svg", license_name=None)},
+        {"Unknown.svg": _page("Unknown.svg", license_name=None, artist=None)},
     )
     stats = run_company_logos_pass(db, as_of=date(2026, 8, 19))
 
-    assert stats.waits_metadata == 1
-    assert db.scalars(select(MediaAsset)).all() == []
-    assert db.scalars(select(MediaAttachment)).all() == []
+    assert (stats.assets_created, stats.attachments_created, stats.waits_metadata) == (1, 1, 0)
+    asset = db.scalars(select(MediaAsset)).one()
+    assert asset.license is None
+    assert asset.attribution is None
 
 
 def test_changed_commons_file_supersedes_asset_and_attachment(db, logo_graph):

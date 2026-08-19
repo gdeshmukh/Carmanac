@@ -67,7 +67,7 @@ class MediaAsset(Base, ProvenanceMixin):
     title: Mapped[str | None] = mapped_column(Text)
     caption: Mapped[str | None] = mapped_column(Text)
 
-    # --- licensing: required before anything may be displayed ---
+    # Reuse metadata is preserved when supplied; collection is not a rights-policy gate.
     license: Mapped[str | None] = mapped_column(Text)  # 'CC-BY-SA-4.0', 'public domain', ...
     license_url: Mapped[str | None] = mapped_column(Text)
     attribution: Mapped[str | None] = mapped_column(Text)  # credit line to display

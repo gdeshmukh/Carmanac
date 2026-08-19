@@ -8,11 +8,11 @@
 ## Context
 
 The schema reserved `media_assets` and `media_attachments` before any media was
-ingested. It got the licensing requirement right but stopped halfway through the
-project's later provenance design: an asset carried a source and raw record,
-while the attachment did not. The important statement — “this file is this
-company's logo” — therefore had no source, no exact scrape and no same-source
-history.
+ingested. It held file locations and optional reuse metadata but stopped halfway
+through the project's later provenance design: an asset carried a source and raw
+record, while the attachment did not. The important statement — “this file is
+this company's logo” — therefore had no source, no exact scrape and no
+same-source history.
 
 The first real use is a company logo. Wikidata exposes logo image statements as
 P154 values pointing to Wikimedia Commons files. Matching those files to
@@ -28,8 +28,8 @@ a selection rule.
 
 1. **The asset and its attachment are separate facts.** `media_assets` records
    one source's observation of a file, its display rendition, technical metadata
-   and reuse terms. `media_attachments` records one source's assertion that the
-   asset serves a role on exactly one entity. Both carry `source_id`,
+   and any supplied reuse terms. `media_attachments` records one source's
+   assertion that the asset serves a role on exactly one entity. Both carry `source_id`,
    `raw_record_id`, `scraped_at` and `confidence_score`, and both retain
    same-source history through `superseded_by`.
    Deleting an asset is restricted while any attachment fact references it;
@@ -54,10 +54,13 @@ a selection rule.
 
 5. **Only one mechanically current file attaches.** Deprecated statements and
    statements whose qualified time span has ended are ineligible. Preferred
-   rank wins over normal rank for the canonical QID. Exactly one licensed
-   Commons file attaches; several open a `multi_value` flag on `company_logo`;
-   none leave the company without a logo. The pass never chooses by response
-   order.
+   rank wins over normal rank for the canonical QID. Exactly one technically
+   displayable Commons file attaches; several open a `multi_value` flag on
+   `company_logo`; none leave the company without a logo. Licence, attribution
+   and reuse metadata are retained when Commons supplies them, but missing rights
+   fields do not block collection or attachment. A later publication policy can
+   use those fields without changing the fact model. The pass never chooses by
+   response order.
 
 6. **Source-hosted renditions are the first storage mode.** `rendition_url`
    records the Commons thumbnail used for display and `source_url` records its
@@ -74,5 +77,7 @@ a selection rule.
   queryable from both.
 - Missing or ambiguous logos remain visible data gaps. The frontend must not
   manufacture a mark or silently substitute a Wikipedia-local non-free file.
-- The homepage can later read live `company_logo` attachments and remain a thin
-  company inventory. Its layout is outside this decision.
+- Missing rights metadata remains an explicit NULL rather than an ingestion
+  failure or a database constraint.
+- The homepage reads live `company_logo` attachments and remains a thin company
+  inventory. Its layout is outside this decision.

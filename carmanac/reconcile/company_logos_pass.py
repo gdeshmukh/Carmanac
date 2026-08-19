@@ -1,4 +1,4 @@
-"""Attach licensed Commons files as QID-exact company logos (ADR 0021)."""
+"""Attach Commons files as QID-exact company logos (ADR 0021)."""
 
 from __future__ import annotations
 
@@ -146,14 +146,10 @@ def _asset_values(record: RawRecord, source_id: int) -> dict[str, Any] | None:
         or _metadata_value(metadata, "Artist")
         or _metadata_value(metadata, "Credit")
     )
-    attribution_required = (_metadata_value(metadata, "AttributionRequired") or "").casefold()
-    if not attribution and attribution_required not in {"true", "1", "yes"}:
-        attribution = f"{page.get('title', 'File')} via Wikimedia Commons"
-
     source_url = imageinfo.get("descriptionurl")
     rendition_url = imageinfo.get("thumburl") or imageinfo.get("url")
     file_hash = imageinfo.get("sha1")
-    if not all((license_name, attribution, source_url, rendition_url, file_hash)):
+    if not all((source_url, rendition_url, file_hash)):
         return None
 
     return {
@@ -205,7 +201,7 @@ def _retire_attachment(
 
 
 def run_company_logos_pass(session: Session, as_of: date | None = None) -> CompanyLogoStats:
-    """Project current P154 claims into licensed `company_logo` attachments."""
+    """Project current P154 claims into `company_logo` attachments."""
     as_of = as_of or datetime.now(UTC).date()
     wikidata = get_source(session, WIKIDATA_SOURCE_NAME)
     commons = get_source(session, COMMONS_SOURCE_NAME)
