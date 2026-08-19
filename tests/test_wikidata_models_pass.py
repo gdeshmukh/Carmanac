@@ -886,3 +886,59 @@ def test_mint_occupied_slug_flags_instead_of_minting(db, wikidata_source, vpic_s
     assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 1
     assert _decision(db, "Q1300").outcome == "flagged_mint_occupied"
     assert _decision(db, "Q1300").detail["model"] == "citroen/mehari"
+
+
+def test_mint_strips_the_marque_word_of_a_longer_company_name(
+    db, wikidata_source, vpic_source, monkeypatch
+):  # noqa: F811
+    """'Škoda 100' under the company filed as 'Škoda Auto': the recorded-name
+    strip cannot fire, the shared-token fallback cuts the marque word."""
+    skoda = _matched_make(db, wikidata_source, vpic_source, "Q29637", "Škoda Auto", 903)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q29637", "skoda-auto")
+
+    _land_sweep(db, wikidata_source, "Q1400", "Škoda 100", makers=["Q29637"])
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.models_minted == 1
+    model = db.scalars(select(Model).where(Model.company_id == skoda.id)).one()
+    assert (model.name, model.slug) == ("100", "100")
+
+
+def test_mint_era_siblings_contest_as_one_group(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """A nameplate and its roman- or parenthetical-dressed siblings are one
+    naming ruling: Wikidata files generations as sibling model entities, and
+    minting them flat would put three Dokkers beside each other."""
+    dacia = _matched_make(db, wikidata_source, vpic_source, "Q27460", "Dacia", 904)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q27460", "dacia")
+
+    _land_sweep(db, wikidata_source, "Q1500", "Dacia Dokker", makers=["Q27460"])
+    _land_sweep(db, wikidata_source, "Q1501", "Dacia Dokker I", makers=["Q27460"])
+    _land_sweep(db, wikidata_source, "Q1502", "Dacia Dokker II", makers=["Q27460"])
+    _land_sweep(db, wikidata_source, "Q1503", "Dacia Bigster", makers=["Q27460"])
+
+    stats = run_wikidata_models_pass(db)
+    assert (stats.models_minted, stats.mint_contested) == (1, 3)
+    model = db.scalars(select(Model).where(Model.company_id == dacia.id)).one()
+    assert model.name == "Bigster"
+    assert _decision(db, "Q1500").outcome == "flagged_mint_twins"
+    assert _decision(db, "Q1500").detail["twins"] == ["Q1500", "Q1501", "Q1502"]
+
+
+def test_mint_paren_sibling_of_an_existing_model_contests(
+    db, wikidata_source, vpic_source, monkeypatch
+):  # noqa: F811
+    """'A110 (2017)' beside a HELD A110 is the same question as beside a
+    candidate one - the era-stripped base is occupied, so it flags."""
+    alpine = _matched_make(db, wikidata_source, vpic_source, "Q26944", "Alpine", 905)
+    _land_model(db, vpic_source, 88, "A110", 905, "ALPINE")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q26944", "alpine")
+
+    _land_sweep(db, wikidata_source, "Q1600", "Alpine A110 (2017)", makers=["Q26944"])
+
+    stats = run_wikidata_models_pass(db)
+    assert (stats.models_minted, stats.mint_contested) == (0, 1)
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == alpine.id)) == 1
+    assert _decision(db, "Q1600").outcome == "flagged_mint_twins"

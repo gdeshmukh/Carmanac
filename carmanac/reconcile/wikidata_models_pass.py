@@ -101,6 +101,13 @@ log = logging.getLogger(__name__)
 PASS_NAME = "wikidata_models"
 
 _BARE_QID = re.compile(r"Q\d+")
+# The era-sibling shapes: a trailing roman numeral ("Dokker II") or a trailing
+# parenthetical ("A110 (2017)") on an otherwise-shared nameplate. Wikidata
+# files a nameplate and its generations as sibling model entities in exactly
+# this dress, and level is never decided by label - so the whole family is
+# one naming ruling, like exact label twins.
+_TRAILING_ROMAN = re.compile(r"\s+(?:X{0,1}(?:IX|IV|V?I{0,3}))$")
+_TRAILING_PAREN = re.compile(r"\s*\([^)]*\)$")
 _MINT_EXCLUDE = re.compile(
     r"\b(?:" + "|".join(re.escape(w) for w in policy.WIKIDATA_MINT_EXCLUDE) + r")\b",
     re.IGNORECASE,
@@ -1297,10 +1304,36 @@ class _WikidataModelsPass:
             b, m = self.company_norm[brand], self.company_norm[company_id]
             if not (b.startswith(m) or m.startswith(b)):
                 return None
-        name = self._strip(label, company_id)
+        name = self._mint_name(label, company_id)
         if normalize_name(name) == self.company_norm[company_id]:
             return None
         return company_id, name, slugify(name)
+
+    def _mint_name(self, label: str, company_id: int) -> str:
+        """The minted model's name: the label with the marque stripped.
+
+        `_strip` handles the recorded-name cases ("Citroën 2CV" under
+        "Citroën"). It cannot handle a company whose FILED name carries a
+        legal tail the badge does not - "Škoda 100" never starts with
+        "Škoda Auto" - so the fallback cuts the longest run of whole tokens
+        the label and the company name share ("Škoda", "Aston Martin"),
+        provided a remainder survives. Mint-only: rung 3 matching keeps
+        `_strip` untouched, because widening what MATCHES is a different
+        decision from widening what a new row is CALLED.
+        """
+        name = self._strip(label, company_id)
+        if name != label:
+            return name
+        company_tokens = [normalize_name(t) for t in self.companies[company_id].name.split()]
+        label_tokens = label.split()
+        shared = 0
+        for lt, ct in zip(label_tokens, company_tokens, strict=False):
+            if normalize_name(lt) != ct:
+                break
+            shared += 1
+        if 0 < shared < len(label_tokens):
+            return " ".join(label_tokens[shared:])
+        return name
 
     def _mint_phase(self) -> None:
         """Mint the collected candidates, contested slugs held as a group.
@@ -1311,15 +1344,31 @@ class _WikidataModelsPass:
         address. Unlike the vPIC collision rule (§2.3: lower filing keeps the
         slug), NO twin mints - which of them deserves the plain name, and
         what the others should be called, is one naming ruling per group."""
+
+        def base_slug(name: str) -> str:
+            base = _TRAILING_PAREN.sub("", name)
+            base = _TRAILING_ROMAN.sub("", base)
+            return slugify(base) or slugify(name)
+
         groups: dict[tuple[int, str], list[tuple[_Subject, int, str, str]]] = {}
         for cand in self.mint_candidates:
-            groups.setdefault((cand[1], cand[3]), []).append(cand)
+            groups.setdefault((cand[1], base_slug(cand[2])), []).append(cand)
 
-        for (company_id, slug), cands in sorted(groups.items()):
+        for (company_id, base), cands in sorted(groups.items()):
             company = self.companies[company_id]
-            if len(cands) > 1:
+            # A group is every candidate sharing an era-stripped base:
+            # exact twins ("C6"/"C6") and dressed siblings ("Dokker"/
+            # "Dokker I"/"Dokker II", "A110"/"A110 (2017)") alike. A base
+            # already worn by a held model contests a single candidate the
+            # same way - "A110 (2017)" beside a live A110 is the same
+            # question as beside a candidate one.
+            base_occupant = self.model_by_company_slug.get((company_id, base))
+            dressed_single = len(cands) == 1 and cands[0][3] != base
+            if len(cands) > 1 or (base_occupant is not None and dressed_single):
                 twins = sorted(c[0].entity.qid for c in cands)
-                for subject, _, _name, _ in cands:
+                if base_occupant is not None:
+                    twins.append(self._slug_pair(base_occupant))
+                for subject, _, _name, slug in cands:
                     self._flag(
                         subject,
                         "mint_label_twins",
@@ -1335,7 +1384,7 @@ class _WikidataModelsPass:
                 self.stats.mint_contested += len(cands)
                 continue
 
-            ((subject, _, name, _),) = cands
+            ((subject, _, name, slug),) = cands
             entity = subject.entity
             reason = nonconforming_slug(slug)
             if reason is not None:
