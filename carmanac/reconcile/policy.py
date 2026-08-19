@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "18"
+RECONCILER_VERSION = "19"
 
 # --- identity --------------------------------------------------------------
 
@@ -237,6 +237,52 @@ WIKIDATA_MODEL_MATCHES: dict[str, str] = {}
 # id) pairs; consulted before any rung-3 accept and when building flag
 # candidates. Grown by flag resolutions, like the positive registry.
 WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
+
+# --- Wikidata model fill (ADR 0012 §7) ----------------------------------------
+
+# Companies whose sweep entities may MINT `models` rows. vPIC and EPA are US
+# registries: a marque that never sold there can never earn a model row from
+# them, so its entities wait forever and its page shows an empty catalogue.
+# Listing a company here records the ruling that its waits_unmatched pool is
+# real nameplates worth holding at model grain - the census gets reviewed
+# before every addition, and the per-entity conditions in the pass (sole
+# maker, no membership evidence, no foreign-brand label, no excluded word,
+# uncontested slug) still hold each mint to account.
+#
+# Keys are company QIDs, resolved through external_ids like every maker -
+# an alias QID of a listed company gates the same. Values name the company
+# the way VPIC_MATCHES names its makes: documentation, never matched.
+WIKIDATA_MINT_COMPANIES: dict[str, str] = {
+    "Q6746": "citroen",
+    "Q29637": "skoda-auto",
+    "Q188217": "seat",
+    "Q27460": "dacia",
+    "Q26823": "abarth",
+    "Q8352675": "cupra",
+    "Q16040593": "ds-automobiles",
+    "Q26944": "alpine",
+    "Q59187": "vauxhall",
+    "Q6686": "renault",  # overlap probe: 5 as-filed US models beside ~190 EU entities
+    "Q40966": "opel",  # overlap probe: 6 as-filed models, no configurations
+    "Q35896": "lancia",  # overlap probe: 3 as-filed models
+}
+
+# Words that hold an entity out of the mint, matched on word boundaries over
+# the label and description together. Concept cars, prototypes and race-only
+# cars are an open scope question in the charter; until it is ruled they
+# wait rather than mint.
+WIKIDATA_MINT_EXCLUDE: tuple[str, ...] = (
+    "concept",
+    "prototype",
+    "race",
+    "racing",
+    "rally",
+    "rallying",
+    "formula",
+    "le mans",
+    "show car",
+    "one-off",
+)
 
 # Curated nameplate-article routings (ADR 0017 §4): QID -> our model's vPIC
 # external id, for articles whose per-generation sections

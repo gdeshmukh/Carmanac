@@ -17,7 +17,7 @@ constraints. The fixture cast mirrors the live shapes the ADR names:
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from carmanac.db.models import (
     ExternalId,
@@ -772,3 +772,117 @@ def test_company_mapped_qid_waits(db, wikidata_source, vpic_source):  # noqa: F8
     stats = run_wikidata_models_pass(db)
     assert stats.company_entities == 1
     assert _decision(db, "Q26678").outcome == "company_entity"
+
+
+# --- rung 6, mint (ADR 0012 §7) -----------------------------------------------
+
+
+def test_mint_creates_nameplates_under_registry_company(
+    db, wikidata_source, vpic_source, monkeypatch
+):  # noqa: F811
+    """Under a registry company, entities that fell through every rung mint
+    nameplate rows: name is the prefix-stripped label, asserted with
+    provenance, the QID attaches, and a re-run refreshes instead of
+    re-minting."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(
+        db, wikidata_source, "Q1000", "Citroën 2CV", description="economy car", makers=["Q6746"]
+    )
+    _land_sweep(db, wikidata_source, "Q1001", "Citroën BX", makers=["Q6746"])
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.models_minted == 2 and stats.mint_contested == 0
+
+    models = {m.slug: m for m in db.scalars(select(Model).where(Model.company_id == citroen.id))}
+    assert set(models) == {"2cv", "bx"}
+    assert models["2cv"].name == "2CV" and models["2cv"].summary == "economy car"
+    assert db.scalars(
+        select(ExternalId).where(
+            ExternalId.model_id == models["2cv"].id, ExternalId.external_id == "Q1000"
+        )
+    ).one()
+    assert db.scalars(
+        select(FieldProvenance).where(
+            FieldProvenance.model_id == models["2cv"].id,
+            FieldProvenance.field_name == "name",
+        )
+    ).one()
+    assert _decision(db, "Q1000").outcome == "model_minted"
+
+    rerun = run_wikidata_models_pass(db)
+    assert rerun.models_minted == 0 and rerun.models_refreshed == 2
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 2
+
+
+def test_mint_label_twins_flag_as_a_group_and_none_mints(
+    db, wikidata_source, vpic_source, monkeypatch
+):  # noqa: F811
+    """Two different-era cars sharing a nameplate label: minting either would
+    enthrone an arbitrary era at the plain address, so the whole group flags
+    and waits for one naming ruling - never first-wins, never a suffix."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(
+        db, wikidata_source, "Q1100", "Citroën C6", description="1929 saloon", makers=["Q6746"]
+    )
+    _land_sweep(
+        db, wikidata_source, "Q1101", "Citroën C6", description="executive car", makers=["Q6746"]
+    )
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.models_minted == 0 and stats.mint_contested == 2
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 0
+    flags = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).all()
+    twin_flags = [f for f in flags if f.detail.get("reason") == "mint_label_twins"]
+    assert len(twin_flags) == 2
+    assert twin_flags[0].detail["twins"] == ["Q1100", "Q1101"]
+    assert _decision(db, "Q1100").outcome == "flagged_mint_twins"
+
+
+def test_mint_conditions_hold_entities_out(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """The under-admission gates: a label wearing another held marque, an
+    excluded word, and membership evidence each keep an entity waiting."""
+    abarth = _matched_make(db, wikidata_source, vpic_source, "Q26823", "Abarth", 901)
+    _matched_make(db, wikidata_source, vpic_source, "Q27597", "Fiat", 902)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q26823", "abarth")
+
+    _land_sweep(db, wikidata_source, "Q1200", "Fiat 850", makers=["Q26823"])
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1201",
+        "Abarth 2000",
+        description="sports prototype",
+        makers=["Q26823"],
+    )
+    _land_sweep(db, wikidata_source, "Q1202", "Abarth 500", makers=["Q26823"], series_of=["Q77777"])
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.models_minted == 0 and stats.mint_contested == 0
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == abarth.id)) == 0
+    assert stats.waits_unmatched == 3
+
+
+def test_mint_occupied_slug_flags_instead_of_minting(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """The accent-divergence collision: vPIC files 'Mehari', the label says
+    'Méhari' - different normalized names (no rung-3 match), one slug. The
+    entity flags with the occupant as candidate; a human rules match or twin."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    _land_model(db, vpic_source, 77, "Mehari", 900, "CITROËN")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(db, wikidata_source, "Q1300", "Citroën Méhari", makers=["Q6746"])
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.models_minted == 0 and stats.mint_contested == 1
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 1
+    assert _decision(db, "Q1300").outcome == "flagged_mint_occupied"
+    assert _decision(db, "Q1300").detail["model"] == "citroen/mehari"
