@@ -1,6 +1,6 @@
 """The four-level entity hierarchy - the spine of the schema.
 
-    companies -> models -> catalogue_periods -> configurations
+companies -> models -> catalogue_periods -> configurations
 
 """
 

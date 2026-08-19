@@ -427,7 +427,9 @@ def test_car_typed_filing_needs_no_epa_evidence(db, wikidata_source, vpic_source
     """The gate reaches truck-ONLY filings. Anything vPIC also types as a car
     or an MPV is self-evidencing and must not start depending on EPA."""
     _matched_make(db, wikidata_source, vpic_source, "Q35996", "Mazda", 473)
-    _land_model(db, vpic_source, 2300, "CX-9", 473, "MAZDA", ["Multipurpose Passenger Vehicle (MPV)"])
+    _land_model(
+        db, vpic_source, 2300, "CX-9", 473, "MAZDA", ["Multipurpose Passenger Vehicle (MPV)"]
+    )
     _land_model(db, vpic_source, 2301, "B-Series", 473, "MAZDA", ["Passenger Car", "Truck"])
 
     stats = run_vpic_models_pass(db)

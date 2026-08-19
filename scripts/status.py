@@ -43,6 +43,15 @@ def main() -> int:
             ("configurations", "SELECT count(*) FROM configurations"),
             ("external_ids", "SELECT count(*) FROM external_ids"),
             ("assertions (field_provenance)", "SELECT count(*) FROM field_provenance"),
+            (
+                "media assets (live)",
+                "SELECT count(*) FROM media_assets WHERE superseded_by IS NULL",
+            ),
+            (
+                "company logos (live)",
+                "SELECT count(*) FROM media_attachments "
+                "WHERE role = 'company_logo' AND superseded_by IS NULL",
+            ),
             ("match decisions", "SELECT count(*) FROM match_decisions"),
         ):
             print(f"{label:<30}: {s.execute(text(sql)).scalar()}")
@@ -59,6 +68,7 @@ def main() -> int:
                             WHEN rr.external_id LIKE 'infobox:%' THEN 'infoboxes'
                             WHEN rr.external_id LIKE 'article:%' THEN 'articles'
                             WHEN rr.external_id LIKE 'section-main:%' THEN 'section-mains'
+                            WHEN rr.payload->>'sweep' = 'company_logos' THEN 'company logos'
                             -- bare QIDs split by the landing-stamped sweep
                             -- marker (ADR 0012 §1), never by payload shape
                             WHEN rr.external_id LIKE 'Q%'
