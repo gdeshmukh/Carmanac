@@ -60,11 +60,14 @@ a selection rule.
    wins over normal rank among current statements. If none is current, the file
    with the most recent past end date is the fallback, with rank breaking only
    same-date ties. Exactly one technically displayable Commons file attaches;
-   several winners open a `multi_value` flag on `company_logo`; none leave the
-   company without a logo. Licence, attribution and reuse metadata are retained
-   when Commons supplies them, but missing rights fields do not block collection
-   or attachment. A later publication policy can use those fields without
-   changing the fact model. The pass never chooses by response order.
+   several winners open a `multi_value` flag on `company_logo`. Reviewed ties
+   are recorded by exact QID and Commons filename in `COMPANY_LOGO_FILES`; an
+   entry applies only while that file remains one of the mechanically selected
+   candidates. No winner leaves the company without a logo. Licence,
+   attribution and reuse metadata are retained when Commons supplies them, but
+   missing rights fields do not block collection or attachment. A later
+   publication policy can use those fields without changing the fact model.
+   The pass never chooses by response order.
 
 6. **Source-hosted renditions are the first storage mode.** `rendition_url`
    records the Commons thumbnail used for display and `source_url` records its

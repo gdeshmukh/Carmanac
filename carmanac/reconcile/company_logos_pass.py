@@ -317,6 +317,18 @@ def run_company_logos_pass(session: Session, as_of: date | None = None) -> Compa
                 evidence.setdefault(filename, []).append(record)
 
         candidates = sorted(evidence)
+        approved_files = {
+            policy.COMPANY_LOGO_FILES[record.external_id]
+            for record in records
+            if record.external_id in policy.COMPANY_LOGO_FILES
+        }
+        eligible_approved_files = approved_files.intersection(evidence)
+        if len(eligible_approved_files) > 1:
+            raise ValueError(f"conflicting company logo choices: {sorted(eligible_approved_files)}")
+        approved_file = next(iter(eligible_approved_files), None)
+        if approved_file is not None:
+            candidates = [approved_file]
+
         live_attachment = live_attachments.get(company_id)
         flag = open_flags.get(company_id)
         if not candidates:
@@ -407,10 +419,17 @@ def run_company_logos_pass(session: Session, as_of: date | None = None) -> Compa
             record_detail = dict(detail or {})
             if target_qid is not None:
                 record_detail["target_qid"] = target_qid
+            if approved_file is not None:
+                record_detail["approved_file"] = approved_file
+            method = "qid_p154"
+            if target_qid is not None:
+                method = "curated_logo_source_qid"
+            if approved_file is not None:
+                method = "curated_logo_file"
             decisions.record(
                 record,
                 outcome,
-                method="curated_logo_source_qid" if target_qid is not None else "qid_p154",
+                method=method,
                 detail=record_detail or None,
             )
             mark_reconciled(session, record)

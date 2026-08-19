@@ -331,6 +331,38 @@ def test_multiple_current_files_flag_instead_of_using_response_order(
     ]
 
 
+def test_reviewed_file_resolves_a_multi_value_flag(db, logo_graph, monkeypatch):
+    pages = {name: _page(name, file_hash=name) for name in ("Black.svg", "Blue.svg")}
+    _land(
+        db,
+        [
+            _binding("Q100", "Blue.svg", statement="s2"),
+            _binding("Q100", "Black.svg", statement="s1"),
+        ],
+        pages,
+    )
+    run_company_logos_pass(db, as_of=date(2026, 8, 19))
+    monkeypatch.setitem(policy.COMPANY_LOGO_FILES, "Q100", "Blue.svg")
+
+    stats = run_company_logos_pass(db, as_of=date(2026, 8, 19))
+
+    assert (stats.attachments_created, stats.flags_dismissed, stats.waits_ambiguous) == (1, 1, 0)
+    assert db.scalars(select(MediaAsset)).one().title == "Blue.svg"
+    flag = db.scalars(select(ReconciliationFlag)).one()
+    assert flag.status == "dismissed"
+    assert flag.detail["resolution"] == "company_logo_attached"
+
+
+def test_reviewed_file_does_not_override_the_selected_candidates(db, logo_graph, monkeypatch):
+    monkeypatch.setitem(policy.COMPANY_LOGO_FILES, "Q100", "Missing.svg")
+    _land(db, [_binding("Q100", "Current.svg")], {"Current.svg": _page("Current.svg")})
+
+    stats = run_company_logos_pass(db, as_of=date(2026, 8, 19))
+
+    assert (stats.attachments_created, stats.waits_ambiguous) == (1, 0)
+    assert db.scalars(select(MediaAsset)).one().title == "Current.svg"
+
+
 def test_missing_rights_metadata_does_not_block_a_logo(db, logo_graph):
     _land(
         db,

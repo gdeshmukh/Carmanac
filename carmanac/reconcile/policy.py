@@ -133,6 +133,17 @@ COMPANY_LOGO_SOURCE_QIDS: dict[str, str] = {
     "Q20827633": "Q44294",  # Ford marque -> Ford Motor Company logo
 }
 
+# Exact choices from reviewed multi-value P154 claims. The reconciler accepts
+# a choice only while it remains a mechanically eligible current/latest file.
+COMPANY_LOGO_FILES: dict[str, str] = {
+    "Q26944": "Alpine logo.png",  # Alpine
+    "Q9584": "Honda Logo.svg",  # Honda
+    "Q30113": "Jeep wordmark.svg",  # Jeep
+    "Q35886": "Lamborghini - logo wordmark+payoff (Italy, 1963-).svg",  # Lamborghini
+    "Q134100360": "Slate Auto logo.svg",  # Slate Auto
+    "Q56660561": "VinFast logo (simple variant).svg",  # VinFast
+}
+
 # Curated vPIC-make matches (ADR 0008 rung 1): vPIC MakeId -> Wikidata QID,
 # for makes the exact-name rung cannot place. Grown exclusively by resolving
 # `match_review` flags - each entry is a recorded human judgment, and
