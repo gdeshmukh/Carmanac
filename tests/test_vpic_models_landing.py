@@ -66,10 +66,11 @@ def _model_row(make_id: int, make: str, model_id: int, model: str, type_name: st
     }
 
 
-def _paths(make_id: int) -> tuple[str, str]:
+def _paths(make_id: int) -> tuple[str, str, str]:
     return (
         f"GetModelsForMakeIdYear/makeId/{make_id}/vehicletype/car",
         f"GetModelsForMakeIdYear/makeId/{make_id}/vehicletype/multipurpose passenger vehicle (mpv)",
+        f"GetModelsForMakeIdYear/makeId/{make_id}/vehicletype/truck",
     )
 
 
@@ -78,7 +79,7 @@ def test_merges_types_per_model_with_prefixed_id(db, vpic_source):
     sorted type list and a model:-prefixed external id (MakeId 474 and a
     hypothetical ModelId 474 must never collide in external_ids)."""
     _land_make(db, vpic_source, 474, "HONDA")
-    car, mpv = _paths(474)
+    car, mpv, _truck = _paths(474)
     client = FakeVpicClient(
         {
             car: [
@@ -132,7 +133,7 @@ def test_fetches_every_landed_make_not_just_matched(db, vpic_source):
 
 def test_reland_is_idempotent(db, vpic_source):
     _land_make(db, vpic_source, 474, "HONDA")
-    car, _ = _paths(474)
+    car, *_ = _paths(474)
     client = FakeVpicClient({car: [_model_row(474, "HONDA", 1861, "Accord", "Passenger Car")]})
     land_passenger_models(db, client)
     result = land_passenger_models(db, client)

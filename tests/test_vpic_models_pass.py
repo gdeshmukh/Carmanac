@@ -43,14 +43,20 @@ def vpic_source(db) -> Source:
 
 
 def _land_model(
-    db, source: Source, model_id: int, model_name: str, make_id: int, make_name: str
+    db,
+    source: Source,
+    model_id: int,
+    model_name: str,
+    make_id: int,
+    make_name: str,
+    vehicle_types: list[str] | None = None,
 ) -> RawRecord:
     payload = {
         "model_id": model_id,
         "model_name": model_name,
         "make_id": make_id,
         "make_name": make_name,
-        "vehicle_types": ["Passenger Car"],
+        "vehicle_types": vehicle_types or ["Passenger Car"],
     }
     rec = RawRecord(
         source_id=source.id,
@@ -367,3 +373,75 @@ def test_models_pass_idempotent(db, wikidata_source, vpic_source):
     assert stats.models_matched == 2 and stats.models_created == 0
     assert stats.assertions_inserted == 0 and stats.flags_opened == 0
     assert counts() == before
+
+
+def _land_epa(db, make: str, model: str) -> None:
+    """One EPA vehicle record - the light-duty evidence a truck-only filing
+    needs before it may mint."""
+    source = db.scalar(select(Source).where(Source.name == "EPA fueleconomy.gov"))
+    if source is None:
+        source = Source(name="EPA fueleconomy.gov", tier=1)
+        db.add(source)
+        db.commit()
+    payload = {"id": f"{make}-{model}", "make": make, "model": model, "year": "2019"}
+    db.add(
+        RawRecord(
+            source_id=source.id,
+            external_id=f"vehicle:{make}-{model}",
+            content_hash=content_hash(payload),
+            payload=payload,
+        )
+    )
+    db.commit()
+
+
+def test_truck_only_filing_mints_when_epa_rates_it(db, wikidata_source, vpic_source):
+    """A Tacoma is class 2a and EPA rates it, so the truck-only filing is a car
+    by the only test that can tell - and the trailing drivetrain token EPA
+    bakes into its string does not stop the name being found."""
+    _matched_make(db, wikidata_source, vpic_source, "Q53268", "Toyota", 448)
+    _land_epa(db, "Toyota", "Tacoma 2WD")
+    _land_model(db, vpic_source, 2100, "Tacoma", 448, "TOYOTA", ["Truck"])
+
+    stats = run_vpic_models_pass(db)
+    assert stats.models_created == 1
+    assert stats.skipped_not_light_duty == 0
+    assert db.scalar(select(Model.name).where(Model.slug == "tacoma")) == "Tacoma"
+
+
+def test_truck_only_filing_waits_when_epa_never_rated_it(db, wikidata_source, vpic_source):
+    """An LTL9000 is a class-8 tractor. vPIC types it exactly like the Tacoma,
+    EPA has never rated it, and the charter does not admit it - silently, with
+    no flag, because it is not an open question."""
+    _matched_make(db, wikidata_source, vpic_source, "Q44294", "Ford", 460)
+    _land_epa(db, "Ford", "F150 Pickup 2WD")
+    _land_model(db, vpic_source, 2200, "LTL9000", 460, "FORD", ["Truck"])
+
+    stats = run_vpic_models_pass(db)
+    assert (stats.models_created, stats.skipped_not_light_duty) == (0, 1)
+    assert db.scalar(select(func.count(Model.id))) == 0
+    assert db.scalar(select(func.count(ReconciliationFlag.id))) == 0
+
+
+def test_car_typed_filing_needs_no_epa_evidence(db, wikidata_source, vpic_source):
+    """The gate reaches truck-ONLY filings. Anything vPIC also types as a car
+    or an MPV is self-evidencing and must not start depending on EPA."""
+    _matched_make(db, wikidata_source, vpic_source, "Q35996", "Mazda", 473)
+    _land_model(
+        db, vpic_source, 2300, "CX-9", 473, "MAZDA", ["Multipurpose Passenger Vehicle (MPV)"]
+    )
+    _land_model(db, vpic_source, 2301, "B-Series", 473, "MAZDA", ["Passenger Car", "Truck"])
+
+    stats = run_vpic_models_pass(db)
+    assert (stats.models_created, stats.skipped_not_light_duty) == (2, 0)
+
+
+def test_light_duty_gate_matches_within_the_right_make(db, wikidata_source, vpic_source):
+    """EPA evidence is per-make. Another maker's Ranger must not admit this
+    one's - the gate keys on the filing make, like every other bridge here."""
+    _matched_make(db, wikidata_source, vpic_source, "Q44294", "Ford", 460)
+    _land_epa(db, "Toyota", "Tacoma 2WD")
+    _land_model(db, vpic_source, 2400, "Tacoma", 460, "FORD", ["Truck"])
+
+    stats = run_vpic_models_pass(db)
+    assert (stats.models_created, stats.skipped_not_light_duty) == (0, 1)

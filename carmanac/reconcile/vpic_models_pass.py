@@ -11,6 +11,12 @@ record, the pass is:
     3. otherwise create             - slug = slugify(model_name), per company
     4. slug collision under one company -> `match_review`, never auto-suffix
 
+**Light-duty only**: a truck-typed filing with no car/MPV type beside it must
+be named by EPA before it mints. vPIC's "truck" spans a Ranger and a class-8
+tractor under one word, so the type cannot draw the charter's class-3 line;
+EPA's 8,500 lb rating ceiling can, and does. Reconciled-seen and silent, with
+no flag - a bus chassis is not an open question. See `_is_light_duty`.
+
 **Matched makes only** (§1): a model record under an unmatched make is marked
 reconciled-seen and creates nothing, silently. The make's own `match_review`
 flag already represents that open question, and one question must not fan out
@@ -46,12 +52,15 @@ from carmanac.db.models import (
     Model,
     RawRecord,
     ReconciliationFlag,
+    Source,
 )
+from carmanac.ingest.epa.bulk import EPA_SOURCE_NAME
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.vpic.land import VPIC_SOURCE_NAME
 from carmanac.reconcile import policy
 from carmanac.reconcile.bookkeeping import mark_reconciled
 from carmanac.reconcile.engine import current_records, slugify, supersede
+from carmanac.reconcile.names import normalize_name
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +76,7 @@ class VpicModelsPassStats:
 
     processed: int = 0
     skipped_unmatched_make: int = 0
+    skipped_not_light_duty: int = 0
     merge_waits: int = 0
     models_created: int = 0
     models_matched: int = 0
@@ -79,6 +89,7 @@ class VpicModelsPassStats:
         return (
             f"processed={self.processed} "
             f"skipped_unmatched_make={self.skipped_unmatched_make} "
+            f"skipped_not_light_duty={self.skipped_not_light_duty} "
             f"merge_waits={self.merge_waits} | "
             f"models_created={self.models_created} matched={self.models_matched} "
             f"assertions={self.assertions_inserted} "
@@ -120,6 +131,35 @@ class _VpicModelsPass:
                 select(Model.id, Model.company_id, Model.slug)
             )
         }
+
+        # Normalized vPIC make name -> the normalized whole-token prefixes of
+        # every model string EPA files under it. This is the class-3 gate's
+        # evidence (see `_is_light_duty`), read from landed raw rather than
+        # from another pass's output. Built once: the alternative is a query
+        # per truck record.
+        self.epa_names_by_make: dict[str, set[str]] = {}
+        epa_source_id = self.session.execute(
+            select(Source.id).where(Source.name == EPA_SOURCE_NAME)
+        ).scalar_one_or_none()
+        if epa_source_id is not None:
+            for make, model_str, base in self.session.execute(
+                select(
+                    RawRecord.payload["make"].astext,
+                    RawRecord.payload["model"].astext,
+                    RawRecord.payload["baseModel"].astext,
+                ).where(
+                    RawRecord.source_id == epa_source_id,
+                    RawRecord.external_id.like("vehicle:%"),
+                )
+            ):
+                if not make or not model_str:
+                    continue
+                names = self.epa_names_by_make.setdefault(normalize_name(make), set())
+                tokens = model_str.split()
+                for k in range(1, len(tokens) + 1):
+                    names.add(normalize_name(" ".join(tokens[:k])))
+                if base:
+                    names.add(normalize_name(base))
 
         # Open match_review flags on this source's MODEL records, for dedupe
         # and dismissal. Keyed on the record's external id, not its raw id: a
@@ -293,6 +333,28 @@ class _VpicModelsPass:
 
     # --- the pass ------------------------------------------------------------
 
+    def _is_light_duty(self, record: RawRecord) -> bool:
+        """Is this model a passenger vehicle under the charter's class-3 line?
+
+        Anything vPIC also types as a car or an MPV is, by that filing alone.
+        A TRUCK-ONLY filing is not self-evidencing - vPIC gives an F-150 and
+        an LTL9000 the same type - so it must be named by EPA, whose fuel
+        economy programme rates light-duty vehicles and stops at 8,500 lb
+        GVWR. That ceiling IS the charter's line, drawn by a regulator
+        instead of by us, and it costs nothing we want: a truck EPA never
+        rated has no cars to unlock.
+
+        Matched the way the EPA attach matches (ADR 0014 §3) - exact name or
+        whole-token prefix - so a model admitted here is one that pass can
+        actually land rows onto.
+        """
+        types = record.payload.get("vehicle_types") or []
+        if any(t != "Truck" for t in types):
+            return True
+        make = record.payload.get("make_name") or ""
+        name = normalize_name(record.payload.get("model_name") or "")
+        return bool(name) and name in self.epa_names_by_make.get(normalize_name(make), set())
+
     @staticmethod
     def _is_model_record(record: RawRecord) -> bool:
         """MODEL records only, selected by the external id's KIND PREFIX.
@@ -326,6 +388,15 @@ class _VpicModelsPass:
                 # §1: the make is unmatched. Reconciled-seen, nothing created,
                 # no flag - the make's own match_review flag is the question.
                 self.stats.skipped_unmatched_make += 1
+                mark_reconciled(self.session, record)
+                continue
+
+            if not self._is_light_duty(record):
+                # The charter admits no truck over class 3. vPIC's type says
+                # nothing about weight, so the record waits rather than mints -
+                # reconciled-seen and silent, like an unmatched make. No flag:
+                # a bus chassis is not an open question.
+                self.stats.skipped_not_light_duty += 1
                 mark_reconciled(self.session, record)
                 continue
 
