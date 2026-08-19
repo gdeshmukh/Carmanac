@@ -1,22 +1,13 @@
-"""Images and documents attached to entities.
+"""Versioned media files and the sourced claims that attach them to entities.
 
-Two tables rather than one column, because media is many-to-many with almost
-everything: a car page wants several photos, one photo may legitimately
-illustrate a generation *and* a specific configuration, and an owner's manual
-often covers a whole model year rather than one trim.
+`media_assets` records one source's observation of a file and its reuse terms.
+`media_attachments` records the separate claim that the file serves a specific
+role on one entity. Both are facts: each points to the exact raw record and each
+keeps same-source history through supersession (ADR 0021).
 
-    media_assets       the file itself, once, with its licence
-    media_attachments  which entities it belongs to, and in what role
-
-**Licensing is a first-class column, not an afterthought.** Most car photography
-is not freely reusable, and a database that stores an image without recording
-what it is allowed to do with it cannot safely publish any of it. `license` and
-`attribution` are therefore required on any asset intended for display.
-
-**Files live in object storage, not in Postgres.** `storage_url` is the pointer;
-`source_url` records where it came from. This mirrors the `storage_url` escape
-hatch already reserved on `raw_scrape.raw_records` (ADR 0003) - the database
-holds metadata and provenance, the bytes live where bytes belong.
+The database stores locations and metadata, never file bytes. `rendition_url`
+is a source-hosted display rendition; `storage_url` is reserved for our copy
+when durable media storage is introduced.
 """
 
 from __future__ import annotations
@@ -31,7 +22,6 @@ from sqlalchemy import (
     Integer,
     SmallInteger,
     Text,
-    UniqueConstraint,
     func,
     text,
 )
@@ -52,7 +42,7 @@ MEDIA_ROLES = (
     "gallery",
     "interior",
     "engine_bay",
-    "logo",
+    "company_logo",
     "owners_manual",
     "brochure",
     "press_kit",
@@ -61,11 +51,7 @@ MEDIA_ROLES = (
 
 
 class MediaAsset(Base, ProvenanceMixin):
-    """One file, stored once regardless of how many entities reference it.
-
-    Fact-bearing: an asset is something a source published, so it carries the
-    provenance quartet and links back to the scrape that found it.
-    """
+    """One source's current observation of a displayable file."""
 
     __tablename__ = "media_assets"
 
@@ -74,15 +60,18 @@ class MediaAsset(Base, ProvenanceMixin):
     kind: Mapped[str] = mapped_column(Text, nullable=False)  # image | document
     mime_type: Mapped[str | None] = mapped_column(Text)  # 'image/jpeg', 'application/pdf'
 
-    storage_url: Mapped[str | None] = mapped_column(Text)  # our copy, in object storage
-    source_url: Mapped[str | None] = mapped_column(Text)  # where we found it
+    rendition_url: Mapped[str | None] = mapped_column(Text)  # source-hosted display rendition
+    storage_url: Mapped[str | None] = mapped_column(Text)  # our copy, when one exists
+    source_url: Mapped[str | None] = mapped_column(Text)  # source description / evidence page
 
     title: Mapped[str | None] = mapped_column(Text)
     caption: Mapped[str | None] = mapped_column(Text)
 
     # --- licensing: required before anything may be displayed ---
-    license: Mapped[str | None] = mapped_column(Text)  # 'CC-BY-SA-4.0', 'press-use', ...
+    license: Mapped[str | None] = mapped_column(Text)  # 'CC-BY-SA-4.0', 'public domain', ...
+    license_url: Mapped[str | None] = mapped_column(Text)
     attribution: Mapped[str | None] = mapped_column(Text)  # credit line to display
+    rights_notice: Mapped[str | None] = mapped_column(Text)  # trademark / reuse notice
 
     # --- format specifics ---
     width_px: Mapped[int | None] = mapped_column(Integer)
@@ -92,7 +81,13 @@ class MediaAsset(Base, ProvenanceMixin):
 
     # Same idea as raw_records: identical bytes need storing only once, and
     # re-scraping an unchanged asset should be a no-op.
-    content_hash: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+    superseded_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("media_assets.id", name="fk_media_assets_superseded_by"),
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
@@ -101,32 +96,41 @@ class MediaAsset(Base, ProvenanceMixin):
     __table_args__ = (
         *provenance_table_args(),
         CheckConstraint("kind IN ('image','document')", name="media_kind_valid"),
-        # An asset with neither a stored copy nor a source is unusable.
         CheckConstraint(
-            "storage_url IS NOT NULL OR source_url IS NOT NULL", name="media_has_location"
+            "storage_url IS NOT NULL OR rendition_url IS NOT NULL", name="media_has_rendition"
+        ),
+        CheckConstraint(
+            "source_id IS NOT NULL AND raw_record_id IS NOT NULL "
+            "AND scraped_at IS NOT NULL AND source_url IS NOT NULL",
+            name="media_asset_provenance_complete",
         ),
         Index("idx_media_assets_content_hash", "content_hash"),
         Index("idx_media_assets_kind", "kind"),
+        Index(
+            "uq_media_assets_live",
+            "source_id",
+            "source_url",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
     )
 
 
-class MediaAttachment(Base):
-    """Which entities an asset belongs to, and how it should be presented.
+class MediaAttachment(Base, ProvenanceMixin):
+    """One source's claim that an asset serves a role on one entity.
 
     Uses the same exclusive arc as `field_provenance` and `external_ids` - one
     nullable FK per entity type plus a CHECK that exactly one is set - so
     referential integrity survives, unlike a polymorphic entity_type/entity_id
     pair.
-
-    Not fact-bearing itself: the *asset* carries provenance. This row only says
-    where it is shown.
     """
 
     __tablename__ = "media_attachments"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     media_asset_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
+        BigInteger, ForeignKey("media_assets.id"), nullable=False, index=True
     )
 
     # --- exclusive arc: exactly one of these is set ---
@@ -138,23 +142,42 @@ class MediaAttachment(Base):
     engine_id: Mapped[int | None] = mapped_column(ForeignKey("engines.id"))
     transmission_id: Mapped[int | None] = mapped_column(ForeignKey("transmissions.id"))
 
-    role: Mapped[str | None] = mapped_column(Text)  # hero | gallery | owners_manual | ...
+    role: Mapped[str] = mapped_column(Text, nullable=False)
     sort_order: Mapped[int | None] = mapped_column(SmallInteger)
+    superseded_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("media_attachments.id", name="fk_media_attachments_superseded_by"),
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
+        *provenance_table_args(),
         _exactly_one_entity(),
-        # The same asset should not attach to the same entity twice in the same
-        # role. NULLS NOT DISTINCT because six of the seven arc columns are NULL
-        # on every row.
-        UniqueConstraint(
-            "media_asset_id",
+        CheckConstraint(
+            "role IN ({})".format(", ".join(f"'{role}'" for role in MEDIA_ROLES)),
+            name="media_attachment_role_valid",
+        ),
+        CheckConstraint(
+            "role <> 'company_logo' OR company_id IS NOT NULL",
+            name="company_logo_attaches_to_company",
+        ),
+        CheckConstraint(
+            "source_id IS NOT NULL AND raw_record_id IS NOT NULL AND scraped_at IS NOT NULL",
+            name="media_attachment_provenance_complete",
+        ),
+        # One live assertion per source, entity and role. A source changing the
+        # file supersedes the old claim instead of leaving two current logos.
+        Index(
+            "uq_media_attachments_live",
             *_ARC_COLUMNS,
             "role",
-            name="uq_media_attachments_asset_entity_role",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
             postgresql_nulls_not_distinct=True,
         ),
         # Partial indexes per arc column: each row sets only one, so a plain
