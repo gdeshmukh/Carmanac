@@ -103,8 +103,15 @@ def _statement_date(value: str) -> date | None:
         return None
 
 
-def _current_files(statements: list[dict[str, Any]], as_of: date) -> set[str]:
-    eligible: list[dict[str, Any]] = []
+def _rank_winners(statements: list[dict[str, Any]]) -> set[str]:
+    if any(statement["rank"] == "preferred" for statement in statements):
+        statements = [statement for statement in statements if statement["rank"] == "preferred"]
+    return {statement["file"] for statement in statements}
+
+
+def _selected_files(statements: list[dict[str, Any]], as_of: date) -> set[str]:
+    current: list[dict[str, Any]] = []
+    historical: list[tuple[date, dict[str, Any]]] = []
     for statement in statements:
         if statement.get("rank") not in {"normal", "preferred"} or statement.get("points"):
             continue
@@ -115,12 +122,16 @@ def _current_files(statements: list[dict[str, Any]], as_of: date) -> set[str]:
         if starts and min(starts) > as_of:
             continue
         if ends and max(ends) < as_of:
-            continue
-        eligible.append(statement)
+            historical.append((max(ends), statement))
+        else:
+            current.append(statement)
 
-    if any(statement["rank"] == "preferred" for statement in eligible):
-        eligible = [statement for statement in eligible if statement["rank"] == "preferred"]
-    return {statement["file"] for statement in eligible}
+    if current:
+        return _rank_winners(current)
+    if not historical:
+        return set()
+    latest_end = max(end for end, _ in historical)
+    return _rank_winners([statement for end, statement in historical if end == latest_end])
 
 
 def _file_key(filename: str) -> str:
@@ -216,8 +227,23 @@ def run_company_logos_pass(session: Session, as_of: date | None = None) -> Compa
             )
         ).all()
     )
+    logo_targets_by_source = {
+        source_qid: target_qid for target_qid, source_qid in policy.COMPANY_LOGO_SOURCE_QIDS.items()
+    }
     grouped: dict[int, list[RawRecord]] = {}
+    curated_target_by_record: dict[int, str] = {}
     for record in current_records(session, wikidata.id, sweep=SWEEP_MARKER):
+        target_qid = logo_targets_by_source.get(record.external_id)
+        if target_qid is not None:
+            company_id = company_by_qid.get(target_qid)
+            if company_id is None:
+                raise LookupError(
+                    f"company logo target QID is not attached in external_ids: {target_qid}"
+                )
+            grouped.setdefault(company_id, []).append(record)
+            curated_target_by_record[record.id] = target_qid
+            continue
+
         canonical_qid = policy.IDENTITY_MERGES.get(record.external_id, record.external_id)
         if canonical_qid != record.external_id:
             decisions.record(
@@ -225,6 +251,15 @@ def run_company_logos_pass(session: Session, as_of: date | None = None) -> Compa
                 "skipped_identity_merge_member",
                 method="curated_identity_merge",
                 detail={"canonical": canonical_qid},
+            )
+            mark_reconciled(session, record)
+            continue
+        if record.external_id in policy.COMPANY_LOGO_SOURCE_QIDS:
+            decisions.record(
+                record,
+                "skipped_logo_source_override",
+                method="curated_logo_source_qid",
+                detail={"source_qid": policy.COMPANY_LOGO_SOURCE_QIDS[record.external_id]},
             )
             mark_reconciled(session, record)
             continue
@@ -278,7 +313,7 @@ def run_company_logos_pass(session: Session, as_of: date | None = None) -> Compa
         records = sorted(grouped[company_id], key=lambda record: int(record.external_id[1:]))
         evidence: dict[str, list[RawRecord]] = {}
         for record in records:
-            for filename in _current_files(record.payload.get("statements", []), as_of):
+            for filename in _selected_files(record.payload.get("statements", []), as_of):
                 evidence.setdefault(filename, []).append(record)
 
         candidates = sorted(evidence)
@@ -368,7 +403,16 @@ def run_company_logos_pass(session: Session, as_of: date | None = None) -> Compa
 
         detail = {"files": candidates} if candidates else None
         for record in records:
-            decisions.record(record, outcome, method="qid_p154", detail=detail)
+            target_qid = curated_target_by_record.get(record.id)
+            record_detail = dict(detail or {})
+            if target_qid is not None:
+                record_detail["target_qid"] = target_qid
+            decisions.record(
+                record,
+                outcome,
+                method="curated_logo_source_qid" if target_qid is not None else "qid_p154",
+                detail=record_detail or None,
+            )
             mark_reconciled(session, record)
 
     decisions.flush()

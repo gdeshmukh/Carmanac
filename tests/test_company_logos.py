@@ -20,8 +20,14 @@ from carmanac.db.models import (
     ReconciliationFlag,
     Source,
 )
-from carmanac.ingest.company_logos import COMPANY_LOGOS_QUERY, SWEEP_MARKER, land_company_logos
-from carmanac.reconcile.company_logos_pass import _current_files, run_company_logos_pass
+from carmanac.ingest.company_logos import (
+    COMPANY_LOGOS_QUERY,
+    SWEEP_MARKER,
+    land_company_logos,
+    target_qids,
+)
+from carmanac.reconcile import policy
+from carmanac.reconcile.company_logos_pass import _selected_files, run_company_logos_pass
 
 pytestmark = pytest.mark.integration
 
@@ -217,6 +223,53 @@ def test_company_match_is_qid_exact_even_when_names_are_equal(db, wikidata_sourc
     assert [attachment.company_id for attachment in attachments] == [company.id]
 
 
+def test_curated_source_qid_supplies_only_the_target_company_logo(
+    db, wikidata_source, logo_graph, monkeypatch
+):
+    company, _ = logo_graph
+    source_company = Company(name="Example Holdings", slug="example-holdings")
+    db.add(source_company)
+    db.flush()
+    db.add(
+        ExternalId(
+            company_id=source_company.id,
+            source_id=wikidata_source.id,
+            external_id="Q200",
+        )
+    )
+    db.commit()
+    monkeypatch.setitem(policy.COMPANY_LOGO_SOURCE_QIDS, "Q100", "Q200")
+
+    assert target_qids(db) == ["Q100", "Q200"]
+    _land(
+        db,
+        [
+            _binding("Q100", "Group.svg", statement="group"),
+            _binding("Q200", "Marque.svg", statement="marque"),
+        ],
+        {
+            "Group.svg": _page("Group.svg", file_hash="group"),
+            "Marque.svg": _page("Marque.svg", file_hash="marque"),
+        },
+    )
+    stats = run_company_logos_pass(db, as_of=date(2026, 8, 19))
+
+    assert (stats.assets_created, stats.attachments_created) == (1, 1)
+    asset = db.scalars(select(MediaAsset)).one()
+    attachment = db.scalars(select(MediaAttachment)).one()
+    evidence = db.get(RawRecord, attachment.raw_record_id)
+    assert asset.title == "Marque.svg"
+    assert attachment.company_id == company.id
+    assert evidence.external_id == "Q200"
+
+
+def test_curated_source_qid_must_already_be_known(db, logo_graph, monkeypatch):
+    monkeypatch.setitem(policy.COMPANY_LOGO_SOURCE_QIDS, "Q100", "Q999")
+
+    with pytest.raises(LookupError, match="Q999"):
+        target_qids(db)
+
+
 def test_identity_merge_member_does_not_contribute_a_company_logo(db, wikidata_source, logo_graph):
     company, _ = logo_graph
     db.add_all(
@@ -376,4 +429,29 @@ def test_rank_and_time_qualifiers_select_only_a_current_logo():
             "points": ["2022-01-01"],
         },
     ]
-    assert _current_files(statements, date(2026, 8, 19)) == {"Current.svg"}
+    assert _selected_files(statements, date(2026, 8, 19)) == {"Current.svg"}
+
+
+def test_latest_historical_logo_is_the_fallback_when_none_is_current():
+    statements = [
+        {
+            "file": "PreferredButOlder.svg",
+            "rank": "preferred",
+            "starts": [],
+            "ends": ["2020-01-01"],
+        },
+        {
+            "file": "Latest.svg",
+            "rank": "normal",
+            "starts": [],
+            "ends": ["2021-01-01"],
+        },
+        {
+            "file": "Future.svg",
+            "rank": "preferred",
+            "starts": ["2027-01-01"],
+            "ends": [],
+        },
+    ]
+
+    assert _selected_files(statements, date(2026, 8, 19)) == {"Latest.svg"}

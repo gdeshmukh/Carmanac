@@ -43,8 +43,11 @@ a selection rule.
    Wikidata QIDs already attached through `external_ids` to companies that hold
    models. P154 statements return Commons filenames. No company name, media tag,
    filename or public slug participates in the match. Curated identity-merge
-   members still land, but only the canonical QID contributes company facts,
-   matching the existing reconciler rule for names, dates and other fields.
+   members still land, and the canonical QID contributes by default. A
+   role-specific `COMPANY_LOGO_SOURCE_QIDS` registry may point that company to
+   another already-attached Wikidata QID when the legal entity carries a group
+   wordmark instead of the marque mark, or the marque omits P154. This changes
+   only `company_logo`; it does not merge identities or relax QID matching.
 
 4. **The two source claims stay distinct.** Wikidata is the source for the
    company-to-file attachment. Wikimedia Commons is the source for the file,
@@ -52,15 +55,16 @@ a selection rule.
    its own raw record. The attachment points to the Wikidata record; the asset
    points to the Commons record.
 
-5. **Only one mechanically current file attaches.** Deprecated statements and
-   statements whose qualified time span has ended are ineligible. Preferred
-   rank wins over normal rank for the canonical QID. Exactly one technically
-   displayable Commons file attaches; several open a `multi_value` flag on
-   `company_logo`; none leave the company without a logo. Licence, attribution
-   and reuse metadata are retained when Commons supplies them, but missing rights
-   fields do not block collection or attachment. A later publication policy can
-   use those fields without changing the fact model. The pass never chooses by
-   response order.
+5. **One mechanically selected file attaches.** Deprecated and point-in-time
+   statements are ineligible. A currently valid statement wins; preferred rank
+   wins over normal rank among current statements. If none is current, the file
+   with the most recent past end date is the fallback, with rank breaking only
+   same-date ties. Exactly one technically displayable Commons file attaches;
+   several winners open a `multi_value` flag on `company_logo`; none leave the
+   company without a logo. Licence, attribution and reuse metadata are retained
+   when Commons supplies them, but missing rights fields do not block collection
+   or attachment. A later publication policy can use those fields without
+   changing the fact model. The pass never chooses by response order.
 
 6. **Source-hosted renditions are the first storage mode.** `rendition_url`
    records the Commons thumbnail used for display and `source_url` records its

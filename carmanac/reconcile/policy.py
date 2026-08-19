@@ -124,6 +124,15 @@ IDENTITY_MERGES: dict[str, str] = {
 # admits members and canonicals through this decision.
 MERGE_CANONICALS: frozenset[str] = frozenset(IDENTITY_MERGES.values())
 
+# A company fact's canonical QID can carry the legal group's wordmark while
+# the catalogue page needs the marque's mark, or the marque QID can omit P154
+# while its already-known company QID carries it. This registry changes only
+# the source entity for `company_logo`; it does not merge either identity.
+COMPANY_LOGO_SOURCE_QIDS: dict[str, str] = {
+    "Q26678": "Q796364",  # BMW company -> BMW marque roundel
+    "Q20827633": "Q44294",  # Ford marque -> Ford Motor Company logo
+}
+
 # Curated vPIC-make matches (ADR 0008 rung 1): vPIC MakeId -> Wikidata QID,
 # for makes the exact-name rung cannot place. Grown exclusively by resolving
 # `match_review` flags - each entry is a recorded human judgment, and

@@ -22,6 +22,7 @@ from carmanac.db.models import ExternalId, Model, Source
 from carmanac.ingest.http import PoliteClient
 from carmanac.ingest.landing import content_hash, get_source, upsert_raw_records
 from carmanac.ingest.wikidata.client import SparqlClient
+from carmanac.reconcile import policy
 
 log = logging.getLogger(__name__)
 
@@ -102,19 +103,43 @@ def _qid_sort_key(qid: str) -> int:
 
 
 def target_qids(session: Session) -> list[str]:
-    """Wikidata identities of companies that currently hold a model."""
-    qids = session.scalars(
-        select(ExternalId.external_id)
-        .join(Source, Source.id == ExternalId.source_id)
-        .where(
-            Source.name == WIKIDATA_SOURCE_NAME,
-            ExternalId.company_id.isnot(None),
-            ExternalId.external_id.regexp_match(r"^Q[0-9]+$"),
-            exists(select(Model.id).where(Model.company_id == ExternalId.company_id)),
+    """Wikidata identities needed for companies that currently hold a model."""
+    qids = set(
+        session.scalars(
+            select(ExternalId.external_id)
+            .join(Source, Source.id == ExternalId.source_id)
+            .where(
+                Source.name == WIKIDATA_SOURCE_NAME,
+                ExternalId.company_id.isnot(None),
+                ExternalId.external_id.regexp_match(r"^Q[0-9]+$"),
+                exists(select(Model.id).where(Model.company_id == ExternalId.company_id)),
+            )
+            .distinct()
         )
-        .distinct()
     )
-    return sorted(qids, key=_qid_sort_key)
+    source_qids = {
+        policy.COMPANY_LOGO_SOURCE_QIDS[qid]
+        for qid in qids
+        if qid in policy.COMPANY_LOGO_SOURCE_QIDS
+    }
+    if source_qids:
+        known_source_qids = set(
+            session.scalars(
+                select(ExternalId.external_id)
+                .join(Source, Source.id == ExternalId.source_id)
+                .where(
+                    Source.name == WIKIDATA_SOURCE_NAME,
+                    ExternalId.external_id.in_(source_qids),
+                )
+            )
+        )
+        missing = source_qids - known_source_qids
+        if missing:
+            raise LookupError(
+                "company logo source QIDs are not attached in external_ids: "
+                + ", ".join(sorted(missing, key=_qid_sort_key))
+            )
+    return sorted(qids | source_qids, key=_qid_sort_key)
 
 
 def _qid(uri: str) -> str:
