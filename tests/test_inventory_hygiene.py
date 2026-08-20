@@ -25,7 +25,7 @@ from carmanac.db.models import (
     Source,
 )
 from carmanac.ingest.landing import content_hash
-from carmanac.ingest.wikipedia.section_mains import section_main_targets
+from carmanac.ingest.wikipedia.fetch import section_main_targets
 from carmanac.reconcile import policy
 from carmanac.reconcile.generation_placement_pass import run_generation_placement_pass
 from carmanac.reconcile.sources.wikipedia_infobox import parse_span
