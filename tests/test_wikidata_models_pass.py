@@ -53,6 +53,7 @@ def _land_sweep(
     classes: list[str] | None = None,
     makers: list[str] | None = None,
     series_of: list[str] | None = None,
+    parts_of: list[str] | None = None,
     follows: list[str] | None = None,
     inceptions: list[str] | None = None,
     discontinueds: list[str] | None = None,
@@ -74,7 +75,7 @@ def _land_sweep(
         "classes": uris(classes),
         "makers": uris(makers),
         "seriesOf": uris(series_of),
-        "partsOf": cell(""),
+        "partsOf": uris(parts_of),
         "followsIds": uris(follows),
         "followedByIds": cell(""),
         "inceptions": cell("|".join(sorted(inceptions or []))),
@@ -954,3 +955,107 @@ def test_mint_paren_sibling_of_an_existing_model_contests(
     assert (stats.models_minted, stats.mint_contested) == (0, 1)
     assert db.scalar(select(func.count(Model.id)).where(Model.company_id == alpine.id)) == 1
     assert _decision(db, "Q1600").outcome == "flagged_mint_twins"
+
+
+def test_mint_holds_out_multi_maker_entities(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """The C1 shape: a JV car asserts two makers, and only one is held. The
+    sole-maker condition reads the ENTITY's claim, not our resolution of it -
+    a rebadge judgment is never a mint."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(db, wikidata_source, "Q1700", "Citroën C1", makers=["Q6746", "Q77770"])
+
+    stats = run_wikidata_models_pass(db)
+    assert (stats.models_minted, stats.waits_unmatched) == (0, 1)
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 0
+
+
+def test_mint_holds_out_part_of_membership(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """P361 is membership evidence exactly like P179: an entity that is part
+    of something we do not hold may be a generation of it, so it waits."""
+    _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(
+        db, wikidata_source, "Q1710", "Citroën DS3 Racing X", makers=["Q6746"], parts_of=["Q77771"]
+    )
+
+    stats = run_wikidata_models_pass(db)
+    assert (stats.models_minted, stats.waits_unmatched) == (0, 1)
+
+
+def test_mint_label_sanity_gates(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """The bare-QID fallback label and a label that IS the company name both
+    wait: neither names a car."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(db, wikidata_source, "Q1720", makers=["Q6746"])  # label defaults to the QID
+    _land_sweep(db, wikidata_source, "Q1721", "Citroën", makers=["Q6746"])
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.models_minted == 0
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 0
+
+
+def test_mint_exclude_words_match_either_field_any_case(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """The exclude gate reads label and description together, case-blind."""
+    _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(db, wikidata_source, "Q1730", "Citroën Sport Concept", makers=["Q6746"])
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1731",
+        "Citroën ZX Grand Raid",
+        description="RALLY raider",
+        makers=["Q6746"],
+    )
+
+    stats = run_wikidata_models_pass(db)
+    assert (stats.models_minted, stats.waits_unmatched) == (0, 2)
+
+
+def test_mint_nonconforming_slug_flags(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """A label with no ASCII form slugifies to nothing: the drift guard flags
+    for a curated romanization instead of minting an unaddressable row."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(db, wikidata_source, "Q1740", "Citroën 雪铁龙", makers=["Q6746"])
+
+    stats = run_wikidata_models_pass(db)
+    assert (stats.models_minted, stats.mint_contested) == (0, 1)
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 0
+    assert _decision(db, "Q1740").outcome == "flagged_mint_nonconforming"
+
+
+def test_mint_contested_rerun_is_stable(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
+    """Contested stays contested, identically: the same twins re-contest on
+    every run, the open flag refreshes rather than duplicates, and nothing
+    ever mints behind the ruling's back."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+
+    _land_sweep(
+        db, wikidata_source, "Q1750", "Citroën C6", description="1929 saloon", makers=["Q6746"]
+    )
+    _land_sweep(
+        db, wikidata_source, "Q1751", "Citroën C6", description="executive car", makers=["Q6746"]
+    )
+
+    first = run_wikidata_models_pass(db)
+    second = run_wikidata_models_pass(db)
+    assert (first.mint_contested, second.mint_contested) == (2, 2)
+    assert (first.flags_opened, second.flags_opened) == (2, 0)
+    assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 0
+    flags = db.scalars(select(ReconciliationFlag).where(ReconciliationFlag.status == "open")).all()
+    assert len([f for f in flags if (f.detail or {}).get("reason") == "mint_label_twins"]) == 2
+    assert _decision(db, "Q1750").outcome == "flagged_mint_twins"
