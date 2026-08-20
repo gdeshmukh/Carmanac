@@ -1,4 +1,5 @@
-"""The Wikidata models-sweep pass (ADR 0012): match and enrich, never create.
+"""The Wikidata models-sweep pass (ADR 0012): match and enrich; creation
+only under the mint registry (§7).
 
 Level is decided per make, against the as-filed models. For every current
 models-sweep record (bare QID, `sweep: models` marker), the ladder is:
@@ -20,9 +21,16 @@ models-sweep record (bare QID, `sweep: models` marker), the ladder is:
 Four rules hold across the ladder, each one a place where guessing was
 available and rejected:
 
-- **Match and enrich only.** A model-shaped entity under a held company with
-  no as-filed match waits - no row, no flag. One open make question must not
-  fan out into thousands of model-shaped copies (ADR 0010 §1).
+- **Match and enrich only** - except under the mint registry (§7). A
+  model-shaped entity under a held company with no as-filed match waits - no
+  row, no flag. One open make question must not fan out into thousands of
+  model-shaped copies (ADR 0010 §1). The exception is deliberate and narrow:
+  vPIC and EPA are US registries, so a marque that never sold there can never
+  earn a model row from them - for companies a human has listed in
+  `WIKIDATA_MINT_COMPANIES`, an entity that fell through every match and
+  structure rung mints a nameplate row instead of waiting, under per-entity
+  conditions (sole maker, no membership evidence, no foreign-brand label, no
+  excluded word) with contested slugs flagged as a group, never suffixed.
 - **The P176 maker gate runs before any name or structure rung**, including
   for entities with generation-shaped structure. Their evidence keeps in raw
   until the maker converts.
@@ -46,6 +54,7 @@ accumulates from the first run.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import func, select, text
@@ -91,6 +100,19 @@ log = logging.getLogger(__name__)
 
 PASS_NAME = "wikidata_models"
 
+_BARE_QID = re.compile(r"Q\d+")
+# The era-sibling shapes: a trailing roman numeral ("Dokker II") or a trailing
+# parenthetical ("A110 (2017)") on an otherwise-shared nameplate. Wikidata
+# files a nameplate and its generations as sibling model entities in exactly
+# this dress, and level is never decided by label - so the whole family is
+# one naming ruling, like exact label twins.
+_TRAILING_ROMAN = re.compile(r"\s+(?:X{0,1}(?:IX|IV|V?I{0,3}))$")
+_TRAILING_PAREN = re.compile(r"\s*\([^)]*\)$")
+_MINT_EXCLUDE = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in policy.WIKIDATA_MINT_EXCLUDE) + r")\b",
+    re.IGNORECASE,
+)
+
 
 def _filing_number(external_id: str) -> int:
     """`model:999` sorts below `model:1000`. Lexicographic order would not,
@@ -100,6 +122,10 @@ def _filing_number(external_id: str) -> int:
 
 # What this pass asserts per entity kind, and therefore what it may tombstone.
 MODEL_COVERAGE: tuple[str, ...] = ("summary",)
+# A minted model (§7) additionally takes its NAME from the label: the one
+# case where Wikidata names a model, because it is the filing source there.
+# Matched models keep vPIC's name - the refresh path never covers "name".
+MINTED_MODEL_COVERAGE: tuple[str, ...] = ("name", *MODEL_COVERAGE)
 GENERATION_COVERAGE: tuple[str, ...] = (
     "name",
     "summary",
@@ -127,6 +153,8 @@ class WikidataModelsStats:
     market_name_flagged: int = 0
     waits_no_held_maker: int = 0
     waits_unmatched: int = 0
+    models_minted: int = 0
+    mint_contested: int = 0
     company_entities: int = 0
     assertions_inserted: int = 0
     assertions_superseded: int = 0
@@ -146,6 +174,7 @@ class WikidataModelsStats:
             f"market_name_flags={self.market_name_flagged} "
             f"waits: no_held_maker={self.waits_no_held_maker} "
             f"unmatched={self.waits_unmatched} company_entity={self.company_entities} | "
+            f"minted={self.models_minted} (contested={self.mint_contested}) | "
             f"assertions={self.assertions_inserted} "
             f"(superseded={self.assertions_superseded}) "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
@@ -283,6 +312,24 @@ class _WikidataModelsPass:
             self.qid_by_model[model_id] = qid
         # model_id -> [(qid, method, rank)]; rank 0 = label form, 1 = alias.
         self.claims: dict[int, list[tuple[str, str, int]]] = {}
+
+        # The mint gate (§7): registry company QIDs resolved to company ids
+        # through the same map every maker resolves through, so an alias QID
+        # of a listed company gates identically. Slug occupancy is checked
+        # against every model we hold, not just the sweep's - the natural key
+        # `uq_models_company_id_slug` would reject the INSERT anyway, and a
+        # collision is a review question, never an IntegrityError.
+        self.mint_companies: set[int] = {
+            self.company_by_qid[q]
+            for q in policy.WIKIDATA_MINT_COMPANIES
+            if q in self.company_by_qid
+        }
+        self.model_by_company_slug: dict[tuple[int, str], int] = {
+            (m.company_id, m.slug): m.id for m in self.models.values() if m.slug
+        }
+        # (subject, company_id, name, slug) collected across rung 6, minted
+        # together so label twins are seen as a group before any row exists.
+        self.mint_candidates: list[tuple[_Subject, int, str, str]] = []
 
         # Prior decisions, so a refresh preserves HOW a match was made
         # (ADR 0013 §4) instead of overwriting the method with 'external_id'.
@@ -590,9 +637,11 @@ class _WikidataModelsPass:
 
     def _model_key(self, model_id: int) -> str | None:
         """The model's own source id, which is what curated judgments key on.
-        None for a model no source has identified - it cannot be the subject
-        of a registry entry, so it can never be negated or curated either."""
-        return self.model_source_key.get(model_id)
+        For a vPIC-born model that is its filing id; for a minted model (§7)
+        the QID IS the filing. None for a model no source has identified - it
+        cannot be the subject of a registry entry, so it can never be negated
+        or curated either."""
+        return self.model_source_key.get(model_id) or self.qid_by_model.get(model_id)
 
     def _name_hits(self, subject: _Subject) -> dict[int, str]:
         """Rung 3: exact-normalized hits across label/aliases and their
@@ -1171,6 +1220,16 @@ class _WikidataModelsPass:
                 )
                 continue
 
+            # Rung 6, mint side (§7): under a registry company, an entity
+            # that fell through every match and structure rung is the fill,
+            # not a near-miss - its trigram neighbours are its own siblings
+            # minting beside it, so the candidates queue would only echo the
+            # batch back. Collected, not minted: twins must be seen together.
+            minted = self._mint_candidate(subject)
+            if minted is not None:
+                self.mint_candidates.append((subject, *minted))
+                continue
+
             # Rung 6: no structural evidence. Flag with candidates only when
             # a held company AND near-misses exist; otherwise wait, unflagged
             # (§3: the tabled expansion's warehouse).
@@ -1206,6 +1265,187 @@ class _WikidataModelsPass:
                     {"chained_to_held": True} if chain_evidence else None,
                 )
 
+    # --- rung 6, mint (§7) -----------------------------------------------------
+
+    def _mint_candidate(self, subject: _Subject) -> tuple[int, str, str] | None:
+        """(company_id, name, slug) when the entity may mint, else None.
+
+        Every condition is an under-admission by design - a skipped entity
+        just keeps waiting, and widening costs one registry review:
+
+        - sole asserted maker, resolved to one registry company (a multi-
+          maker entity is a JV or a rebadge, a judgment not a mint);
+        - a real label, not the bare QID the label service fell back to;
+        - no membership evidence: P179/P361 point at something we do not
+          hold, and such an entity may be a generation of it (level is
+          structural, never label - the founding ADR 0012 lesson);
+        - no excluded word: concept/prototype/race cars are an unruled
+          scope question and wait for it;
+        - the label does not wear ANOTHER held marque ('Fiat 850' files
+          under Abarth with a label that says whose car it is), same-family
+          prefixes tolerated as in the cross-badge guard;
+        - the stripped name is not the company name itself.
+        """
+        entity = subject.entity
+        if len(subject.held_companies) != 1 or len(entity.makers) != 1:
+            return None
+        company_id = subject.held_companies[0]
+        if company_id not in self.mint_companies:
+            return None
+        label = entity.label or ""
+        if not label or _BARE_QID.fullmatch(label):
+            return None
+        if entity.series_of or entity.part_of:
+            return None
+        if _MINT_EXCLUDE.search(f"{label} {entity.description or ''}"):
+            return None
+        brand = self._label_brand(entity)
+        if brand is not None and brand != company_id:
+            b, m = self.company_norm[brand], self.company_norm[company_id]
+            if not (b.startswith(m) or m.startswith(b)):
+                return None
+        name = self._mint_name(label, company_id)
+        if normalize_name(name) == self.company_norm[company_id]:
+            return None
+        return company_id, name, slugify(name)
+
+    def _mint_name(self, label: str, company_id: int) -> str:
+        """The minted model's name: the label with the marque stripped.
+
+        `_strip` handles the recorded-name cases ("Citroën 2CV" under
+        "Citroën"). It cannot handle a company whose FILED name carries a
+        legal tail the badge does not - "Škoda 100" never starts with
+        "Škoda Auto" - so the fallback cuts the longest run of whole tokens
+        the label and the company name share ("Škoda", "Aston Martin"),
+        provided a remainder survives. Mint-only: rung 3 matching keeps
+        `_strip` untouched, because widening what MATCHES is a different
+        decision from widening what a new row is CALLED.
+        """
+        name = self._strip(label, company_id)
+        if name != label:
+            return name
+        company_tokens = [normalize_name(t) for t in self.companies[company_id].name.split()]
+        label_tokens = label.split()
+        shared = 0
+        for lt, ct in zip(label_tokens, company_tokens, strict=False):
+            if normalize_name(lt) != ct:
+                break
+            shared += 1
+        if 0 < shared < len(label_tokens):
+            return " ".join(label_tokens[shared:])
+        return name
+
+    def _mint_phase(self) -> None:
+        """Mint the collected candidates, contested slugs held as a group.
+
+        Label twins are the trap the census predicted: four distinct "Škoda
+        Rapid" entities are four different-era cars sharing a nameplate, and
+        minting any one of them would enthrone an arbitrary era at the plain
+        address. Unlike the vPIC collision rule (§2.3: lower filing keeps the
+        slug), NO twin mints - which of them deserves the plain name, and
+        what the others should be called, is one naming ruling per group."""
+
+        def base_slug(name: str) -> str:
+            base = _TRAILING_PAREN.sub("", name)
+            base = _TRAILING_ROMAN.sub("", base)
+            return slugify(base) or slugify(name)
+
+        groups: dict[tuple[int, str], list[tuple[_Subject, int, str, str]]] = {}
+        for cand in self.mint_candidates:
+            groups.setdefault((cand[1], base_slug(cand[2])), []).append(cand)
+
+        for (company_id, base), cands in sorted(groups.items()):
+            company = self.companies[company_id]
+            # A group is every candidate sharing an era-stripped base:
+            # exact twins ("C6"/"C6") and dressed siblings ("Dokker"/
+            # "Dokker I"/"Dokker II", "A110"/"A110 (2017)") alike. A base
+            # already worn by a held model contests a single candidate the
+            # same way - "A110 (2017)" beside a live A110 is the same
+            # question as beside a candidate one.
+            base_occupant = self.model_by_company_slug.get((company_id, base))
+            dressed_single = len(cands) == 1 and cands[0][3] != base
+            if len(cands) > 1 or (base_occupant is not None and dressed_single):
+                twins = sorted(c[0].entity.qid for c in cands)
+                if base_occupant is not None:
+                    twins.append(self._slug_pair(base_occupant))
+                for subject, _, _name, slug in cands:
+                    self._flag(
+                        subject,
+                        "mint_label_twins",
+                        {"label": subject.entity.label, "slug": slug, "twins": twins},
+                    )
+                    self._decide(
+                        subject,
+                        "6",
+                        "registry_mint",
+                        "flagged_mint_twins",
+                        {"slug": slug, "twins": twins},
+                    )
+                self.stats.mint_contested += len(cands)
+                continue
+
+            ((subject, _, name, slug),) = cands
+            entity = subject.entity
+            reason = nonconforming_slug(slug)
+            if reason is not None:
+                self._flag(
+                    subject,
+                    "mint_slug_nonconforming",
+                    {"label": entity.label, "slug": slug, "reason": reason},
+                )
+                self._decide(
+                    subject,
+                    "6",
+                    "registry_mint",
+                    "flagged_mint_nonconforming",
+                    {"slug": slug, "reason": reason},
+                )
+                self.stats.mint_contested += 1
+                continue
+            occupant = self.model_by_company_slug.get((company_id, slug))
+            if occupant is not None:
+                # The slug is worn by a model the entity did NOT name-match:
+                # either the same nameplate under a spelling rung 3 cannot
+                # see, or a genuine twin. A human rules; a match lands in
+                # WIKIDATA_MODEL_MATCHES, a twin gets its naming ruling.
+                self._flag(
+                    subject,
+                    "mint_slug_occupied",
+                    {"label": entity.label, "slug": slug, "model": self._slug_pair(occupant)},
+                )
+                self._decide(
+                    subject,
+                    "6",
+                    "registry_mint",
+                    "flagged_mint_occupied",
+                    {"model": self._slug_pair(occupant)},
+                )
+                self.stats.mint_contested += 1
+                continue
+
+            model = Model(company_id=company_id, slug=slug, name=name)
+            self.session.add(model)
+            self.session.flush()
+            self.models[model.id] = model
+            self.model_by_company_slug[(company_id, slug)] = model.id
+            self.models_by_name.setdefault(company_id, {}).setdefault(
+                normalize_name(name), []
+            ).append(model.id)
+            self._attach_model(model.id, subject)
+            facts: dict[str, tuple[str, object]] = {"name": (name, name)}
+            if entity.description:
+                facts["summary"] = (entity.description, entity.description)
+            self._assert_facts("model_id", model, MINTED_MODEL_COVERAGE, facts, subject.record)
+            self._dismiss_flags(entity.qid, f"model_minted:{company.slug}/{slug}")
+            self.stats.models_minted += 1
+            self._decide(
+                subject,
+                "6",
+                "registry_mint",
+                "model_minted",
+                {"model": f"{company.slug}/{slug}"},
+            )
+
     # --- the pass ------------------------------------------------------------
 
     def run(self) -> WikidataModelsStats:
@@ -1219,6 +1459,7 @@ class _WikidataModelsPass:
         self._line_phase()
         self._membership_phase()
         self._structure_phase()
+        self._mint_phase()
         self.decisions.flush()
         for subject in self.subjects.values():
             mark_reconciled(self.session, subject.record)

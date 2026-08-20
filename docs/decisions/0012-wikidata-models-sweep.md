@@ -1,6 +1,6 @@
 # ADR 0012 — The Wikidata models sweep: the ladder, lines, and generations
 
-- Status: Accepted (2026-07-30, PR #24, as amended - expansion tabled, E46-page-as-view)
+- Status: Accepted (2026-07-30, PR #24, as amended - expansion tabled, E46-page-as-view); amended 2026-08-19 (§7, the mint registry)
 - Date: 2026-07-30
 - Depends on: ADR 0007 (reconciler contract), ADR 0008 (match-pass
   precedent), ADR 0010 (the models pass), ADR 0011 (as-filed models;
@@ -161,3 +161,94 @@ superseded, flagged, never unique-constrained across sources.
 - The year-pass ADR unblocks the day this lands: periods hang under
   §5's generations, and the line-case instantiation happens there with
   vPIC years in hand.
+
+
+---
+
+## Amendment (2026-08-19): §7 — the mint registry
+
+- Extends: the decision above, whose rule this narrows ("match and enrich,
+  never create"); ADR 0010 §1 (one open question must not fan out into
+  model-shaped copies); ADR 0011 §4 (external ids on 1:1 correspondence)
+- Ruled 2026-08-18: fill the European marques, so their pages hold real
+  catalogues instead of an empty table under a real company.
+
+### The problem
+
+Every model row is vPIC-born — 1,735 of 1,735 carried a vPIC filing id when
+this was censused — and vPIC and EPA are registries of the United States
+market. A marque that never sold there can never earn a model row from any
+landed source, however many queues are worked. That is why 7,072 of 7,201
+companies hold no models, and why Citroën, Škoda, SEAT and Dacia render as
+empty catalogues while the sweep already holds their nameplates: 8,217
+`waits_unmatched` entities resolve their maker to a company we hold (Citroën
+126, Škoda 146, SEAT 92, Renault 203, Opel 104, Lancia 56, Dacia 34, ...).
+
+The two obvious mechanical rules both fail the same census:
+
+- **"Maker resolves to a held company" over-mints.** 519 entities resolve to
+  General Motors and 318 to Ford Motor Company — group entities whose models
+  live under their brands. A rule keyed on maker resolution alone would mint
+  Chevrolets under the group.
+- **"The company holds zero models" is time-asymmetric.** True on the run
+  that fills the company, false on every run after, so the same rule admits
+  an entity today and refuses its sibling tomorrow.
+
+What a mechanical rule cannot carry, a registry can: which companies deserve
+the fill is a judgment, recorded per company, with the census reviewed before
+each addition.
+
+Terms. To **mint** is to create a `models` row. **Label twins** are distinct
+entities sharing one label under one maker — usually different-era cars
+sharing a nameplate (the census found four "Škoda Rapid" and three
+"Citroën C6").
+
+### Decision
+
+1. **A mint registry.** `WIKIDATA_MINT_COMPANIES` (company QID → slug, the
+   value documentation only) names the companies whose sweep entities may
+   mint. Resolution goes through `external_ids` like every maker, so an alias
+   QID of a listed company gates the same. Grown only by ruling.
+2. **Per-entity conditions**, each an under-admission (a skipped entity keeps
+   waiting; widening costs one review): sole asserted maker; a real label,
+   not the bare-QID fallback; no P179/P361 membership evidence — level is
+   structural, never label, and such an entity may be a generation of
+   something unheld; no excluded word (`WIKIDATA_MINT_EXCLUDE`) — concept,
+   prototype and race-only cars are the charter's open scope question and
+   wait for its ruling; the label does not wear another held marque
+   ("Fiat 850" files under Abarth with a label that says whose car it is);
+   the stripped name is not the company name itself.
+3. **Contested slugs never mint.** Label twins flag as a group — unlike the
+   vPIC collision rule (ADR 0010 §2.3, lower filing keeps the slug), because
+   there the colliding records are one nameplate seen twice, while twins are
+   different cars: minting any one would enthrone an arbitrary era at the
+   plain address. Which twin deserves the plain name, and what the others are
+   called, is one naming ruling per group. A slug worn by an existing model
+   the entity did not name-match flags with the occupant as candidate — the
+   accent-divergence case (vPIC "Mehari", label "Méhari") is either the same
+   nameplate for `WIKIDATA_MODEL_MATCHES` or a genuine twin.
+4. **A minted model's name is the prefix-stripped label**, asserted with
+   provenance under `MINTED_MODEL_COVERAGE` — the one case Wikidata names a
+   model, because here it is the filing source. The QID becomes the model's
+   filing id for registry purposes (`_model_key` falls back to it), so minted
+   models can be curated and negated like any other.
+5. **Minting creates identity only.** No catalogue periods, no generations,
+   no configurations: time still arrives from catalogue-bearing sources, and
+   a minted model legitimately renders with an em-dash year range until one
+   covers it.
+
+### Consequences
+
+- The pilot registry lists twelve companies: nine empty European marques
+  (Citroën, Škoda, SEAT, Dacia, Abarth, Cupra, DS, Alpine, Vauxhall) and
+  three deliberately mixed ones (Renault, Opel, Lancia) as the US/EU overlap
+  probes — their vPIC-born filings and Wikidata-born mints now share a
+  catalogue, which is where naming and identity issues will first surface.
+- The twins queue is new review work with a naming-ruling shape; resolutions
+  land as era-qualified names or `WIKIDATA_MODEL_MATCHES` entries.
+- Un-listing a company stops future mints but keeps existing rows (they hold
+  QID external ids and refresh like any matched model). Retiring minted rows
+  is a decision script plus registry entries, the demote-non-generations
+  shape, if ever needed.
+- The empty-company page copy stays honest either way: it names our coverage
+  limit, not a claim about the marque.
