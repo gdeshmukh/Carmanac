@@ -39,7 +39,7 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     parse_heading,
     trim_body_signal,
 )
-from carmanac.reconcile.wikipedia_sections_pass import run_wikipedia_sections_pass
+from carmanac.reconcile.wikipedia_pass import run_wikipedia_pass
 from tests.test_generation_placement import (  # noqa: F401
     spine,
     wikipedia_source,
@@ -216,7 +216,7 @@ def test_sections_mint_generations_with_links_and_facts(
         "== Second generation (E89; 2009) ==\n"
         "{{Infobox automobile\n| production = 2009–2016\n}}\n",
     )
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_created == 2 and stats.flagged_articles == 0
 
     e85 = db.scalar(
@@ -247,7 +247,7 @@ def test_sections_mint_generations_with_links_and_facts(
     ).one()
 
     # Convergence: run 2 writes nothing.
-    stats2 = run_wikipedia_sections_pass(db)
+    stats2 = run_wikipedia_pass(db)
     assert stats2.generations_created == 0 and stats2.assertions_inserted == 0
     assert stats2.links_asserted == 0
 
@@ -268,7 +268,7 @@ def test_duplicate_ordinals_flag_and_mint_nothing(
         "== First generation (E85; 2002) ==\n{{Infobox automobile\n| production = 2002–2008\n}}\n"
         "== First generation (E89; 2009) ==\n{{Infobox automobile\n| production = 2009–2016\n}}\n",
     )
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_created == 0 and stats.flagged_articles == 1
     flag = db.scalars(
         select(ReconciliationFlag).where(
@@ -278,7 +278,7 @@ def test_duplicate_ordinals_flag_and_mint_nothing(
     ).one()
     assert flag.detail["reason"] == "duplicate_or_noncontiguous_ordinals"
     # Re-run: the open question is not re-asked.
-    stats2 = run_wikipedia_sections_pass(db)
+    stats2 = run_wikipedia_pass(db)
     assert stats2.flags_opened == 0
 
 
@@ -306,7 +306,7 @@ def test_existing_inventory_reconciles_or_mints_distinct(
     spine["e90"].chassis_codes = ["E90"]
     db.commit()
 
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_created == 0 and stats.sections_reconciled == 2
     assert stats.flagged_articles == 0
     corroborating = db.scalars(
@@ -340,7 +340,7 @@ def test_unreconcilable_sections_flag_instead_of_duplicating(
     )
     db.add(ExternalId(model_id=spine["model"].id, source_id=wikidata_source.id, external_id="Q9"))
     db.commit()
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_created == 0 and stats.flagged_articles == 1
     assert db.scalar(select(Generation).where(Generation.slug == "330i-ab12")) is None
 
@@ -380,7 +380,7 @@ def test_curated_routing_and_disjoint_codes_mint_the_amg_gt_shape(
         "== Second generation (C590; 2026) ==\n"
         "{{Infobox automobile\n| production = 2026 (to commence)\n}}\n",
     )
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_created == 4 and stats.flagged_articles == 0
     slugs = set(
         db.scalars(
@@ -456,7 +456,7 @@ def test_body_veto_places_both_amg_gt_sides_without_overlap(
         "== First generation (X290; 2018) ==\n"
         "{{Infobox automobile\n| production = 2018–2026\n}}\n",
     )
-    run_wikipedia_sections_pass(db)
+    run_wikipedia_pass(db)
 
     # Periods hang under the routed model; both cars share the 2019 year.
     market = db.execute(text("SELECT id FROM market_regions ORDER BY id LIMIT 1")).scalar()

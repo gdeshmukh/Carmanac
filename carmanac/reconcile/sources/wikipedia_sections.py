@@ -18,6 +18,8 @@ from carmanac.reconcile.sources.wikipedia_infobox import (
     _COMMENT,
     _REF,
     infobox_field,
+    same_subject,
+    title_code_tokens,
 )
 
 _HEADING = re.compile(r"^(={2,4})\s*(.+?)\s*\1\s*$", re.MULTILINE)
@@ -163,6 +165,18 @@ def parse_heading(raw: str) -> GenerationSection | None:
         has_infobox=False,
         body="",
     )
+
+
+def section_main_asserts(payload: dict) -> bool:
+    """The grain guards on a landed `section-main:` record (ADR 0018 §3):
+    a redirected target asserts nothing, and so does a bare-title target -
+    per-generation articles carry a trailing parenthetical (`Mazda MX-5
+    (NA)`); a bare title is a nameplate/rebadge deferral speaking at the
+    wrong grain."""
+    resolved = payload.get("title", "")
+    if not same_subject(payload.get("requested_title", ""), resolved):
+        return False
+    return title_code_tokens(resolved) is not None
 
 
 def parse_article(title: str, wikitext: str) -> ParsedArticle:

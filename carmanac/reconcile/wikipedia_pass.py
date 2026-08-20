@@ -1,12 +1,16 @@
-"""The Wikipedia sections pass (ADR 0017 §4): generation existence from
+"""The Wikipedia pass (ADR 0017): generation time and existence from
 nameplate articles.
 
-Consumes landed `article:<QID>` records. The QID routes to a model - by its
-1:1 attachment, or through the curated `SECTION_ARTICLE_MODELS` registry -
-and the article's per-generation sections mint generations under that
-model's company, keyed `section:<QID>#<ordinal>` in `external_ids`. Identity
-is inherited: the article is reached through the model's QID, and sections
-are structural parsing inside that scope, not name matching.
+Consumes landed `article:<QID>` records (with `section-main:` evidence),
+one pass for what two used to split. A generation-attached QID's article
+dates that generation from its lead infobox (§2; the lead IS section 0, so
+the retired `infobox:` records' job rides the full article now). A
+model-attached QID's article works at nameplate grain: its per-generation
+sections mint generations under that model's company (§4), keyed
+`section:<QID>#<ordinal>` in `external_ids`. The QID routes by 1:1
+attachment or the curated `SECTION_ARTICLE_MODELS` registry; identity is
+inherited, and sections are structural parsing inside that scope, not name
+matching.
 
 The guardrails, all from the ADR:
 
@@ -38,7 +42,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
@@ -46,6 +50,7 @@ from carmanac.db.models import (
     ExternalId,
     Generation,
     GenerationModelLink,
+    MatchDecision,
     Model,
     RawRecord,
     ReconciliationFlag,
@@ -67,41 +72,34 @@ from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes, strip_prefix
 from carmanac.reconcile.sources.wikipedia_infobox import (
     infobox_field,
+    parse_infobox,
     parse_span,
+    same_subject,
     title_code_tokens,
 )
 from carmanac.reconcile.sources.wikipedia_sections import (
     ORDINAL_WORDS,
     GenerationSection,
     parse_article,
+    section_main_asserts,
 )
-from carmanac.reconcile.wikipedia_infobox_pass import _same_subject
-
-
-def section_main_asserts(payload: dict) -> bool:
-    """The grain guards on a landed `section-main:` record (ADR 0018 §3),
-    shared with placement's decision-time loaders. A redirected target
-    asserts nothing (the §2 rule verbatim), and so does a bare-title target:
-    per-generation articles carry a trailing parenthetical (`Mazda MX-5
-    (NA)`) - a bare title (`Kia Sephia`) is a nameplate/rebadge deferral
-    whose section-0 speaks at the wrong grain, arriving without a redirect
-    to warn us."""
-    resolved = payload.get("title", "")
-    if not _same_subject(payload.get("requested_title", ""), resolved):
-        return False
-    return title_code_tokens(resolved) is not None
-
 
 log = logging.getLogger(__name__)
 
-PASS_NAME = "wikipedia_sections"
+PASS_NAME = "wikipedia"
 
 COVERAGE: tuple[str, ...] = ("name", "chassis_codes", "start_year", "end_year")
 
+# What a generation-attached article's lead infobox speaks about; name stays
+# out - a wd-attached generation keeps its own name.
+LEAD_COVERAGE: tuple[str, ...] = ("start_year", "end_year", "chassis_codes")
+
 
 @dataclass
-class WikipediaSectionsStats:
+class WikipediaStats:
     processed: int = 0
+    generations_timed: int = 0
+    no_facts_found: int = 0
     articles_minted_from: int = 0
     generations_created: int = 0
     generations_refreshed: int = 0
@@ -118,7 +116,8 @@ class WikipediaSectionsStats:
 
     def summary(self) -> str:
         return (
-            f"processed={self.processed} minted_from={self.articles_minted_from} "
+            f"processed={self.processed} timed={self.generations_timed} "
+            f"no_facts={self.no_facts_found} minted_from={self.articles_minted_from} "
             f"created={self.generations_created} refreshed={self.generations_refreshed} "
             f"links={self.links_asserted} reconciled={self.sections_reconciled} "
             f"no_sections={self.no_sections} redirected={self.redirected} "
@@ -129,16 +128,17 @@ class WikipediaSectionsStats:
         )
 
 
-class _SectionsPass:
+class _WikipediaPass:
     def __init__(self, session: Session):
         self.session = session
-        self.stats = WikipediaSectionsStats()
+        self.stats = WikipediaStats()
         self.source = get_source(session, SOURCE_NAME)
         self.wikidata_id = session.scalar(select(Source.id).where(Source.name == "Wikidata"))
         self.decisions = DecisionLog(session, self.source.id, PASS_NAME)
 
         self.current = current_records(session, self.source.id)
         self._load_routing()
+        self._load_generation_attachments()
         self._load_strip_prefixes()
         self._load_generations()
         self._load_links()
@@ -190,6 +190,20 @@ class _SectionsPass:
                 log.warning("SECTION_ARTICLE_MODELS[%s] -> %r: no such model yet", qid, key)
                 continue
             self.model_by_qid[qid] = model_id
+
+    def _load_generation_attachments(self) -> None:
+        """QID -> generation, via the Wikidata attachment: these articles
+        date one generation from their lead infobox instead of routing to a
+        model."""
+        self.generation_by_qid: dict[str, int] = {
+            qid: generation_id
+            for qid, generation_id in self.session.execute(
+                select(ExternalId.external_id, ExternalId.generation_id).where(
+                    ExternalId.source_id == self.wikidata_id,
+                    ExternalId.generation_id.isnot(None),
+                )
+            )
+        }
 
     def _load_strip_prefixes(self) -> None:
         """ADR 0013 §1 name forms per company - its own name plus its vPIC
@@ -329,7 +343,7 @@ class _SectionsPass:
 
     def _load_open_flags(self) -> None:
         self.open_article_flags: dict[str, ReconciliationFlag] = {}
-        self.open_value_flags: set[tuple[int, str]] = set()
+        self.open_value_flags: dict[tuple[int, str], ReconciliationFlag] = {}
         for flag in self.session.scalars(
             select(ReconciliationFlag).where(
                 ReconciliationFlag.status == "open",
@@ -342,7 +356,7 @@ class _SectionsPass:
                 if qid:
                     self.open_article_flags[qid] = flag
             elif flag.generation_id is not None:
-                self.open_value_flags.add((flag.generation_id, flag.field_name))
+                self.open_value_flags[(flag.generation_id, flag.field_name)] = flag
 
     # --- flags ----------------------------------------------------------------
 
@@ -398,17 +412,16 @@ class _SectionsPass:
         key = (generation.id, "production")
         if key in self.open_value_flags:
             return
-        self.session.add(
-            ReconciliationFlag(
-                kind="implausible_value",
-                generation_id=generation.id,
-                field_name="production",
-                detail={"reason": reason, "raw": raw[:500], "heading": context},
-                source_id=self.source.id,
-                raw_record_id=record.id,
-            )
+        flag = ReconciliationFlag(
+            kind="implausible_value",
+            generation_id=generation.id,
+            field_name="production",
+            detail={"reason": reason, "raw": raw[:500], "heading": context},
+            source_id=self.source.id,
+            raw_record_id=record.id,
         )
-        self.open_value_flags.add(key)
+        self.session.add(flag)
+        self.open_value_flags[key] = flag
         self.stats.flags_opened += 1
 
     def _section_facts(
@@ -545,12 +558,103 @@ class _SectionsPass:
             self.stats.assertions_inserted += inserted
             self.stats.assertions_superseded += superseded
 
+    def _lead_facts(self, generation: Generation, record: RawRecord) -> None:
+        """A generation-attached article dates its generation from the lead
+        infobox: production span, chassis codes from the title parenthetical.
+        A span that does not reduce to exactly one range flags
+        `implausible_value` and asserts nothing; a field that starts parsing
+        again dismisses the question it used to raise."""
+        top = parse_article(
+            record.payload["title"], record.payload.get("wikitext", "")
+        ).top_wikitext
+        parsed = parse_infobox(record.payload["title"], top)
+        facts: dict[str, tuple[str, object]] = {}
+        if parsed.production is not None:
+            observed = f"{parsed.production.start}–{parsed.production.end or 'present'}"
+            facts["start_year"] = (observed, parsed.production.start)
+            facts["end_year"] = (observed, parsed.production.end)
+        codes, _ambiguous = extract_chassis_codes(parsed.title, (), None)
+        if title_code_tokens(parsed.title) and codes:
+            facts["chassis_codes"] = ("|".join(codes), codes)
+
+        failed = {field_name for field_name, _, _ in parsed.failures}
+        for field_name, span in (
+            ("production", parsed.production),
+            ("model years", parsed.model_years),
+        ):
+            key = (generation.id, field_name)
+            flag = self.open_value_flags.get(key)
+            if span is not None and field_name not in failed and flag is not None:
+                flag.status = "dismissed"
+                flag.resolved_at = func.now()
+                flag.detail = {
+                    **(flag.detail or {}),
+                    "resolution": "parses_under_labeled_defer_amendment",
+                }
+                del self.open_value_flags[key]
+                self.stats.flags_dismissed += 1
+        for field_name, reason, raw in parsed.failures:
+            key = (generation.id, field_name)
+            if key in self.open_value_flags:
+                continue
+            flag = ReconciliationFlag(
+                kind="implausible_value",
+                generation_id=generation.id,
+                field_name=field_name,
+                detail={
+                    "reason": reason,
+                    "raw": raw,
+                    "title": parsed.title,
+                    "qid": record.payload["qid"],
+                },
+                source_id=self.source.id,
+                raw_record_id=record.id,
+            )
+            self.session.add(flag)
+            self.open_value_flags[key] = flag
+            self.stats.flags_opened += 1
+
+        inserted, superseded = assert_field_facts(
+            self.session,
+            arc_col="generation_id",
+            entity=generation,
+            coverage=LEAD_COVERAGE,
+            facts=facts,
+            source_id=self.source.id,
+            record=record,
+        )
+        self.stats.assertions_inserted += inserted
+        self.stats.assertions_superseded += superseded
+        if facts:
+            self.stats.generations_timed += 1
+            self.decisions.record(
+                record, "facts_asserted", method="infobox_parse", detail={"fields": sorted(facts)}
+            )
+        else:
+            self.stats.no_facts_found += 1
+            self.decisions.record(record, "no_facts_found")
+
     def _process_article(self, record: RawRecord) -> None:
         qid = record.payload["qid"]
         # Redirect detection first (ADR 0019 §3 companion fix): an article
         # that both lost its routing and got redirected must still tombstone
         # its stale facts - the old order skipped the safety with the work.
-        if not _same_subject(record.payload.get("requested_title", ""), record.payload["title"]):
+        if not same_subject(record.payload.get("requested_title", ""), record.payload["title"]):
+            generation_id = self.generation_by_qid.get(qid)
+            if generation_id is not None:
+                # Empty facts still run the tombstone: a span asserted before
+                # the redirect was recognised heals back to NULL.
+                inserted, superseded = assert_field_facts(
+                    self.session,
+                    arc_col="generation_id",
+                    entity=self.generations[generation_id],
+                    coverage=LEAD_COVERAGE,
+                    facts={},
+                    source_id=self.source.id,
+                    record=record,
+                )
+                self.stats.assertions_inserted += inserted
+                self.stats.assertions_superseded += superseded
             self._tombstone_stale_sections(qid, set(), record)
             self.stats.redirected += 1
             self.decisions.record(
@@ -561,6 +665,11 @@ class _SectionsPass:
                     "resolved": record.payload["title"],
                 },
             )
+            return
+
+        generation_id = self.generation_by_qid.get(qid)
+        if generation_id is not None:
+            self._lead_facts(self.generations[generation_id], record)
             return
 
         model_id = self.model_by_qid.get(qid)
@@ -763,12 +872,19 @@ class _SectionsPass:
             detail["section_main"] = section_main_detail
         self.decisions.record(record, "sections_processed", method="section_parse", detail=detail)
 
-    def run(self) -> WikipediaSectionsStats:
+    def run(self) -> WikipediaStats:
+        # One pass replaced wikipedia_infobox + wikipedia_sections; their
+        # decision rows would otherwise linger as a retired queue forever.
+        self.session.execute(
+            delete(MatchDecision).where(
+                MatchDecision.pass_name.in_(["wikipedia_infobox", "wikipedia_sections"])
+            )
+        )
         for record in self.current:
             if record.external_id.startswith("section-main:"):
                 # Consumed as evidence inside the article's processing; marked
-                # here so staleness stays queryable. `infobox:` records belong
-                # to the infobox pass, which marks its own.
+                # here so staleness stays queryable. `infobox:` records are
+                # archival - the article carries section 0.
                 mark_reconciled(self.session, record)
                 continue
             if not record.external_id.startswith("article:"):
@@ -781,13 +897,13 @@ class _SectionsPass:
         return self.stats
 
 
-def run_wikipedia_sections_pass(session: Session) -> WikipediaSectionsStats:
-    stats = _SectionsPass(session).run()
-    log.info("wikipedia sections pass done: %s", stats.summary())
+def run_wikipedia_pass(session: Session) -> WikipediaStats:
+    stats = _WikipediaPass(session).run()
+    log.info("wikipedia pass done: %s", stats.summary())
     return stats
 
 
 if __name__ == "__main__":
     from carmanac.runner import run
 
-    run(run_wikipedia_sections_pass)
+    run(run_wikipedia_pass)

@@ -31,7 +31,7 @@ from carmanac.db.models import (
 from carmanac.ingest.landing import content_hash
 from carmanac.reconcile.generation_placement_pass import run_generation_placement_pass
 from carmanac.reconcile.sources.wikipedia_infobox import parse_infobox, parse_span
-from carmanac.reconcile.wikipedia_infobox_pass import run_wikipedia_infobox_pass
+from carmanac.reconcile.wikipedia_pass import run_wikipedia_pass
 from tests.test_vpic_models_pass import vpic_source  # noqa: F401
 
 # --- the parser (pure) --------------------------------------------------------
@@ -87,7 +87,7 @@ def wikipedia_source(db) -> Source:
     return source
 
 
-def _land_infobox(db, source: Source, qid: str, title: str, wikitext: str) -> RawRecord:
+def _land_article(db, source: Source, qid: str, title: str, wikitext: str) -> RawRecord:
     payload = {
         "qid": qid,
         "title": title,
@@ -97,7 +97,7 @@ def _land_infobox(db, source: Source, qid: str, title: str, wikitext: str) -> Ra
     }
     rec = RawRecord(
         source_id=source.id,
-        external_id=f"infobox:{qid}",
+        external_id=f"article:{qid}",
         content_hash=content_hash(payload),
         payload=payload,
     )
@@ -167,14 +167,14 @@ def _configuration(db, spine, year: int, slug: str) -> Configuration:
 
 @pytest.mark.integration
 def test_infobox_pass_times_and_codes_generation(db, wikidata_source, wikipedia_source, spine):
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q1",
         "BMW 3 Series (E46)",
         "{{Infobox automobile\n| production = 1997–2006\n}}",
     )
-    stats = run_wikipedia_infobox_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_timed == 1
 
     db.refresh(spine["e46"])
@@ -190,20 +190,20 @@ def test_infobox_pass_times_and_codes_generation(db, wikidata_source, wikipedia_
     ).one()
 
     # Idempotence: the second run asserts nothing new.
-    stats2 = run_wikipedia_infobox_pass(db)
+    stats2 = run_wikipedia_pass(db)
     assert stats2.assertions_inserted == 0 and stats2.flags_opened == 0
 
 
 @pytest.mark.integration
 def test_infobox_pass_flags_unreducible_span(db, wikidata_source, wikipedia_source, spine):
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q1",
         "BMW 3 Series (E46)",
         "{{Infobox automobile\n| production = 1997–2000 (sedan)\n1999–2006 (coupe)\n}}",
     )
-    stats = run_wikipedia_infobox_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.flags_opened == 1
     db.refresh(spine["e46"])
     assert spine["e46"].start_year is None, "an unreducible span asserts nothing"
@@ -215,7 +215,7 @@ def test_infobox_pass_flags_unreducible_span(db, wikidata_source, wikipedia_sour
     ).one()
     assert flag.detail["reason"] == "multiple_ranges"
     # Re-run: the open flag is not re-asked.
-    stats2 = run_wikipedia_infobox_pass(db)
+    stats2 = run_wikipedia_pass(db)
     assert stats2.flags_opened == 0
 
 
@@ -225,21 +225,21 @@ def test_infobox_pass_flags_unreducible_span(db, wikidata_source, wikipedia_sour
 def _time_generations(db, wikidata_source, wikipedia_source):
     """E46 1997-2006, E90 2005-2011 - a real one-year overlap at 2005-2006
     once end-slack widens E46 to 2007."""
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q1",
         "BMW 3 Series (E46)",
         "{{Infobox automobile\n| production = 1997–2006\n}}",
     )
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q2",
         "BMW 3 Series (E90)",
         "{{Infobox automobile\n| production = 2005–2011\n}}",
     )
-    run_wikipedia_infobox_pass(db)
+    run_wikipedia_pass(db)
 
 
 @pytest.mark.integration
@@ -315,14 +315,14 @@ def test_model_years_span_outranks_production(db, wikidata_source, wikipedia_sou
     """An explicit US model_years field is the same axis as the period and
     wins exact: E46 model-years 1999-2005 excludes a 1997 configuration that
     its production span would have accepted."""
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q1",
         "BMW 3 Series (E46)",
         "{{Infobox automobile\n| production = 1997–2006\n| model_years = 1999–2005\n}}",
     )
-    run_wikipedia_infobox_pass(db)
+    run_wikipedia_pass(db)
     config = _configuration(db, spine, 1997, "330i-1997")
     stats = run_generation_placement_pass(db)
     db.refresh(config)
@@ -341,14 +341,14 @@ def test_moved_evidence_withdraws_placement(db, wikidata_source, wikipedia_sourc
 
     # The article is corrected: E46 production actually started 2001. A new
     # revision lands beside the old record and becomes current.
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q1",
         "BMW 3 Series (E46)",
         "{{Infobox automobile\n| production = 2001–2006\n}}",
     )
-    run_wikipedia_infobox_pass(db)
+    run_wikipedia_pass(db)
     stats = run_generation_placement_pass(db)
 
     db.refresh(config)
@@ -367,14 +367,14 @@ def test_moved_evidence_withdraws_placement(db, wikidata_source, wikipedia_sourc
 def test_undated_competitor_bars_placement(db, wikidata_source, wikipedia_source, spine):
     """The Celica lesson: one dated match beside an undated sibling is not
     uniqueness - the configuration waits until the sibling gains a span."""
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q1",
         "BMW 3 Series (E46)",
         "{{Infobox automobile\n| production = 1997–2006\n}}",
     )
-    run_wikipedia_infobox_pass(db)  # e90 stays undated
+    run_wikipedia_pass(db)  # e90 stays undated
     config = _configuration(db, spine, 2000, "330i-2000")
     stats = run_generation_placement_pass(db)
 
@@ -391,7 +391,7 @@ def test_redirected_article_asserts_nothing(db, wikidata_source, wikipedia_sourc
     """The Civic Hybrid lesson: a sitelink that redirects to a different
     page changed subject - the whole-nameplate span must not land, and one
     that already landed heals back to NULL."""
-    rec = _land_infobox(
+    rec = _land_article(
         db,
         wikipedia_source,
         "Q1",
@@ -401,7 +401,7 @@ def test_redirected_article_asserts_nothing(db, wikidata_source, wikipedia_sourc
     rec.payload = {**rec.payload, "requested_title": "BMW 3 Series (E46)"}
     rec.content_hash = content_hash(rec.payload)
     db.commit()
-    stats = run_wikipedia_infobox_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.redirected == 1 and stats.generations_timed == 0
     db.refresh(spine["e46"])
     assert spine["e46"].start_year is None
@@ -434,14 +434,14 @@ def test_wd_models_refresh_does_not_stomp_infobox_columns(
         makers=["Q999"],
         inceptions=["1990-01-01T00:00:00Z"],
     )
-    _land_infobox(
+    _land_article(
         db,
         wikipedia_source,
         "Q1",
         "BMW 3 Series (E46)",
         "{{Infobox automobile\n| production = 1997–2006\n}}",
     )
-    run_wikipedia_infobox_pass(db)
+    run_wikipedia_pass(db)
     db.refresh(spine["e46"])
     assert spine["e46"].start_year == 1997
 

@@ -143,8 +143,8 @@ $P -m carmanac.ingest.epa.bulk        && $P -m carmanac.reconcile.epa_attach_pas
 # generation time from Wikipedia; more generations minted from nameplate
 # articles' sections, dated via their {{Main}} target pages (the second
 # fetch lands the targets the first pass run minted)
-$P -m carmanac.ingest.wikipedia.fetch && $P -m carmanac.reconcile.wikipedia_infobox_pass && $P -m carmanac.reconcile.wikipedia_sections_pass
-$P -m carmanac.ingest.wikipedia.fetch && $P -m carmanac.reconcile.wikipedia_sections_pass
+$P -m carmanac.ingest.wikipedia.fetch && $P -m carmanac.reconcile.wikipedia_pass
+$P -m carmanac.ingest.wikipedia.fetch && $P -m carmanac.reconcile.wikipedia_pass
 
 # placement by dated overlap, then page addresses — always last
 $P -m carmanac.reconcile.generation_placement_pass

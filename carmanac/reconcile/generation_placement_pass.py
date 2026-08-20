@@ -76,9 +76,9 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     epa_body_signal,
     generation_doors,
     parse_article,
+    section_main_asserts,
     trim_body_signal,
 )
-from carmanac.reconcile.wikipedia_sections_pass import section_main_asserts
 
 log = logging.getLogger(__name__)
 
@@ -149,9 +149,10 @@ class _PlacementPass:
         self._load_live_placements()
 
     def _load_model_year_spans(self) -> None:
-        """Per QID-attached generation: the infobox `model_years` span parsed
-        from its landed section-0 record, and the door counts its
-        `body_style` asserts (decision-time reads, ADR §3/§4)."""
+        """Per QID-attached generation: the infobox `model_years` span and
+        `body_style` door counts, from its landed section-0 record or the
+        full article's lead (which replaced it) - decision-time reads,
+        ADR §3/§4."""
         wikidata_id = self.session.scalar(select(Source.id).where(Source.name == "Wikidata"))
         qid_by_generation: dict[str, int] = {
             qid: generation_id
@@ -164,14 +165,24 @@ class _PlacementPass:
         }
         if not qid_by_generation:
             return
+        landed: dict[str, RawRecord] = {}
         for record in self.session.scalars(
             select(RawRecord).where(
                 RawRecord.source_id == self.source.id,
-                RawRecord.external_id.in_([f"infobox:{qid}" for qid in qid_by_generation]),
+                RawRecord.external_id.in_(
+                    [f"infobox:{qid}" for qid in qid_by_generation]
+                    + [f"article:{qid}" for qid in qid_by_generation]
+                ),
             )
         ):
-            generation_id = qid_by_generation[record.payload["qid"]]
+            # The full article supersedes the retired section-0 record.
+            if record.external_id.startswith("article:") or record.payload["qid"] not in landed:
+                landed[record.payload["qid"]] = record
+        for qid, record in landed.items():
+            generation_id = qid_by_generation[qid]
             wikitext = record.payload.get("wikitext", "")
+            if record.external_id.startswith("article:"):
+                wikitext = parse_article(record.payload["title"], wikitext).top_wikitext
             parsed = parse_infobox(record.payload["title"], wikitext)
             if parsed.model_years is not None:
                 self.model_year_spans[generation_id] = (parsed.model_years, record.id)

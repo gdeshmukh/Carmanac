@@ -29,11 +29,9 @@ from carmanac.ingest.wikipedia.fetch import section_main_targets
 from carmanac.reconcile import policy
 from carmanac.reconcile.generation_placement_pass import run_generation_placement_pass
 from carmanac.reconcile.sources.wikipedia_infobox import parse_span
+from carmanac.reconcile.sources.wikipedia_sections import section_main_asserts
 from carmanac.reconcile.wikidata_models_pass import run_wikidata_models_pass
-from carmanac.reconcile.wikipedia_sections_pass import (
-    run_wikipedia_sections_pass,
-    section_main_asserts,
-)
+from carmanac.reconcile.wikipedia_pass import run_wikipedia_pass
 from scripts.decisions.demote_non_generations import apply as demote_apply
 from scripts.decisions.demote_non_generations import census as demote_census
 from tests.test_generation_placement import (  # noqa: F401
@@ -129,7 +127,7 @@ def test_sections_pass_excludes_demoted_from_reconciliation(
         "BMW 330i",
         "== First generation (AB10; 1999) ==\n{{Infobox automobile\n| production = 1999–2005\n}}\n",
     )
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_created == 1 and stats.flagged_articles == 0
     assert stats.sections_reconciled == 0, "a demoted row must never absorb a section"
 
@@ -221,7 +219,7 @@ def minted_undated(db, wikidata_source, wikipedia_source, spine):
     db.add(ExternalId(model_id=model.id, source_id=wikidata_source.id, external_id="Q60"))
     db.commit()
     _land_article(db, wikipedia_source, "Q60", "Test Roadster", MAIN_ARTICLE)
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     assert stats.generations_created == 2
     na = db.scalar(
         select(Generation)
@@ -246,7 +244,7 @@ def test_section_main_dates_generation_with_target_provenance(
         "{{Infobox automobile\n| production = 1989 {{nbndash}} 1997\n"
         "| model_years = 1990–1997\n}}\n",
     )
-    stats = run_wikipedia_sections_pass(db)
+    stats = run_wikipedia_pass(db)
     na = db.get(Generation, minted_undated["na"].id)
     assert (na.start_year, na.end_year) == (1989, 1997)
     assert stats.flagged_articles == 0
@@ -268,7 +266,7 @@ def test_section_main_dates_generation_with_target_provenance(
     ).one()
     assert name.raw_record_id != record.id, "the name is still the article's assertion"
 
-    stats2 = run_wikipedia_sections_pass(db)
+    stats2 = run_wikipedia_pass(db)
     assert stats2.assertions_inserted == 0 and stats2.assertions_superseded == 0
 
 
@@ -297,7 +295,7 @@ def test_section_main_grain_guards_hold_in_the_pass(
         "Other Nameplate",
         "{{Infobox automobile\n| production = 1992–2003\n}}\n",
     )
-    run_wikipedia_sections_pass(db)
+    run_wikipedia_pass(db)
     na = db.get(Generation, minted_undated["na"].id)
     assert na.start_year is None, "redirected target asserts nothing"
     nb = db.scalar(
@@ -334,7 +332,7 @@ def test_section_main_feeds_placement_and_the_car_places(
         "Test Roadster (NB)",
         "{{Infobox automobile\n| production = 1998–2005\n| model_years = 1999–2005\n}}\n",
     )
-    run_wikipedia_sections_pass(db)
+    run_wikipedia_pass(db)
 
     roadster_spine = dict(spine, model=minted_undated["model"])
     config = _configuration(db, roadster_spine, 1995, "roadster-1995")
@@ -379,7 +377,7 @@ def test_lander_targets_only_clean_single_pointers(db, wikidata_source, wikipedi
         "== Fourth generation (DD10; 2012) ==\n"
         "{{Main|Test Mixed (DD10)}}\n{{Infobox automobile\n| production = 2012–2019\n}}\n",
     )
-    run_wikipedia_sections_pass(db)
+    run_wikipedia_pass(db)
     targets = section_main_targets(db)
     assert [(t.ordinal, t.title) for t in targets if t.qid == "Q70"] == [
         (1, "Test Mixed (AA10)"),

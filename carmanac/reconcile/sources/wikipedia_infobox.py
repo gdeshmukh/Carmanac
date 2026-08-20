@@ -49,6 +49,17 @@ _SEGMENT_SPLIT = re.compile(
 _PAREN_LABEL = re.compile(r"\([^()]*\)")
 
 
+def same_subject(requested: str, resolved: str) -> bool:
+    """Underscore/space and case wobble is a rename; anything more is a
+    redirect that may have changed the article's grain - a whole-nameplate
+    span must never land on one generation."""
+
+    def norm(t: str) -> str:
+        return t.replace("_", " ").strip().casefold()
+
+    return norm(requested) == norm(resolved)
+
+
 @dataclass(frozen=True)
 class Span:
     start: int
