@@ -39,6 +39,7 @@ from carmanac.reconcile.sources import wikidata
 from carmanac.reconcile.wikidata_models_pass import run_wikidata_models_pass
 from tests.test_vpic_models_pass import _land_model, _matched_make, vpic_source  # noqa: F401
 from tests.test_wikidata_models_landing import _ENTITY
+from tests.test_wikipedia_pass import _land_article
 
 pytestmark = pytest.mark.integration
 
@@ -1059,3 +1060,113 @@ def test_mint_contested_rerun_is_stable(db, wikidata_source, vpic_source, monkey
     flags = db.scalars(select(ReconciliationFlag).where(ReconciliationFlag.status == "open")).all()
     assert len([f for f in flags if (f.detail or {}).get("reason") == "mint_label_twins"]) == 2
     assert _decision(db, "Q1750").outcome == "flagged_mint_twins"
+
+
+# --- rung 7, twin rulings (ADR 0012 §7) ----------------------------------------
+
+
+def _wikipedia_source(db) -> Source:
+    source = db.scalar(select(Source).where(Source.name == "Wikipedia (English)"))
+    if source is None:
+        source = Source(name="Wikipedia (English)", tier=2, base_url="https://en.wikipedia.org")
+        db.add(source)
+        db.commit()
+    return source
+
+
+def test_twin_ruling_resolves_model_and_dated_era(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """The ruled shape: one nameplate model (the plain-titled entity), the
+    era entity a generation under it named by its article's parenthetical,
+    both flags dismissed with recorded resolutions, and a re-run stable."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+    _land_sweep(
+        db, wikidata_source, "Q1100", "Citroën C6", description="executive car", makers=["Q6746"]
+    )
+    _land_sweep(
+        db, wikidata_source, "Q1101", "Citroën C6", description="1929 saloon", makers=["Q6746"]
+    )
+    run_wikidata_models_pass(db)  # contests the pair, opens the twin flags
+
+    wikipedia = _wikipedia_source(db)
+    _land_article(
+        db,
+        wikipedia,
+        "Q1101",
+        "Citroën C6 (1928–1932)",
+        "{{Infobox automobile\n| production = 1928–1932\n}}",
+    )
+    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1100", "model:citroen/c6")
+    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1101", "era:citroen/c6")
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.twins_resolved == 2 and stats.mint_contested == 0
+
+    model = db.scalars(select(Model).where(Model.company_id == citroen.id)).one()
+    assert (model.slug, model.name) == ("c6", "C6")
+    assert db.scalars(
+        select(ExternalId).where(ExternalId.model_id == model.id, ExternalId.external_id == "Q1100")
+    ).one(), "the plain-titled entity attaches at model grain"
+
+    generation = db.scalars(
+        select(Generation)
+        .join(ExternalId, ExternalId.generation_id == Generation.id)
+        .where(ExternalId.external_id == "Q1101")
+    ).one()
+    assert generation.name == "C6 (1928–1932)", "the era wears its article's parenthetical"
+    assert generation.slug is None, "a span may separate eras but may not wear an address"
+    assert db.scalars(
+        select(GenerationModelLink).where(
+            GenerationModelLink.generation_id == generation.id,
+            GenerationModelLink.model_id == model.id,
+            GenerationModelLink.superseded_by.is_(None),
+        )
+    ).one()
+    open_twins = db.scalars(
+        select(ReconciliationFlag).where(
+            ReconciliationFlag.kind == "match_review", ReconciliationFlag.status == "open"
+        )
+    ).all()
+    assert not [f for f in open_twins if f.detail.get("reason") == "mint_label_twins"]
+    dismissed = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.status == "dismissed")
+    ).all()
+    assert any(f.detail.get("resolution") == "twin_model:citroen/c6" for f in dismissed)
+    assert any(f.detail.get("resolution") == "twin_era:citroen/c6" for f in dismissed)
+
+    rerun = run_wikidata_models_pass(db)
+    assert rerun.twins_resolved == 0 and rerun.assertions_inserted == 0
+    assert rerun.flags_opened == 0 and rerun.generations_refreshed >= 1
+    db.refresh(generation)
+    assert generation.name == "C6 (1928–1932)", "the refresh keeps the ruled era name"
+
+
+def test_twin_era_without_evidence_stays_flagged(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+    _land_sweep(db, wikidata_source, "Q1200", "Citroën Pony", makers=["Q6746"])
+    _land_sweep(db, wikidata_source, "Q1201", "Citroën Pony II", makers=["Q6746"])
+    run_wikidata_models_pass(db)
+    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1201", "era:citroen/pony")
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.twins_resolved == 0
+    assert _decision(db, "Q1201").outcome == "twin_era_awaits_span"
+    open_flags = db.scalars(
+        select(ReconciliationFlag).where(
+            ReconciliationFlag.kind == "match_review", ReconciliationFlag.status == "open"
+        )
+    ).all()
+    assert [f for f in open_flags if f.detail.get("reason") == "mint_label_twins"], (
+        "identity without time resolves nothing"
+    )

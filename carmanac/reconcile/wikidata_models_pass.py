@@ -95,6 +95,8 @@ from carmanac.reconcile.sources.wikidata_models import (
     extract_chassis_codes,
     strip_prefix,
 )
+from carmanac.reconcile.sources.wikipedia_infobox import parse_infobox, same_subject
+from carmanac.reconcile.sources.wikipedia_sections import parse_article
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +157,7 @@ class WikidataModelsStats:
     waits_unmatched: int = 0
     models_minted: int = 0
     mint_contested: int = 0
+    twins_resolved: int = 0
     company_entities: int = 0
     assertions_inserted: int = 0
     assertions_superseded: int = 0
@@ -174,7 +177,8 @@ class WikidataModelsStats:
             f"market_name_flags={self.market_name_flagged} "
             f"waits: no_held_maker={self.waits_no_held_maker} "
             f"unmatched={self.waits_unmatched} company_entity={self.company_entities} | "
-            f"minted={self.models_minted} (contested={self.mint_contested}) | "
+            f"minted={self.models_minted} (contested={self.mint_contested}, "
+            f"twins_resolved={self.twins_resolved}) | "
             f"assertions={self.assertions_inserted} "
             f"(superseded={self.assertions_superseded}) "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
@@ -1071,7 +1075,7 @@ class _WikidataModelsPass:
         generation = self.session.get(Generation, self.generation_by_qid[subject.entity.qid])
         display = (
             self._strip(subject.entity.label, generation.company_id)
-            if subject.entity.label
+            if subject.entity.label and subject.entity.qid not in policy.WIKIDATA_TWIN_NAMEPLATES
             else generation.name
         )
         self._generation_facts(generation, subject, display)
@@ -1352,6 +1356,13 @@ class _WikidataModelsPass:
 
         groups: dict[tuple[int, str], list[tuple[_Subject, int, str, str]]] = {}
         for cand in self.mint_candidates:
+            qid = cand[0].entity.qid
+            if (
+                qid in self.model_by_qid
+                or qid in self.generation_by_qid
+                or qid in policy.WIKIDATA_TWIN_NAMEPLATES
+            ):
+                continue  # ruled (or ruled-and-awaiting-evidence); no longer contested
             groups.setdefault((cand[1], base_slug(cand[2])), []).append(cand)
 
         for (company_id, base), cands in sorted(groups.items()):
@@ -1446,6 +1457,134 @@ class _WikidataModelsPass:
                 {"model": f"{company.slug}/{slug}"},
             )
 
+    # --- the twin rulings (ADR 0012 §7) ---------------------------------------
+
+    def _twin_span(self, wikipedia_id: int | None, qid: str):
+        """Decision-time read of the era's own landed article: (production
+        span, title parenthetical). Deciding resolvability and naming only -
+        the span itself is asserted by the Wikipedia pass, under its own
+        provenance."""
+        if wikipedia_id is None:
+            return None, None
+        record = self.session.scalar(
+            select(RawRecord).where(
+                RawRecord.source_id == wikipedia_id,
+                RawRecord.external_id == f"article:{qid}",
+            )
+        )
+        if record is None:
+            return None, None
+        title = record.payload.get("title", "")
+        if not same_subject(record.payload.get("requested_title", ""), title):
+            return None, None
+        top = parse_article(title, record.payload.get("wikitext", "")).top_wikitext
+        paren = re.search(r"\(([^()]+)\)\s*$", title)
+        return parse_infobox(title, top).production, paren.group(1) if paren else None
+
+    def _twins_phase(self) -> None:
+        """Apply recorded twin rulings: the base nameplate is one model row;
+        registered era entities become generations under it. This rung sets
+        identity and attachment - time arrives from each era's own article
+        through the Wikipedia pass. Unregistered members keep contesting."""
+        if not policy.WIKIDATA_TWIN_NAMEPLATES:
+            return
+        wikipedia_id = self.session.scalar(
+            select(Source.id).where(Source.name == WIKIPEDIA_SOURCE_NAME)
+        )
+        company_by_slug = {c.slug: cid for cid, c in self.companies.items() if c.slug}
+        for qid, target in sorted(policy.WIKIDATA_TWIN_NAMEPLATES.items()):
+            subject = self.subjects.get(qid)
+            if subject is None or qid in self.model_by_qid or qid in self.generation_by_qid:
+                continue
+            kind, _, pair = target.partition(":")
+            company_slug, _, model_slug = pair.partition("/")
+            company_id = company_by_slug.get(company_slug)
+            if company_id is None:
+                log.warning("WIKIDATA_TWIN_NAMEPLATES[%s] -> %r: no such company", qid, target)
+                continue
+            entity = subject.entity
+            base_name = _TRAILING_ROMAN.sub(
+                "", _TRAILING_PAREN.sub("", self._mint_name(entity.label or "", company_id))
+            ).strip()
+            model_id = self.model_by_company_slug.get((company_id, model_slug))
+
+            if kind == "model":
+                if model_id is None:
+                    model = Model(company_id=company_id, slug=model_slug, name=base_name)
+                    self.session.add(model)
+                    self.session.flush()
+                    self.models[model.id] = model
+                    self.model_by_company_slug[(company_id, model_slug)] = model.id
+                    model_id = model.id
+                elif self.qid_by_model.get(model_id) is not None:
+                    self._decide(
+                        subject, "7", "twin_ruling", "twin_model_conflict", {"model": pair}
+                    )
+                    continue
+                self._attach_model(model_id, subject)
+                facts: dict[str, tuple[str, object]] = {"name": (base_name, base_name)}
+                if entity.description:
+                    facts["summary"] = (entity.description, entity.description)
+                self._assert_facts(
+                    "model_id", self.models[model_id], MINTED_MODEL_COVERAGE, facts, subject.record
+                )
+                self.stats.twins_resolved += 1
+                self._dismiss_flags(qid, f"twin_model:{pair}")
+                self._decide(subject, "7", "twin_ruling", "twin_model_resolved", {"model": pair})
+                continue
+
+            span, era_label = self._twin_span(wikipedia_id, qid)
+            if span is None and not entity.start_years:
+                self._decide(subject, "7", "twin_ruling", "twin_era_awaits_span", {"model": pair})
+                continue
+            if model_id is None:
+                # An all-era group: no entity means the nameplate, so the
+                # model row is created bare and carries no QID.
+                model = Model(company_id=company_id, slug=model_slug, name=base_name)
+                self.session.add(model)
+                self.session.flush()
+                self.models[model.id] = model
+                self.model_by_company_slug[(company_id, model_slug)] = model.id
+                model_id = model.id
+            if era_label:
+                display = f"{base_name} ({era_label})"
+            elif span is not None:
+                display = f"{base_name} ({span.start}–{span.end or 'present'})"
+            else:
+                display = f"{base_name} ({min(entity.start_years)})"
+            slug = slugify(display)
+            if nonconforming_slug(slug) is not None:
+                # A span separates eras but may not wear an address
+                # (ADR 0019 §4): the era lands unaddressed until a code or
+                # ordinal arrives.
+                slug = None
+            elif self.generation_by_company_slug.get((company_id, slug)) is not None:
+                self._decide(
+                    subject, "7", "twin_ruling", "twin_era_collision", {"model": pair, "slug": slug}
+                )
+                continue
+            generation = Generation(company_id=company_id, slug=slug, name=display)
+            self.session.add(generation)
+            self.session.flush()
+            if slug is not None:
+                self.generation_by_company_slug[(company_id, slug)] = generation.id
+            self.session.add(
+                ExternalId(generation_id=generation.id, source_id=self.source.id, external_id=qid)
+            )
+            self.session.flush()
+            self.generation_by_qid[qid] = generation.id
+            self._assert_generation_link(generation.id, model_id, subject)
+            self._generation_facts(generation, subject, display)
+            self.stats.twins_resolved += 1
+            self._dismiss_flags(qid, f"twin_era:{pair}")
+            self._decide(
+                subject,
+                "7",
+                "twin_ruling",
+                "twin_era_resolved",
+                {"model": pair, "generation": slug or f"#{generation.id}"},
+            )
+
     # --- the pass ------------------------------------------------------------
 
     def run(self) -> WikidataModelsStats:
@@ -1459,6 +1598,7 @@ class _WikidataModelsPass:
         self._line_phase()
         self._membership_phase()
         self._structure_phase()
+        self._twins_phase()
         self._mint_phase()
         self.decisions.flush()
         for subject in self.subjects.values():

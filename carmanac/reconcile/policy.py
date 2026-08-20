@@ -291,6 +291,26 @@ WIKIDATA_MINT_COMPANIES: dict[str, str] = {
 # the label and description together. Concept cars, prototypes and race-only
 # cars are an open scope question in the charter; until it is ruled they
 # wait rather than mint.
+# Twin rulings (ADR 0012 §7): a contested label-twin group resolves under ONE
+# nameplate - same-name different-era cars share one model row, and the eras
+# separate as dated generations, never as era-forked names. Keys are member
+# QIDs; values record the verdict:
+#
+#   "model:<company-slug>/<model-slug>" - this entity IS the nameplate's model
+#     row (its own article is the plain-titled page); it mints/attaches at
+#     model grain and its single era arrives through the lead-era mint.
+#   "era:<company-slug>/<model-slug>"   - this entity is one era; it becomes a
+#     generation under that nameplate, named by its article's era
+#     parenthetical (or its span), dated by the Wikipedia pass from its own
+#     article. The nameplate model is created bare if no member owns it - no
+#     QID attaches (no entity means the nameplate; ADR 0011 §4).
+#
+# A registered era with no landed article span and no Wikidata date stays
+# flagged (identity without time helps nobody). Members left out of the
+# registry keep contesting - concurrent-market twins (Kamiq China, Rapid
+# India) wait here for their own ruling, since time cannot separate them.
+WIKIDATA_TWIN_NAMEPLATES: dict[str, str] = {}
+
 WIKIDATA_MINT_EXCLUDE: tuple[str, ...] = (
     "concept",
     "prototype",
