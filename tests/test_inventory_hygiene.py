@@ -40,7 +40,7 @@ from tests.test_generation_placement import (  # noqa: F401
     wikipedia_source,
 )
 from tests.test_wikidata_models_pass import _land_sweep
-from tests.test_wikipedia_sections import _land_article
+from tests.test_wikipedia_pass import _land_article
 
 # --- pure: dash templates and the grain guards ---------------------------------
 

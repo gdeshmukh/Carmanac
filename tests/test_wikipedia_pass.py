@@ -1,5 +1,6 @@
-"""ADR 0017 §4 tests: the section heading grammar, the labeled-defer span
-amendment, the section-minting pass, and the body veto in placement.
+"""ADR 0017 tests for the unified Wikipedia pass: the heading grammar, the
+labeled-defer span amendment, section minting, the lead-era mint, and the
+body veto in placement.
 
 The integration cast reuses the placement spine (one company, one QID-linked
 model with two Wikidata-born generations) plus a second, link-less model the
@@ -514,3 +515,163 @@ def test_body_veto_places_both_amg_gt_sides_without_overlap(
     # Convergence.
     stats2 = run_generation_placement_pass(db)
     assert stats2.placed == 0 and stats2.already_placed == 2
+
+
+# --- the lead era (no sections, one span) --------------------------------------
+
+
+@pytest.mark.integration
+def test_lead_era_mints_one_dated_generation(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n| production = 2002–2016\n}}\nprose, no generation headings",
+    )
+    stats = run_wikipedia_pass(db)
+    assert (stats.lead_era_minted, stats.generations_created) == (1, 1)
+    generation = db.scalars(
+        select(Generation)
+        .join(ExternalId, ExternalId.generation_id == Generation.id)
+        .where(ExternalId.external_id == "section:Q7#0")
+    ).one()
+    assert (generation.name, generation.slug) == ("Z4", "z4")
+    assert (generation.start_year, generation.end_year) == (2002, 2016)
+    link = db.scalars(
+        select(GenerationModelLink).where(
+            GenerationModelLink.generation_id == generation.id,
+            GenerationModelLink.superseded_by.is_(None),
+        )
+    ).one()
+    assert link.model_id == routed.id and link.raw_record_id is not None
+
+    stats2 = run_wikipedia_pass(db)
+    assert (stats2.lead_era_minted, stats2.assertions_inserted, stats2.flags_opened) == (0, 0, 0)
+
+
+@pytest.mark.integration
+def test_lead_era_unparseable_span_mints_nothing(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n| production = 2002–2008 (roadster)\n2009–2016 (coupe)\n}}",
+    )
+    stats = run_wikipedia_pass(db)
+    assert (stats.lead_era_minted, stats.generations_created) == (0, 0)
+    outcome = db.execute(
+        text("SELECT outcome FROM match_decisions WHERE external_id = 'article:Q7'")
+    ).scalar()
+    assert outcome == "lead_era_unparseable"
+
+
+@pytest.mark.integration
+def test_lead_era_defers_to_existing_linked_generations(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    """A model that already has linked generations never takes the
+    whole-nameplate span as an era - the Civic hazard at mint scope."""
+    db.add(
+        GenerationModelLink(
+            generation_id=spine["e46"].id, model_id=routed.id, source_id=wikidata_source.id
+        )
+    )
+    db.commit()
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n| production = 2002–2016\n}}",
+    )
+    stats = run_wikipedia_pass(db)
+    assert (stats.lead_era_minted, stats.generations_created) == (0, 0)
+    outcome = db.execute(
+        text("SELECT outcome FROM match_decisions WHERE external_id = 'article:Q7'")
+    ).scalar()
+    assert outcome == "no_sections"
+
+
+@pytest.mark.integration
+def test_lead_era_slug_collision_flags_and_mints_nothing(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    db.add(Generation(company_id=spine["company"].id, slug="z4", name="Z4 the elder"))
+    db.commit()
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n| production = 2002–2016\n}}",
+    )
+    stats = run_wikipedia_pass(db)
+    assert (stats.lead_era_minted, stats.flagged_articles) == (0, 1)
+    flag = db.scalars(
+        select(ReconciliationFlag).where(
+            ReconciliationFlag.kind == "section_generation_review",
+            ReconciliationFlag.status == "open",
+            ReconciliationFlag.model_id == routed.id,
+        )
+    ).one()
+    assert flag.detail["reason"] == "generation_slug_collision"
+
+
+@pytest.mark.integration
+def test_lead_era_generation_places_by_lead_model_years(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    """Placement's decision-time loader reads the article lead for a
+    `section:<QID>#0` generation: model years outrun production past the
+    slack, and the configuration still places."""
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n| production = 2002–2015\n| model_years = 2003–2017\n}}",
+    )
+    run_wikipedia_pass(db)
+    market = db.execute(text("SELECT id FROM market_regions ORDER BY id LIMIT 1")).scalar()
+    period = CataloguePeriod(
+        model_id=routed.id, period_kind_id=spine["kind"].id, start_year=2017, end_year=2017
+    )
+    db.add(period)
+    db.flush()
+    config = Configuration(catalogue_period_id=period.id, market_region_id=market, slug="sdrive")
+    db.add(config)
+    db.commit()
+    run_generation_placement_pass(db)
+    db.refresh(config)
+    generation = db.scalars(
+        select(Generation)
+        .join(ExternalId, ExternalId.generation_id == Generation.id)
+        .where(ExternalId.external_id == "section:Q7#0")
+    ).one()
+    assert config.generation_id == generation.id

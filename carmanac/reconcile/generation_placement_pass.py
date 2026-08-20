@@ -232,17 +232,18 @@ class _PlacementPass:
             sections = {s.ordinal: s for s in article.sections}
             for ordinal, generation_id in by_qid[qid].items():
                 section = sections.get(ordinal)
-                if section is None:
+                if section is None and ordinal != 0:
                     continue
+                # Ordinal 0 is a lead-era generation: the article's lead is
+                # its section.
+                body = article.top_wikitext if section is None else section.body
                 section_main = section_mains.get((qid, ordinal))
                 target_wikitext = None
                 target_record_id = None
                 if section_main is not None and section_main_asserts(section_main.payload):
                     target_wikitext = section_main.payload.get("wikitext", "")
                     target_record_id = section_main.id
-                raw = infobox_field(section.body, "model years") or infobox_field(
-                    section.body, "model_years"
-                )
+                raw = infobox_field(body, "model years") or infobox_field(body, "model_years")
                 if raw is not None:
                     span, _reason = parse_span(raw)
                     if span is not None:
@@ -255,7 +256,7 @@ class _PlacementPass:
                         span, _reason = parse_span(traw)
                         if span is not None:
                             self.model_year_spans[generation_id] = (span, target_record_id)
-                doors = generation_doors(section.body, target_wikitext, article.top_wikitext)
+                doors = generation_doors(body, target_wikitext, article.top_wikitext)
                 if doors:
                     self.generation_doors[generation_id] = doors
 

@@ -102,6 +102,7 @@ class WikipediaStats:
     no_facts_found: int = 0
     articles_minted_from: int = 0
     generations_created: int = 0
+    lead_era_minted: int = 0
     generations_refreshed: int = 0
     links_asserted: int = 0
     sections_reconciled: int = 0
@@ -118,7 +119,8 @@ class WikipediaStats:
         return (
             f"processed={self.processed} timed={self.generations_timed} "
             f"no_facts={self.no_facts_found} minted_from={self.articles_minted_from} "
-            f"created={self.generations_created} refreshed={self.generations_refreshed} "
+            f"created={self.generations_created} (lead={self.lead_era_minted}) "
+            f"refreshed={self.generations_refreshed} "
             f"links={self.links_asserted} reconciled={self.sections_reconciled} "
             f"no_sections={self.no_sections} redirected={self.redirected} "
             f"unrouted={self.unrouted} flagged={self.flagged_articles} | "
@@ -491,19 +493,19 @@ class _WikipediaPass:
             self.stats.assertions_inserted += inserted
             self.stats.assertions_superseded += superseded
 
-    def _display_name(self, model: Model, section: GenerationSection) -> str:
-        # Stripped nameplate (ADR 0019 §4, amending ADR 0017 §4): the same
-        # ADR 0013 §1 rule the Wikidata mint follows, so one kind stops
-        # wearing two conventions and section-born slugs stop embedding
-        # corporate-name marques.
-        # Stripping must leave a nameplate, not a bare number: "Mazda3" and
+    def _nameplate(self, model: Model) -> str:
+        # Stripped nameplate (ADR 0019 §4, the ADR 0013 §1 rule). Stripping
+        # must leave a nameplate, not a bare number: "Mazda3" and
         # "Polestar 2" strip to "3" and "2", which name nothing.
         name = model.name
         for prefix in self.company_prefixes.get(model.company_id, ()):
             stripped = strip_prefix(name, prefix, normalize_name)
             if stripped != name and any(ch.isalpha() for ch in stripped):
-                name = stripped
-                break
+                return stripped
+        return name
+
+    def _display_name(self, model: Model, section: GenerationSection) -> str:
+        name = self._nameplate(model)
         if section.codes:
             return f"{name} ({'/'.join(section.codes)})"
         word = ORDINAL_WORDS[section.ordinal - 1]
@@ -634,6 +636,126 @@ class _WikipediaPass:
             self.stats.no_facts_found += 1
             self.decisions.record(record, "no_facts_found")
 
+    def _lead_era(self, model: Model, model_id: int, qid: str, parsed, record: RawRecord) -> None:
+        """An article with no generation sections describes one era. For a
+        model with no linked generations, that era IS a generation - the
+        lead production span dates it, keyed `section:<QID>#0` (the lead is
+        MediaWiki's section 0). A model that already has linked generations
+        gets nothing: a whole-nameplate span must not land on any one of
+        them (§2's hazard, at mint scope)."""
+        lead = parse_infobox(record.payload["title"], parsed.top_wikitext)
+        keyed = self.section_generations.get(f"section:{qid}#0")
+        if keyed is None:
+            if self.links_by_model.get(model_id):
+                self.stats.no_sections += 1
+                self._dismiss_article_flag(qid, "article_no_longer_has_sections")
+                self.decisions.record(record, "no_sections")
+                return
+            if lead.production is None:
+                self.stats.no_sections += 1
+                self._dismiss_article_flag(qid, "article_no_longer_has_sections")
+                if lead.failures:
+                    # No generation exists to anchor a value flag; the
+                    # decision log is the review vein.
+                    self.decisions.record(
+                        record,
+                        "lead_era_unparseable",
+                        detail={
+                            "failures": [
+                                {"field": f, "reason": r, "raw": raw[:200]}
+                                for f, r, raw in lead.failures
+                            ]
+                        },
+                    )
+                else:
+                    self.decisions.record(record, "no_sections")
+                return
+            name = self._nameplate(model)
+            slug = slugify(name)
+            reason = nonconforming_slug(slug)
+            if reason is not None:
+                self._flag_article(
+                    qid,
+                    model_id,
+                    record,
+                    "generation_slug_nonconforming",
+                    {"title": parsed.title, "slug": slug, "reason": reason},
+                )
+                self.stats.flagged_articles += 1
+                self.decisions.record(
+                    record,
+                    "flagged_sections",
+                    detail={"reason": "nonconforming_slug", "slug": slug},
+                )
+                return
+            occupant = self.generation_by_company_slug.get((model.company_id, slug))
+            if occupant is not None:
+                self._flag_article(
+                    qid,
+                    model_id,
+                    record,
+                    "generation_slug_collision",
+                    {"title": parsed.title, "slug": slug, "existing_generation_id": occupant},
+                )
+                self.stats.flagged_articles += 1
+                self.decisions.record(
+                    record, "flagged_sections", detail={"reason": "slug_collision", "slug": slug}
+                )
+                return
+            generation = Generation(company_id=model.company_id, slug=slug, name=name)
+            self.session.add(generation)
+            self.session.flush()
+            self.generations[generation.id] = generation
+            self.generation_by_company_slug[(model.company_id, slug)] = generation.id
+            key = f"section:{qid}#0"
+            self.session.add(
+                ExternalId(generation_id=generation.id, source_id=self.source.id, external_id=key)
+            )
+            self.session.flush()
+            self.section_generations[key] = generation.id
+            self.stats.generations_created += 1
+            self.stats.lead_era_minted += 1
+            self.stats.articles_minted_from += 1
+        else:
+            generation = self.generations[keyed]
+            self.stats.generations_refreshed += 1
+            for field_name, reason, raw in lead.failures:
+                if field_name == "production":
+                    self._value_flag(generation, reason, raw, parsed.title, record)
+
+        self._assert_link(generation.id, model_id, record)
+        name = self._nameplate(model)
+        facts: dict[str, tuple[str, object]] = {"name": (name, name)}
+        if lead.production is not None:
+            observed = f"{lead.production.start}–{lead.production.end or 'present'}"
+            facts["start_year"] = (observed, lead.production.start)
+            facts["end_year"] = (observed, lead.production.end)
+        codes, _ambiguous = extract_chassis_codes(parsed.title, (), None)
+        if title_code_tokens(parsed.title) and codes:
+            facts["chassis_codes"] = ("|".join(codes), codes)
+        inserted, superseded = assert_field_facts(
+            self.session,
+            arc_col="generation_id",
+            entity=generation,
+            coverage=COVERAGE,
+            facts=facts,
+            source_id=self.source.id,
+            record=record,
+        )
+        self.stats.assertions_inserted += inserted
+        self.stats.assertions_superseded += superseded
+        self._dismiss_article_flag(qid, "lead_era_resolved")
+        self.decisions.record(
+            record,
+            "lead_era_processed",
+            method="lead_infobox_parse",
+            detail={
+                "model": self.model_pairs[model_id],
+                "generation": generation.slug,
+                "minted": keyed is None,
+            },
+        )
+
     def _process_article(self, record: RawRecord) -> None:
         qid = record.payload["qid"]
         # Redirect detection first (ADR 0019 §3 companion fix): an article
@@ -681,9 +803,7 @@ class _WikipediaPass:
 
         parsed = parse_article(record.payload["title"], record.payload.get("wikitext", ""))
         if not parsed.sections:
-            self.stats.no_sections += 1
-            self._dismiss_article_flag(qid, "article_no_longer_has_sections")
-            self.decisions.record(record, "no_sections")
+            self._lead_era(model, model_id, qid, parsed, record)
             return
 
         ordinals = [s.ordinal for s in parsed.sections]
