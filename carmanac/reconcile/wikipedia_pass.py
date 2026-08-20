@@ -50,8 +50,10 @@ from carmanac.db.models import (
     ExternalId,
     Generation,
     GenerationModelLink,
+    GenerationSpecs,
     MatchDecision,
     Model,
+    ModelSpecs,
     RawRecord,
     ReconciliationFlag,
     Source,
@@ -71,15 +73,18 @@ from carmanac.reconcile.engine import (
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources.wikidata_models import extract_chassis_codes, strip_prefix
 from carmanac.reconcile.sources.wikipedia_infobox import (
+    SPEC_COVERAGE,
     infobox_field,
     parse_infobox,
     parse_span,
+    parse_specs,
     same_subject,
     title_code_tokens,
 )
 from carmanac.reconcile.sources.wikipedia_sections import (
     ORDINAL_WORDS,
     GenerationSection,
+    door_counts,
     parse_article,
     section_main_asserts,
 )
@@ -234,6 +239,12 @@ class _WikipediaPass:
     def _load_generations(self) -> None:
         self.generations: dict[int, Generation] = {
             g.id: g for g in self.session.scalars(select(Generation))
+        }
+        self.generation_specs: dict[int, GenerationSpecs] = {
+            r.generation_id: r for r in self.session.scalars(select(GenerationSpecs))
+        }
+        self.model_specs: dict[int, ModelSpecs] = {
+            r.model_id: r for r in self.session.scalars(select(ModelSpecs))
         }
         self.generation_by_company_slug: dict[tuple[int, str], int] = {
             (g.company_id, g.slug): g.id for g in self.generations.values()
@@ -444,6 +455,7 @@ class _WikipediaPass:
         main_facts: dict[str, tuple[str, object]] = {}
         if section.codes:
             facts["chassis_codes"] = ("|".join(section.codes), list(section.codes))
+        self._generation_specs(generation, section.body, record)
         span = None
         raw = infobox_field(section.body, "production")
         if raw is not None:
@@ -569,6 +581,7 @@ class _WikipediaPass:
         top = parse_article(
             record.payload["title"], record.payload.get("wikitext", "")
         ).top_wikitext
+        self._generation_specs(generation, top, record)
         parsed = parse_infobox(record.payload["title"], top)
         facts: dict[str, tuple[str, object]] = {}
         if parsed.production is not None:
@@ -636,6 +649,57 @@ class _WikipediaPass:
             self.stats.no_facts_found += 1
             self.decisions.record(record, "no_facts_found")
 
+    def _assert_specs(self, *, arc_col, entity, row_cache, row_cls, wikitext, record) -> None:
+        """Physical specs onto the defaults table at this entity's grain.
+        Empty wikitext still runs the tombstone sweep for an existing row -
+        a page that stopped speaking heals its old claims."""
+        facts: dict[str, tuple[str, object]] = dict(parse_specs(wikitext))
+        raw_body = infobox_field(wikitext, "body_style") or infobox_field(wikitext, "body style")
+        if raw_body:
+            counts = door_counts(raw_body)
+            if len(counts) == 1:
+                facts["doors"] = (" ".join(raw_body.split())[:120], next(iter(counts)))
+        row = row_cache.get(entity.id)
+        if row is None:
+            if not facts:
+                return
+            row = row_cls(**{arc_col: entity.id})
+            self.session.add(row)
+            self.session.flush()
+            row_cache[entity.id] = row
+        inserted, superseded = assert_field_facts(
+            self.session,
+            arc_col=arc_col,
+            entity=entity,
+            coverage=SPEC_COVERAGE,
+            facts=facts,
+            source_id=self.source.id,
+            record=record,
+            project_onto=row,
+        )
+        self.stats.assertions_inserted += inserted
+        self.stats.assertions_superseded += superseded
+
+    def _generation_specs(self, generation: Generation, wikitext: str, record: RawRecord) -> None:
+        self._assert_specs(
+            arc_col="generation_id",
+            entity=generation,
+            row_cache=self.generation_specs,
+            row_cls=GenerationSpecs,
+            wikitext=wikitext,
+            record=record,
+        )
+
+    def _model_specs(self, model: Model, wikitext: str, record: RawRecord) -> None:
+        self._assert_specs(
+            arc_col="model_id",
+            entity=model,
+            row_cache=self.model_specs,
+            row_cls=ModelSpecs,
+            wikitext=wikitext,
+            record=record,
+        )
+
     def _lead_era(self, model: Model, model_id: int, qid: str, parsed, record: RawRecord) -> None:
         """An article with no generation sections describes one era. For a
         model with no linked generations, that era IS a generation - the
@@ -645,12 +709,17 @@ class _WikipediaPass:
         them (§2's hazard, at mint scope)."""
         lead = parse_infobox(record.payload["title"], parsed.top_wikitext)
         keyed = self.section_generations.get(f"section:{qid}#0")
+        if keyed is None and self.links_by_model.get(model_id):
+            # A multi-era nameplate: its lead describes no single era, so it
+            # asserts no model defaults either (the current-generation dims
+            # a lead often shows must not smear across eras).
+            self.stats.no_sections += 1
+            self._dismiss_article_flag(qid, "article_no_longer_has_sections")
+            self.decisions.record(record, "no_sections")
+            self._model_specs(self.models[model_id], "", record)
+            return
+        self._model_specs(self.models[model_id], parsed.top_wikitext, record)
         if keyed is None:
-            if self.links_by_model.get(model_id):
-                self.stats.no_sections += 1
-                self._dismiss_article_flag(qid, "article_no_longer_has_sections")
-                self.decisions.record(record, "no_sections")
-                return
             if lead.production is None:
                 self.stats.no_sections += 1
                 self._dismiss_article_flag(qid, "article_no_longer_has_sections")
@@ -777,6 +846,11 @@ class _WikipediaPass:
                 )
                 self.stats.assertions_inserted += inserted
                 self.stats.assertions_superseded += superseded
+            if generation_id is not None and generation_id in self.generation_specs:
+                self._generation_specs(self.generations[generation_id], "", record)
+            redirected_model = self.model_by_qid.get(qid)
+            if redirected_model is not None and redirected_model in self.model_specs:
+                self._model_specs(self.models[redirected_model], "", record)
             self._tombstone_stale_sections(qid, set(), record)
             self.stats.redirected += 1
             self.decisions.record(
@@ -805,6 +879,7 @@ class _WikipediaPass:
         if not parsed.sections:
             self._lead_era(model, model_id, qid, parsed, record)
             return
+        self._model_specs(model, "", record)
 
         ordinals = [s.ordinal for s in parsed.sections]
         if sorted(ordinals) != list(range(1, len(ordinals) + 1)):

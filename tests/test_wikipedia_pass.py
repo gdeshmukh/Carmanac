@@ -23,7 +23,9 @@ from carmanac.db.models import (
     FieldProvenance,
     Generation,
     GenerationModelLink,
+    GenerationSpecs,
     Model,
+    ModelSpecs,
     RawRecord,
     ReconciliationFlag,
     Source,
@@ -31,7 +33,7 @@ from carmanac.db.models import (
 from carmanac.ingest.landing import content_hash
 from carmanac.reconcile import policy
 from carmanac.reconcile.generation_placement_pass import run_generation_placement_pass
-from carmanac.reconcile.sources.wikipedia_infobox import parse_span
+from carmanac.reconcile.sources.wikipedia_infobox import parse_span, parse_specs
 from carmanac.reconcile.sources.wikipedia_sections import (
     BodySignal,
     door_counts,
@@ -675,3 +677,116 @@ def test_lead_era_generation_places_by_lead_model_years(
         .where(ExternalId.external_id == "section:Q7#0")
     ).one()
     assert config.generation_id == generation.id
+
+
+# --- spec defaults (the honest-grain landing) ----------------------------------
+
+
+def test_parse_specs_takes_single_values_only():
+    specs = parse_specs(
+        "{{Infobox automobile\n"
+        "| wheelbase = {{convert|110.8|in|mm|0|abbr=on}}\n"
+        "| length = {{convert|4959|-|4966|mm|in|1|abbr=on}}\n"
+        "| width = 1991–93: {{convert|74.9|in|mm|0|abbr=on}}<br/>1994: {{convert|75|in|mm}}\n"
+        "| height = {{convert|1425|mm|in|abbr=on}}<ref>x</ref>\n"
+        "| weight = {{convert|3536|lb|kg|abbr=on}} (sedan)\n"
+        "| powerout = {{convert|110|kW|hp|abbr=on}}\n"
+        "}}"
+    )
+    assert specs["wheelbase_mm"][1] == 2814, "inches normalize to mm"
+    assert specs["height_mm"][1] == 1425
+    assert specs["power_hp"][1] == 148, "kW normalizes to mechanical hp"
+    assert "length_mm" not in specs, "a range is not a default"
+    assert "width_mm" not in specs, "an era-prefixed list is not a default"
+    assert "curb_weight_kg" not in specs, "a variant-labelled value is not a default"
+
+
+@pytest.mark.integration
+def test_lead_era_article_lands_model_grain_specs(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n"
+        "| production = 2002–2016\n"
+        "| wheelbase = {{convert|2470|mm|in|1|abbr=on}}\n"
+        "| body_style = 2-door [[roadster]]\n"
+        "}}",
+    )
+    run_wikipedia_pass(db)
+    specs = db.get(ModelSpecs, routed.id)
+    assert (specs.wheelbase_mm, specs.doors) == (2470, 2)
+    assert (
+        db.get(
+            GenerationSpecs,
+            db.scalar(
+                select(ExternalId.generation_id).where(ExternalId.external_id == "section:Q7#0")
+            ),
+        )
+        is None
+    ), "a nameplate page lands at model grain, not on its era"
+    prov = db.scalars(
+        select(FieldProvenance).where(
+            FieldProvenance.model_id == routed.id,
+            FieldProvenance.field_name == "wheelbase_mm",
+            FieldProvenance.superseded_by.is_(None),
+        )
+    ).one()
+    assert prov.source_id == wikipedia_source.id
+
+    stats2 = run_wikipedia_pass(db)
+    assert stats2.assertions_inserted == 0
+
+    # The leaf inherits: the configuration carries nothing, the view answers
+    # from the model default.
+    market = db.execute(text("SELECT id FROM market_regions ORDER BY id LIMIT 1")).scalar()
+    period = CataloguePeriod(
+        model_id=routed.id, period_kind_id=spine["kind"].id, start_year=2010, end_year=2010
+    )
+    db.add(period)
+    db.flush()
+    config = Configuration(catalogue_period_id=period.id, market_region_id=market, slug="s")
+    db.add(config)
+    db.commit()
+    row = db.execute(
+        text("SELECT wheelbase_mm, doors FROM v_configuration_full WHERE configuration_id = :i"),
+        {"i": config.id},
+    ).one()
+    assert (row.wheelbase_mm, row.doors) == (2470, 2)
+
+
+@pytest.mark.integration
+def test_generation_attached_article_lands_generation_grain_specs(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+):
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q1",
+        "BMW 3 Series (E46)",
+        "{{Infobox automobile\n"
+        "| production = 1997–2006\n"
+        "| wheelbase = {{convert|2725|mm|in|1|abbr=on}}\n"
+        "}}",
+    )
+    run_wikipedia_pass(db)
+    specs = db.get(GenerationSpecs, spine["e46"].id)
+    assert specs.wheelbase_mm == 2725
+    prov = db.scalars(
+        select(FieldProvenance).where(
+            FieldProvenance.generation_id == spine["e46"].id,
+            FieldProvenance.field_name == "wheelbase_mm",
+            FieldProvenance.superseded_by.is_(None),
+        )
+    ).one()
+    assert prov.observed_value.startswith("{{convert|2725")

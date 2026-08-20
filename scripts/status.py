@@ -39,6 +39,8 @@ def main() -> int:
             ("model_lines", "SELECT count(*) FROM model_lines"),
             ("model_line_members", "SELECT count(*) FROM model_line_members"),
             ("generations", "SELECT count(*) FROM generations"),
+            ("model_specs", "SELECT count(*) FROM model_specs"),
+            ("generation_specs", "SELECT count(*) FROM generation_specs"),
             ("catalogue_periods", "SELECT count(*) FROM catalogue_periods"),
             ("configurations", "SELECT count(*) FROM configurations"),
             ("external_ids", "SELECT count(*) FROM external_ids"),
