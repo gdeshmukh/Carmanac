@@ -222,7 +222,7 @@ def test_collision_flag_dismissed_when_a_human_merges(db, wikidata_source, vpic_
 
 def test_curated_merge_resolves_ruled_collision(db, wikidata_source, vpic_source):
     """The Santana verdict as the pass now applies it: the member ModelId in
-    VPIC_MODEL_MERGES attaches to its canonical twin's row mechanically - one
+    VPIC_MODEL_MERGES attaches to its canonical duplicate's row mechanically - one
     row, both external ids, no flag - so a rebuild from raw reproduces the
     human's answer instead of re-asking the question."""
     santana = _matched_make(db, wikidata_source, vpic_source, "Q265465", "Santana Motor", 13765)

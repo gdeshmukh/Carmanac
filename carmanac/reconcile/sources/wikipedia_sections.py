@@ -203,7 +203,7 @@ def looks_multi_era(wikitext: str) -> bool:
 
     - **Sequential production spans.** Two sub-infoboxes whose spans start at
       least two years apart are eras (`1984`, `1988`, `1998` on the M5's
-      page). Counting infoboxes alone would not do: rebadge twins, market
+      page). Counting infoboxes alone would not do: rebadged siblings, market
       variants and body styles all carry their own box over the SAME span -
       the bZ4X's Solterra, the Arkana's China car, the Altea XL.
     - **Dated top-level headings.** `TT Mk1 (Type 8N, 1998-2006)`,

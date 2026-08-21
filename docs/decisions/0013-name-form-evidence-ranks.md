@@ -16,7 +16,7 @@ and market names as *aliases* on one entity — measured live:
 - `Q85872511` label "Toyota Raize", P176 → Daihatsu (they build it), aliases
   "Daihatsu Rocky" / "Perodua Ativa" / "Subaru Rex". Its **alias** joined it
   to Daihatsu's as-filed `rocky` cluster.
-- Of the 47 shared-match clusters, only **14 are label twins** (several
+- Of the 47 shared-match clusters, only **14 are label duplicates** (several
   entities carrying the bare nameplate label — the four-"BMW X5" species).
   **33 are alias-contaminated**: the true nameplate hit via its *label*, the
   extra claimants only via *aliases* — rebadges (Raize, FR-S, GR86, Solterra,
@@ -64,7 +64,7 @@ they cluster.
   label form, it is the 1:1 correspondence and attaches. Alias-form claimants
   no longer cluster — each gets its own `match_review` flag, reason
   `market_name_or_rebadge`, naming the model, the alias that hit, and its
-  co-claimants. Two or more label claimants → the label-twin cluster flag as
+  co-claimants. Two or more label claimants → the label-duplicate cluster flag as
   before (now the only thing `shared_model_match` means). Zero label
   claimants → every claimant flags `market_name_or_rebadge` (the
   Feroza/Rugger shape: both are "aka Rocky"; a human picks via the registry).
@@ -105,7 +105,7 @@ year pass is unbuilt — deliberately before it):
 ## Consequences
 
 - `RECONCILER_VERSION` → 10.
-- The cluster queue becomes what it says: ~14 label-twin questions. The
+- The cluster queue becomes what it says: ~14 label-duplicate questions. The
   market-name/rebadge queue is new, explicit, and sorted by `cross_badge`.
 - Matcher recall is preserved (market-name matches keep attaching);
   cross-badge precision is enforced by construction.

@@ -1,6 +1,6 @@
-"""Detach unruled QIDs that minted at twin-ruled addresses.
+"""Detach unruled QIDs that minted at duplicate-ruled addresses.
 
-Before the pass held half-ruled groups contested, registering some of a twin
+Before the pass held half-ruled groups contested, registering some of a duplicate
 group's members shrank the group past the contest check, and a lone unruled
 leftover minted at the base address. The pass now flags that leftover; this
 detaches the QIDs the hole already let through, leaving each model row bare
@@ -26,7 +26,7 @@ from carmanac.reconcile import policy
 def census(session) -> list[tuple[str, Model, str]]:
     """(qid, model, company slug) per unruled occupant of a ruled base."""
     ruled_bases = set()
-    for target in policy.WIKIDATA_TWIN_NAMEPLATES.values():
+    for target in policy.WIKIDATA_DUPLICATE_NAMEPLATES.values():
         company_slug, _, slug = target.partition(":")[2].partition("/")
         ruled_bases.add((company_slug, slug))
     source_id = session.scalar(select(Source.id).where(Source.name == "Wikidata"))
@@ -39,7 +39,7 @@ def census(session) -> list[tuple[str, Model, str]]:
     ):
         if (company_slug, model.slug) not in ruled_bases:
             continue
-        if qid in policy.WIKIDATA_TWIN_NAMEPLATES:
+        if qid in policy.WIKIDATA_DUPLICATE_NAMEPLATES:
             continue
         method = session.scalar(
             text(

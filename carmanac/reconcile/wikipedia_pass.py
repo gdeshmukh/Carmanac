@@ -1107,11 +1107,11 @@ class _WikipediaPass:
             )
             self._model_specs(model, parsed.top_wikitext, record)
             return
-        ruled_twin = policy.WIKIDATA_TWIN_NAMEPLATES.get(qid, "").startswith("model:")
-        if keyed is None and self.links_by_model.get(model.id) and not ruled_twin:
+        ruled_duplicate = policy.WIKIDATA_DUPLICATE_NAMEPLATES.get(qid, "").startswith("model:")
+        if keyed is None and self.links_by_model.get(model.id) and not ruled_duplicate:
             # A multi-era nameplate: its lead describes no single era, so it
             # asserts no model defaults either (the current-generation dims
-            # a lead often shows must not smear across eras). A twin ruled
+            # a lead often shows must not smear across eras). A duplicate ruled
             # `model:` is exempt - the ruling already says this page IS one
             # era of a group, and its siblings are the linked generations.
             self.stats.no_sections += 1

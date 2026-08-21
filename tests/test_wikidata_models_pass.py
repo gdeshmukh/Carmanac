@@ -652,7 +652,7 @@ def test_zero_label_claimants_all_flag(db, wikidata_source, vpic_source):  # noq
     assert _decision(db, "Q262713").detail["co_claimants"] == ["Q11012341"]
 
 
-# --- shared claims: the label-twin cluster (live finding, 2026-07-30) ---------
+# --- shared claims: the label-duplicate cluster (live finding, 2026-07-30) ---------
 
 
 def test_shared_claims_flag_never_attach(db, wikidata_source, vpic_source):  # noqa: F811
@@ -821,7 +821,7 @@ def test_mint_creates_nameplates_under_registry_company(
     assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 2
 
 
-def test_mint_label_twins_flag_as_a_group_and_none_mints(
+def test_mint_label_duplicates_flag_as_a_group_and_none_mints(
     db,
     wikidata_source,
     vpic_source,  # noqa: F811
@@ -846,10 +846,10 @@ def test_mint_label_twins_flag_as_a_group_and_none_mints(
     flags = db.scalars(
         select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
     ).all()
-    twin_flags = [f for f in flags if f.detail.get("reason") == "mint_label_twins"]
-    assert len(twin_flags) == 2
-    assert twin_flags[0].detail["twins"] == ["Q1100", "Q1101"]
-    assert _decision(db, "Q1100").outcome == "flagged_mint_twins"
+    duplicate_flags = [f for f in flags if f.detail.get("reason") == "mint_label_duplicates"]
+    assert len(duplicate_flags) == 2
+    assert duplicate_flags[0].detail["duplicates"] == ["Q1100", "Q1101"]
+    assert _decision(db, "Q1100").outcome == "flagged_mint_duplicates"
 
 
 def test_mint_conditions_hold_entities_out(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
@@ -879,7 +879,7 @@ def test_mint_conditions_hold_entities_out(db, wikidata_source, vpic_source, mon
 def test_mint_occupied_slug_flags_instead_of_minting(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
     """The accent-divergence collision: vPIC files 'Mehari', the label says
     'Méhari' - different normalized names (no rung-3 match), one slug. The
-    entity flags with the occupant as candidate; a human rules match or twin."""
+    entity flags with the occupant as candidate; a human rules match or duplicate."""
     citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
     _land_model(db, vpic_source, 77, "Mehari", 900, "CITROËN")
     from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
@@ -931,8 +931,8 @@ def test_mint_era_siblings_contest_as_one_group(db, wikidata_source, vpic_source
     assert (stats.models_minted, stats.mint_contested) == (1, 3)
     model = db.scalars(select(Model).where(Model.company_id == dacia.id)).one()
     assert model.name == "Bigster"
-    assert _decision(db, "Q1500").outcome == "flagged_mint_twins"
-    assert _decision(db, "Q1500").detail["twins"] == ["Q1500", "Q1501", "Q1502"]
+    assert _decision(db, "Q1500").outcome == "flagged_mint_duplicates"
+    assert _decision(db, "Q1500").detail["duplicates"] == ["Q1500", "Q1501", "Q1502"]
 
 
 def test_mint_paren_sibling_of_an_existing_model_contests(
@@ -955,7 +955,7 @@ def test_mint_paren_sibling_of_an_existing_model_contests(
     stats = run_wikidata_models_pass(db)
     assert (stats.models_minted, stats.mint_contested) == (0, 1)
     assert db.scalar(select(func.count(Model.id)).where(Model.company_id == alpine.id)) == 1
-    assert _decision(db, "Q1600").outcome == "flagged_mint_twins"
+    assert _decision(db, "Q1600").outcome == "flagged_mint_duplicates"
 
 
 def test_mint_holds_out_multi_maker_entities(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
@@ -1039,7 +1039,7 @@ def test_mint_nonconforming_slug_flags(db, wikidata_source, vpic_source, monkeyp
 
 
 def test_mint_contested_rerun_is_stable(db, wikidata_source, vpic_source, monkeypatch):  # noqa: F811
-    """Contested stays contested, identically: the same twins re-contest on
+    """Contested stays contested, identically: the same duplicates re-contest on
     every run, the open flag refreshes rather than duplicates, and nothing
     ever mints behind the ruling's back."""
     citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
@@ -1058,11 +1058,11 @@ def test_mint_contested_rerun_is_stable(db, wikidata_source, vpic_source, monkey
     assert (first.flags_opened, second.flags_opened) == (2, 0)
     assert db.scalar(select(func.count(Model.id)).where(Model.company_id == citroen.id)) == 0
     flags = db.scalars(select(ReconciliationFlag).where(ReconciliationFlag.status == "open")).all()
-    assert len([f for f in flags if (f.detail or {}).get("reason") == "mint_label_twins"]) == 2
-    assert _decision(db, "Q1750").outcome == "flagged_mint_twins"
+    assert len([f for f in flags if (f.detail or {}).get("reason") == "mint_label_duplicates"]) == 2
+    assert _decision(db, "Q1750").outcome == "flagged_mint_duplicates"
 
 
-# --- rung 7, twin rulings (ADR 0012 §7) ----------------------------------------
+# --- rung 7, duplicate rulings (ADR 0012 §7) ----------------------------------------
 
 
 def _wikipedia_source(db) -> Source:
@@ -1074,7 +1074,7 @@ def _wikipedia_source(db) -> Source:
     return source
 
 
-def test_twin_ruling_resolves_model_and_dated_era(
+def test_duplicate_ruling_resolves_model_and_dated_era(
     db,
     wikidata_source,
     vpic_source,  # noqa: F811
@@ -1091,7 +1091,7 @@ def test_twin_ruling_resolves_model_and_dated_era(
     _land_sweep(
         db, wikidata_source, "Q1101", "Citroën C6", description="1929 saloon", makers=["Q6746"]
     )
-    run_wikidata_models_pass(db)  # contests the pair, opens the twin flags
+    run_wikidata_models_pass(db)  # contests the pair, opens the duplicate flags
 
     wikipedia = _wikipedia_source(db)
     _land_article(
@@ -1101,11 +1101,11 @@ def test_twin_ruling_resolves_model_and_dated_era(
         "Citroën C6 (1928–1932)",
         "{{Infobox automobile\n| production = 1928–1932\n}}",
     )
-    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1100", "model:citroen/c6")
-    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1101", "era:citroen/c6")
+    monkeypatch.setitem(policy.WIKIDATA_DUPLICATE_NAMEPLATES, "Q1100", "model:citroen/c6")
+    monkeypatch.setitem(policy.WIKIDATA_DUPLICATE_NAMEPLATES, "Q1101", "era:citroen/c6")
 
     stats = run_wikidata_models_pass(db)
-    assert stats.twins_resolved == 2 and stats.mint_contested == 0
+    assert stats.duplicates_resolved == 2 and stats.mint_contested == 0
 
     model = db.scalars(select(Model).where(Model.company_id == citroen.id)).one()
     assert (model.slug, model.name) == ("c6", "C6")
@@ -1127,26 +1127,26 @@ def test_twin_ruling_resolves_model_and_dated_era(
             GenerationModelLink.superseded_by.is_(None),
         )
     ).one()
-    open_twins = db.scalars(
+    open_duplicates = db.scalars(
         select(ReconciliationFlag).where(
             ReconciliationFlag.kind == "match_review", ReconciliationFlag.status == "open"
         )
     ).all()
-    assert not [f for f in open_twins if f.detail.get("reason") == "mint_label_twins"]
+    assert not [f for f in open_duplicates if f.detail.get("reason") == "mint_label_duplicates"]
     dismissed = db.scalars(
         select(ReconciliationFlag).where(ReconciliationFlag.status == "dismissed")
     ).all()
-    assert any(f.detail.get("resolution") == "twin_model:citroen/c6" for f in dismissed)
-    assert any(f.detail.get("resolution") == "twin_era:citroen/c6" for f in dismissed)
+    assert any(f.detail.get("resolution") == "duplicate_model:citroen/c6" for f in dismissed)
+    assert any(f.detail.get("resolution") == "duplicate_era:citroen/c6" for f in dismissed)
 
     rerun = run_wikidata_models_pass(db)
-    assert rerun.twins_resolved == 0 and rerun.assertions_inserted == 0
+    assert rerun.duplicates_resolved == 0 and rerun.assertions_inserted == 0
     assert rerun.flags_opened == 0 and rerun.generations_refreshed >= 1
     db.refresh(generation)
     assert generation.name == "C6 (1928–1932)", "the refresh keeps the ruled era name"
 
 
-def test_twin_era_without_evidence_stays_flagged(
+def test_duplicate_era_without_evidence_stays_flagged(
     db,
     wikidata_source,
     vpic_source,  # noqa: F811
@@ -1157,20 +1157,20 @@ def test_twin_era_without_evidence_stays_flagged(
     _land_sweep(db, wikidata_source, "Q1200", "Citroën Pony", makers=["Q6746"])
     _land_sweep(db, wikidata_source, "Q1201", "Citroën Pony II", makers=["Q6746"])
     run_wikidata_models_pass(db)
-    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1201", "era:citroen/pony")
+    monkeypatch.setitem(policy.WIKIDATA_DUPLICATE_NAMEPLATES, "Q1201", "era:citroen/pony")
 
     stats = run_wikidata_models_pass(db)
-    assert stats.twins_resolved == 0
-    assert _decision(db, "Q1201").outcome == "twin_era_awaits_span"
+    assert stats.duplicates_resolved == 0
+    assert _decision(db, "Q1201").outcome == "duplicate_era_awaits_span"
     assert stats.models_minted == 0, "a half-ruled group never mints its leftover"
-    assert _decision(db, "Q1200").outcome == "flagged_mint_twins"
-    assert _decision(db, "Q1200").detail["twins"] == ["Q1200", "Q1201"]
+    assert _decision(db, "Q1200").outcome == "flagged_mint_duplicates"
+    assert _decision(db, "Q1200").detail["duplicates"] == ["Q1200", "Q1201"]
     open_flags = db.scalars(
         select(ReconciliationFlag).where(
             ReconciliationFlag.kind == "match_review", ReconciliationFlag.status == "open"
         )
     ).all()
-    assert [f for f in open_flags if f.detail.get("reason") == "mint_label_twins"], (
+    assert [f for f in open_flags if f.detail.get("reason") == "mint_label_duplicates"], (
         "identity without time resolves nothing"
     )
 
@@ -1188,15 +1188,15 @@ def test_unruled_claimant_of_a_ruled_base_flags_never_attaches(
     monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
     db.add(Model(company_id=citroen.id, slug="pony", name="Pony"))
     db.commit()
-    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1201", "era:citroen/pony")
+    monkeypatch.setitem(policy.WIKIDATA_DUPLICATE_NAMEPLATES, "Q1201", "era:citroen/pony")
     _land_sweep(db, wikidata_source, "Q1200", "Citro\u00ebn Pony", makers=["Q6746"])
 
     first = run_wikidata_models_pass(db)
     second = run_wikidata_models_pass(db)
     assert (first.models_matched, second.models_matched) == (0, 0)
     assert (first.flags_opened, second.flags_opened) == (1, 0)
-    assert _decision(db, "Q1200").outcome == "flagged_twin_ruled_base"
-    assert _decision(db, "Q1200").detail["twins"] == ["Q1201"]
+    assert _decision(db, "Q1200").outcome == "flagged_duplicate_ruled_base"
+    assert _decision(db, "Q1200").detail["duplicates"] == ["Q1201"]
     assert db.scalar(select(ExternalId).where(ExternalId.external_id == "Q1200")) is None, (
         "the bare model keeps no anchor until a human rules"
     )

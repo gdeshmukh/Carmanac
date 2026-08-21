@@ -107,7 +107,7 @@ _BARE_QID = re.compile(r"Q\d+")
 # parenthetical ("A110 (2017)") on an otherwise-shared nameplate. Wikidata
 # files a nameplate and its generations as sibling model entities in exactly
 # this dress, and level is never decided by label - so the whole family is
-# one naming ruling, like exact label twins.
+# one naming ruling, like exact label duplicates.
 _TRAILING_ROMAN = re.compile(r"\s+(?:X{0,1}(?:IX|IV|V?I{0,3}))$")
 _TRAILING_PAREN = re.compile(r"\s*\([^)]*\)$")
 _MINT_EXCLUDE = re.compile(
@@ -157,7 +157,7 @@ class WikidataModelsStats:
     waits_unmatched: int = 0
     models_minted: int = 0
     mint_contested: int = 0
-    twins_resolved: int = 0
+    duplicates_resolved: int = 0
     company_entities: int = 0
     assertions_inserted: int = 0
     assertions_superseded: int = 0
@@ -178,7 +178,7 @@ class WikidataModelsStats:
             f"waits: no_held_maker={self.waits_no_held_maker} "
             f"unmatched={self.waits_unmatched} company_entity={self.company_entities} | "
             f"minted={self.models_minted} (contested={self.mint_contested}, "
-            f"twins_resolved={self.twins_resolved}) | "
+            f"duplicates_resolved={self.duplicates_resolved}) | "
             f"assertions={self.assertions_inserted} "
             f"(superseded={self.assertions_superseded}) "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
@@ -207,7 +207,7 @@ class _WikidataModelsPass:
 
         self._load_external_ids()
         self._load_companies()
-        self._load_twin_bases()
+        self._load_duplicate_bases()
         self._load_models()
         self._load_structure()
         self._load_wikipedia_precedence()
@@ -239,19 +239,19 @@ class _WikidataModelsPass:
             elif generation_id is not None:
                 self.generation_by_qid[external_id] = generation_id
 
-    def _load_twin_bases(self) -> None:
-        """Base addresses under twin adjudication (ADR 0012 §7): each ruled
+    def _load_duplicate_bases(self) -> None:
+        """Base addresses under duplicate adjudication (ADR 0012 §7): each ruled
         target's (company, slug), with its registered members. A QID outside
         the registry never takes one of these addresses through an automatic
         rung - not by mint and not by label match - it flags for a ruling
         instead ("members left out of the registry keep contesting")."""
         by_slug = {c.slug: cid for cid, c in self.companies.items() if c.slug}
-        self.twin_ruled_bases: dict[tuple[int, str], list[str]] = {}
-        for qid, target in sorted(policy.WIKIDATA_TWIN_NAMEPLATES.items()):
+        self.duplicate_ruled_bases: dict[tuple[int, str], list[str]] = {}
+        for qid, target in sorted(policy.WIKIDATA_DUPLICATE_NAMEPLATES.items()):
             company_slug, _, slug = target.partition(":")[2].partition("/")
             company_id = by_slug.get(company_slug)
             if company_id is not None:
-                self.twin_ruled_bases.setdefault((company_id, slug), []).append(qid)
+                self.duplicate_ruled_bases.setdefault((company_id, slug), []).append(qid)
 
     def _load_companies(self) -> None:
         """Held companies, plus every name form they wear - what rung 3
@@ -347,7 +347,7 @@ class _WikidataModelsPass:
             (m.company_id, m.slug): m.id for m in self.models.values() if m.slug
         }
         # (subject, company_id, name, slug) collected across rung 6, minted
-        # together so label twins are seen as a group before any row exists.
+        # together so label duplicates are seen as a group before any row exists.
         self.mint_candidates: list[tuple[_Subject, int, str, str]] = []
 
         # Prior decisions, so a refresh preserves HOW a match was made
@@ -804,9 +804,9 @@ class _WikidataModelsPass:
                 )
                 continue
 
-            # A registered twin's address comes from its ruling (§7), never
+            # A registered duplicate's address comes from its ruling (§7), never
             # from its label - rung 3 does not claim for it.
-            if qid in policy.WIKIDATA_TWIN_NAMEPLATES:
+            if qid in policy.WIKIDATA_DUPLICATE_NAMEPLATES:
                 continue
 
             # Rung 3: exact-normalized name/alias match, never fuzzy. A unique
@@ -845,7 +845,7 @@ class _WikidataModelsPass:
 
     def _claim_detail(self, qid: str) -> dict:
         """What a reviewer needs to tell a nameplate entity from its
-        label-twin generations: description and sitelink title."""
+        label-duplicate generations: description and sitelink title."""
         entity = self.subjects[qid].entity
         return {
             "qid": qid,
@@ -909,7 +909,7 @@ class _WikidataModelsPass:
         with label evidence outranking alias evidence (ADR 0013 §2).
 
         Label claimants: exactly one -> it attaches 1:1; several -> the
-        label-twin cluster flag (picking the nameplate from identical labels
+        label-duplicate cluster flag (picking the nameplate from identical labels
         would be a guess - the curated registry resolves it). Alias claimants
         never cluster: uncontested same-brand ones attach (the alias IS the
         as-filed market name - the Echo/LeCar species); contested or
@@ -930,18 +930,20 @@ class _WikidataModelsPass:
         ):
             claimants = self.claims[model_id]
             model = self.models[model_id]
-            ruled = self.twin_ruled_bases.get((model.company_id, model.slug))
+            ruled = self.duplicate_ruled_bases.get((model.company_id, model.slug))
             if ruled:
-                # The address is under twin adjudication: no claimant attaches
+                # The address is under duplicate adjudication: no claimant attaches
                 # by name, each asks for a ruling.
                 for qid, method, _rank in sorted(claimants):
                     detail = {
                         "model": self._slug_pair(model_id),
                         "label": self.subjects[qid].entity.label,
-                        "twins": sorted(ruled),
+                        "duplicates": sorted(ruled),
                     }
-                    self._flag(self.subjects[qid], "twin_ruled_base", detail)
-                    self._decide(self.subjects[qid], "3", method, "flagged_twin_ruled_base", detail)
+                    self._flag(self.subjects[qid], "duplicate_ruled_base", detail)
+                    self._decide(
+                        self.subjects[qid], "3", method, "flagged_duplicate_ruled_base", detail
+                    )
                 continue
             cluster = {q for q, _, _ in claimants}
             active = [
@@ -1109,7 +1111,8 @@ class _WikidataModelsPass:
         generation = self.session.get(Generation, self.generation_by_qid[subject.entity.qid])
         display = (
             self._strip(subject.entity.label, generation.company_id)
-            if subject.entity.label and subject.entity.qid not in policy.WIKIDATA_TWIN_NAMEPLATES
+            if subject.entity.label
+            and subject.entity.qid not in policy.WIKIDATA_DUPLICATE_NAMEPLATES
             else generation.name
         )
         self._generation_facts(generation, subject, display)
@@ -1262,7 +1265,7 @@ class _WikidataModelsPass:
             # that fell through every match and structure rung is the fill,
             # not a near-miss - its trigram neighbours are its own siblings
             # minting beside it, so the candidates queue would only echo the
-            # batch back. Collected, not minted: twins must be seen together.
+            # batch back. Collected, not minted: duplicates must be seen together.
             minted = self._mint_candidate(subject)
             if minted is not None:
                 self.mint_candidates.append((subject, *minted))
@@ -1376,11 +1379,11 @@ class _WikidataModelsPass:
     def _mint_phase(self) -> None:
         """Mint the collected candidates, contested slugs held as a group.
 
-        Label twins are the trap the census predicted: four distinct "Škoda
+        Label duplicates are the trap the census predicted: four distinct "Škoda
         Rapid" entities are four different-era cars sharing a nameplate, and
         minting any one of them would enthrone an arbitrary era at the plain
         address. Unlike the vPIC collision rule (§2.3: lower filing keeps the
-        slug), NO twin mints - which of them deserves the plain name, and
+        slug), NO duplicate mints - which of them deserves the plain name, and
         what the others should be called, is one naming ruling per group."""
 
         def base_slug(name: str) -> str:
@@ -1394,7 +1397,7 @@ class _WikidataModelsPass:
             if (
                 qid in self.model_by_qid
                 or qid in self.generation_by_qid
-                or qid in policy.WIKIDATA_TWIN_NAMEPLATES
+                or qid in policy.WIKIDATA_DUPLICATE_NAMEPLATES
             ):
                 continue  # ruled (or ruled-and-awaiting-evidence); no longer contested
             groups.setdefault((cand[1], base_slug(cand[2])), []).append(cand)
@@ -1402,30 +1405,30 @@ class _WikidataModelsPass:
         for (company_id, base), cands in sorted(groups.items()):
             company = self.companies[company_id]
             # A group is every candidate sharing an era-stripped base:
-            # exact twins ("C6"/"C6") and dressed siblings ("Dokker"/
+            # exact duplicates ("C6"/"C6") and dressed siblings ("Dokker"/
             # "Dokker I"/"Dokker II", "A110"/"A110 (2017)") alike. A base
             # already worn by a held model contests a single candidate the
             # same way - "A110 (2017)" beside a live A110 is the same
             # question as beside a candidate one.
             base_occupant = self.model_by_company_slug.get((company_id, base))
             dressed_single = len(cands) == 1 and cands[0][3] != base
-            ruled_members = self.twin_ruled_bases.get((company_id, base), [])
+            ruled_members = self.duplicate_ruled_bases.get((company_id, base), [])
             if len(cands) > 1 or ruled_members or (base_occupant is not None and dressed_single):
-                twins = sorted({c[0].entity.qid for c in cands} | set(ruled_members))
+                duplicates = sorted({c[0].entity.qid for c in cands} | set(ruled_members))
                 if base_occupant is not None:
-                    twins.append(self._slug_pair(base_occupant))
+                    duplicates.append(self._slug_pair(base_occupant))
                 for subject, _, _name, slug in cands:
                     self._flag(
                         subject,
-                        "mint_label_twins",
-                        {"label": subject.entity.label, "slug": slug, "twins": twins},
+                        "mint_label_duplicates",
+                        {"label": subject.entity.label, "slug": slug, "duplicates": duplicates},
                     )
                     self._decide(
                         subject,
                         "6",
                         "registry_mint",
-                        "flagged_mint_twins",
-                        {"slug": slug, "twins": twins},
+                        "flagged_mint_duplicates",
+                        {"slug": slug, "duplicates": duplicates},
                     )
                 self.stats.mint_contested += len(cands)
                 continue
@@ -1452,8 +1455,8 @@ class _WikidataModelsPass:
             if occupant is not None:
                 # The slug is worn by a model the entity did NOT name-match:
                 # either the same nameplate under a spelling rung 3 cannot
-                # see, or a genuine twin. A human rules; a match lands in
-                # WIKIDATA_MODEL_MATCHES, a twin gets its naming ruling.
+                # see, or a genuine duplicate. A human rules; a match lands in
+                # WIKIDATA_MODEL_MATCHES, a duplicate gets its naming ruling.
                 self._flag(
                     subject,
                     "mint_slug_occupied",
@@ -1492,9 +1495,9 @@ class _WikidataModelsPass:
                 {"model": f"{company.slug}/{slug}"},
             )
 
-    # --- the twin rulings (ADR 0012 §7) ---------------------------------------
+    # --- the duplicate rulings (ADR 0012 §7) ---------------------------------------
 
-    def _twin_span(self, wikipedia_id: int | None, qid: str):
+    def _duplicate_span(self, wikipedia_id: int | None, qid: str):
         """Decision-time read of the era's own landed article: (production
         span, title parenthetical). Deciding resolvability and naming only -
         the span itself is asserted by the Wikipedia pass, under its own
@@ -1518,18 +1521,18 @@ class _WikidataModelsPass:
         paren = re.search(r"\(([^()]+)\)\s*$", title)
         return parse_infobox(title, top).production, paren.group(1) if paren else None
 
-    def _twins_phase(self) -> None:
-        """Apply recorded twin rulings: the base nameplate is one model row;
+    def _duplicates_phase(self) -> None:
+        """Apply recorded duplicate rulings: the base nameplate is one model row;
         registered era entities become generations under it. This rung sets
         identity and attachment - time arrives from each era's own article
         through the Wikipedia pass. Unregistered members keep contesting."""
-        if not policy.WIKIDATA_TWIN_NAMEPLATES:
+        if not policy.WIKIDATA_DUPLICATE_NAMEPLATES:
             return
         wikipedia_id = self.session.scalar(
             select(Source.id).where(Source.name == WIKIPEDIA_SOURCE_NAME)
         )
         company_by_slug = {c.slug: cid for cid, c in self.companies.items() if c.slug}
-        for qid, target in sorted(policy.WIKIDATA_TWIN_NAMEPLATES.items()):
+        for qid, target in sorted(policy.WIKIDATA_DUPLICATE_NAMEPLATES.items()):
             subject = self.subjects.get(qid)
             if subject is None or qid in self.model_by_qid or qid in self.generation_by_qid:
                 continue
@@ -1537,7 +1540,7 @@ class _WikidataModelsPass:
             company_slug, _, model_slug = pair.partition("/")
             company_id = company_by_slug.get(company_slug)
             if company_id is None:
-                log.warning("WIKIDATA_TWIN_NAMEPLATES[%s] -> %r: no such company", qid, target)
+                log.warning("WIKIDATA_DUPLICATE_NAMEPLATES[%s] -> %r: no such company", qid, target)
                 continue
             entity = subject.entity
             model_id = self.model_by_company_slug.get((company_id, model_slug))
@@ -1562,7 +1565,11 @@ class _WikidataModelsPass:
                     model_id = model.id
                 elif self.qid_by_model.get(model_id) is not None:
                     self._decide(
-                        subject, "7", "twin_ruling", "twin_model_conflict", {"model": pair}
+                        subject,
+                        "7",
+                        "duplicate_ruling",
+                        "duplicate_model_conflict",
+                        {"model": pair},
                     )
                     continue
                 self._attach_model(model_id, subject)
@@ -1572,14 +1579,18 @@ class _WikidataModelsPass:
                 self._assert_facts(
                     "model_id", self.models[model_id], MINTED_MODEL_COVERAGE, facts, subject.record
                 )
-                self.stats.twins_resolved += 1
-                self._dismiss_flags(qid, f"twin_model:{pair}")
-                self._decide(subject, "7", "twin_ruling", "twin_model_resolved", {"model": pair})
+                self.stats.duplicates_resolved += 1
+                self._dismiss_flags(qid, f"duplicate_model:{pair}")
+                self._decide(
+                    subject, "7", "duplicate_ruling", "duplicate_model_resolved", {"model": pair}
+                )
                 continue
 
-            span, era_label = self._twin_span(wikipedia_id, qid)
+            span, era_label = self._duplicate_span(wikipedia_id, qid)
             if span is None and not entity.start_years:
-                self._decide(subject, "7", "twin_ruling", "twin_era_awaits_span", {"model": pair})
+                self._decide(
+                    subject, "7", "duplicate_ruling", "duplicate_era_awaits_span", {"model": pair}
+                )
                 continue
             if model_id is None:
                 # An all-era group: no entity means the nameplate, so the
@@ -1604,7 +1615,11 @@ class _WikidataModelsPass:
                 slug = None
             elif self.generation_by_company_slug.get((company_id, slug)) is not None:
                 self._decide(
-                    subject, "7", "twin_ruling", "twin_era_collision", {"model": pair, "slug": slug}
+                    subject,
+                    "7",
+                    "duplicate_ruling",
+                    "duplicate_era_collision",
+                    {"model": pair, "slug": slug},
                 )
                 continue
             generation = Generation(company_id=company_id, slug=slug, name=display)
@@ -1619,13 +1634,13 @@ class _WikidataModelsPass:
             self.generation_by_qid[qid] = generation.id
             self._assert_generation_link(generation.id, model_id, subject)
             self._generation_facts(generation, subject, display)
-            self.stats.twins_resolved += 1
-            self._dismiss_flags(qid, f"twin_era:{pair}")
+            self.stats.duplicates_resolved += 1
+            self._dismiss_flags(qid, f"duplicate_era:{pair}")
             self._decide(
                 subject,
                 "7",
-                "twin_ruling",
-                "twin_era_resolved",
+                "duplicate_ruling",
+                "duplicate_era_resolved",
                 {"model": pair, "generation": slug or f"#{generation.id}"},
             )
 
@@ -1642,7 +1657,7 @@ class _WikidataModelsPass:
         self._line_phase()
         self._membership_phase()
         self._structure_phase()
-        self._twins_phase()
+        self._duplicates_phase()
         self._mint_phase()
         self.decisions.flush()
         for subject in self.subjects.values():

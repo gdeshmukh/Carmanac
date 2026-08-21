@@ -1,9 +1,9 @@
-"""Propose WIKIDATA_TWIN_NAMEPLATES entries from the open twin queue.
+"""Propose WIKIDATA_DUPLICATE_NAMEPLATES entries from the open duplicate queue.
 
 Read-only, the merge-script discipline: print the evidence per contested
 entity and a paste-ready registry dict; a human strikes what should not
-resolve (concurrent-market twins above all) and commits the rest. Never
-applies anything - the wd-models pass's twins rung does, deterministically.
+resolve (concurrent-market duplicates above all) and commits the rest. Never
+applies anything - the wd-models pass's duplicates rung does, deterministically.
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ FLAGS_SQL = text("""
         replace(rr.payload->'makers'->>'value', 'http://www.wikidata.org/entity/', '')
         AND em.company_id IS NOT NULL
     JOIN companies c ON c.id = em.company_id
-    WHERE rf.status = 'open' AND rf.detail->>'reason' IN ('mint_label_twins', 'mint_slug_occupied')
+    WHERE rf.status = 'open'
+      AND rf.detail->>'reason' IN ('mint_label_duplicates', 'mint_slug_occupied')
     ORDER BY c.slug, rf.detail->>'slug', rr.external_id
 """)
 
@@ -78,7 +79,7 @@ def main() -> None:
                         paren = hit.group(1) if hit else None
                 market = bool(_MARKET_WORDS.search(f"{m.label} {paren or ''}"))
                 if market:
-                    verdict, note = None, "HOLD: market twin (time cannot separate)"
+                    verdict, note = None, "HOLD: market duplicate (time cannot separate)"
                 elif article == "y" and paren is None and span is not None:
                     verdict, note = f"model:{company}/{base}", "plain title, dated lead"
                 elif span is not None or paren is not None:
@@ -94,7 +95,7 @@ def main() -> None:
                 )
             print()
         print("# paste-ready (strike lines before committing):")
-        print("WIKIDATA_TWIN_NAMEPLATES: dict[str, str] = {")
+        print("WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {")
         for qid, verdict in sorted(proposal.items(), key=lambda kv: kv[1]):
             print(f'    "{qid}": "{verdict}",')
         print("}")

@@ -996,7 +996,7 @@ def test_looks_multi_era_reads_both_signals():
     assert not looks_multi_era(
         "{{Infobox automobile\n| production = 2022–present\n}}\n"
         "{{Infobox automobile\n| production = 2022–present\n}}\n"
-    ), "a rebadge twin or body variant shares its era's span"
+    ), "a rebadge duplicate or body variant shares its era's span"
     assert looks_multi_era("== E28 M5 (1984–1988) ==\nprose\n== E34 M5 (1988–1995) ==\nprose\n"), (
         "the chassis-code heading convention BMW and Mazda use"
     )

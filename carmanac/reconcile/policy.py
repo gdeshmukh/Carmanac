@@ -96,8 +96,8 @@ IDENTITY_MERGES: dict[str, str] = {
     # substantive row + a stub whose description identifies the SAME company
     # (mostly the brand-artifact wave). Namesake groups (Ace, Ajax, Caribe,
     # Star OH/IL...) and ambiguous stubs (Imperial, Clipper, the Mazda
-    # chinesische-Automarke twin) deliberately stay separate pending
-    # cross-source checks. TVR's twin Q80901538 is an assembly PLANT, not a
+    # chinesische-Automarke duplicate) deliberately stay separate pending
+    # cross-source checks. TVR's duplicate Q80901538 is an assembly PLANT, not a
     # merge candidate - it needs a deny decision, parked.
     "Q135773766": "Q27110",  # Autobianchi (car brand artifact)
     "Q45144846": "Q27377",  # Borgward (Automobilmarke artifact)
@@ -222,7 +222,7 @@ VPIC_MATCHES: dict[str, str] = {
 VPIC_MODEL_MERGES: dict[str, str] = {
     # The Santana verdict (2026-07-30): both its MakeIds filed the same three
     # licensee-built wheelbase models - one page per wheelbase, LAND ROVER
-    # SANTANA's ModelId attaches to the row its SANTANA twin created.
+    # SANTANA's ModelId attaches to the row its SANTANA duplicate created.
     "model:36864": "model:36863",  # 110" WB
     "model:36866": "model:36865",  # 90" WB
     "model:37552": "model:37551",  # 88" WB
@@ -287,7 +287,7 @@ WIKIDATA_MINT_COMPANIES: dict[str, str] = {
     "Q35896": "lancia",  # overlap probe: 3 as-filed models
 }
 
-# Twin rulings (ADR 0012 §7): a contested label-twin group resolves under ONE
+# Duplicate rulings (ADR 0012 §7): a contested label-duplicate group resolves under ONE
 # nameplate - same-name different-era cars share one model row, and the eras
 # separate as dated generations, never as era-forked names. Keys are member
 # QIDs; values record the verdict:
@@ -303,9 +303,9 @@ WIKIDATA_MINT_COMPANIES: dict[str, str] = {
 #
 # A registered era with no landed article span and no Wikidata date stays
 # flagged (identity without time helps nobody). Members left out of the
-# registry keep contesting - concurrent-market twins (Kamiq China, Rapid
+# registry keep contesting - concurrent-market duplicates (Kamiq China, Rapid
 # India) wait here for their own ruling, since time cannot separate them.
-WIKIDATA_TWIN_NAMEPLATES: dict[str, str] = {
+WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     # Ruled 2026-08-20, reviewed as named cars. Resolves on evidence in hand:
     "Q741857": "model:alpine/a110",  # Alpine A110, the 1963-1977 original's page
     "Q24936559": "era:alpine/a110",  # Alpine A110 (2017-present)
@@ -389,7 +389,7 @@ WIKIDATA_TWIN_NAMEPLATES: dict[str, str] = {
     "Q75030046": "era:skoda-auto/octavia",  # Octavia IV
     # Held with open flags, no entry: the SEAT 124 Sport duplicate pair (its
     # English link lands on the Fiat 124 Sport Coupe, a different car), the
-    # three same-time market twins (Kamiq China, Rapid China/India), the
+    # three same-time market duplicates (Kamiq China, Rapid China/India), the
     # duplicate-suspect second Arkana entry, and the plain "Citroen C5" entry
     # whose grain cannot be told.
 }
@@ -613,7 +613,7 @@ NOT_A_POWERTRAIN: dict[str, str] = {
     "straight-three": "layout",
     "straight-four": "layout",
     "straight-six": "layout",
-    "straight-twin": "layout",
+    "straight-duplicate": "layout",
     "v10": "layout",
     "v12": "layout",
     "v6": "layout",
@@ -633,9 +633,9 @@ NOT_A_POWERTRAIN: dict[str, str] = {
     "supercharged": "technology",
     "turbocharger": "technology",
     "turbodiesel": "technology",
-    "twin turbo": "technology",
-    "twin-turbo": "technology",
-    "twin-turbocharged": "technology",
+    "duplicate turbo": "technology",
+    "duplicate-turbo": "technology",
+    "duplicate-turbocharged": "technology",
     "variable displacement": "technology",
     "variable geometry turbocharger": "technology",
     "variable-geometry turbocharger": "technology",

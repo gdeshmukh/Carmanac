@@ -12,8 +12,8 @@ Two record kinds, told apart by the namespaced external id:
 Article targets are QIDs the passes already trust — identity is inherited
 from Wikidata sitelinks, never inferred by name matching (ADR 0017 §1):
 1:1-attached to one of our models or generations, routed by
-`SECTION_ARTICLE_MODELS`, or members of an open mint twin group (their own
-articles carry the era spans the twins ruling resolves by). `--wider` adds
+`SECTION_ARTICLE_MODELS`, or members of an open mint duplicate group (their own
+articles carry the era spans the duplicates ruling resolves by). `--wider` adds
 the archive layers — P179 line-case entities and unattached entities under
 companies that hold models — landed raw, asserted by no pass today.
 
@@ -44,7 +44,7 @@ API_URL = "https://en.wikipedia.org/w/api.php"
 # A long polite fetch must survive interruption; committed batches resume.
 _COMMIT_EVERY = 25
 
-# Contested twins ride their own open flags, so the target set follows the
+# Contested duplicates ride their own open flags, so the target set follows the
 # queue with no registry copy to go stale. Under :wider, a GROUP_CONCAT'd
 # multi-maker value resolves to no company and stays out on purpose — the
 # JV question is open, and the archive layer must not answer it by accident.
@@ -67,7 +67,7 @@ _TARGETS_SQL = """
             SELECT 1 FROM reconciliation_flags rf
             WHERE rf.raw_record_id = rr.id
               AND rf.status = 'open'
-              AND rf.detail->>'reason' IN ('mint_label_twins', 'mint_slug_occupied')
+              AND rf.detail->>'reason' IN ('mint_label_duplicates', 'mint_slug_occupied')
         )
         OR (:wider AND (
             coalesce(rr.payload->'seriesOf'->>'value', '') <> ''

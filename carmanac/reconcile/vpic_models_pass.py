@@ -7,7 +7,7 @@ record, the pass is:
     2. identity ladder              - `model:<id>` -> the existing row, refresh;
                                       a ruled same-nameplate member
                                       (`policy.VPIC_MODEL_MERGES`) attaches to
-                                      its canonical twin's row
+                                      its canonical duplicate's row
     3. otherwise create             - slug = slugify(model_name), per company
     4. slug collision under one company -> `match_review`, never auto-suffix
 
@@ -278,7 +278,7 @@ class _VpicModelsPass:
         return model
 
     def _attach_to_canonical(self, record: RawRecord) -> int | None:
-        """A ruled same-nameplate member gains the canonical twin's row: its
+        """A ruled same-nameplate member gains the canonical duplicate's row: its
         `model:<id>` external id lands there, so later kinds (`modelyears:`)
         resolve through it. None while the canonical row does not exist."""
         canonical = policy.VPIC_MODEL_MERGES[record.external_id]
@@ -371,7 +371,7 @@ class _VpicModelsPass:
             r for r in current_records(self.session, self.source.id) if self._is_model_record(r)
         ]
         # Ascending ModelId, ruled merge members last: a member needs its
-        # canonical twin's row to exist, whatever their relative ids.
+        # canonical duplicate's row to exist, whatever their relative ids.
         records.sort(
             key=lambda r: (r.external_id in policy.VPIC_MODEL_MERGES, int(r.payload["model_id"]))
         )

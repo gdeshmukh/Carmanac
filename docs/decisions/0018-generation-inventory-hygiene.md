@@ -142,7 +142,7 @@ QID; no name matching is introduced.
   target, whether a sweep QID's sitelink matches the target title is
   noted in the decision detail — feedstock for the future Wikidata
   adoption pass (ADR 0017 §4's correspondence key). The wd
-  `flagged_candidates` label-twin flags (where the MX-5's four
+  `flagged_candidates` label-duplicate flags (where the MX-5's four
   per-generation QIDs sit) are queue work with their own arc and are not
   resolved here.
 
@@ -170,8 +170,8 @@ The three Wikipedia landers (`articles`, `infoboxes`, `section_mains`)
 collapse into `carmanac/ingest/wikipedia/fetch.py`. The §3 Main-target gate
 is unchanged. What widened is the article target set, still identity-
 inherited: QIDs attached to our models **or generations**, the curated
-routings, and the members of open mint twin groups (their own sitelinks
-carry the era spans the twins ruling resolves by). `--wider` adds two
+routings, and the members of open mint duplicate groups (their own sitelinks
+carry the era spans the duplicates ruling resolves by). `--wider` adds two
 archive layers — P179 line-case entities and unattached entities under
 companies that hold models — landed raw and asserted by no pass, so the
 skeleton work and any future admission decision read from disk instead of
