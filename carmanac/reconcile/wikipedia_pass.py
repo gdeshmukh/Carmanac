@@ -1095,9 +1095,11 @@ class _WikipediaPass:
         lead = parse_infobox(record.payload["title"], parsed.top_wikitext)
         keyed = self.section_generations.get(f"section:{qid}#0")
         if keyed is None and looks_multi_era(record.payload.get("wikitext", "")):
-            # The article shows era structure the heading grammar could not
-            # read; one era is exactly what it does NOT describe. Widening
-            # the grammar is the real fix - this is the review vein for it.
+            # Era structure the heading grammar could not read: no era mints,
+            # but the lead's own dimensions still land at model grain.
+            # Reaching here means the era grammar found nothing, so no finer
+            # row exists to carry them - and a default is only ever read when
+            # nothing finer answers.
             self.stats.no_sections += 1
             self._dismiss_article_flag(qid, "article_no_longer_has_sections")
             self.decisions.record(
@@ -1105,7 +1107,7 @@ class _WikipediaPass:
                 "lead_era_multi_era",
                 detail={"title": parsed.title},
             )
-            self._model_specs(self.models[model_id], "", record)
+            self._model_specs(self.models[model_id], parsed.top_wikitext, record)
             return
         ruled_twin = policy.WIKIDATA_TWIN_NAMEPLATES.get(qid, "").startswith("model:")
         if keyed is None and self.links_by_model.get(model_id) and not ruled_twin:
