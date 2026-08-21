@@ -443,8 +443,11 @@ class _WikipediaPass:
             )
             self.configs_by_model.setdefault(model_id, []).append((cid, start, end, cc, fuel))
 
+        # `<kind>-article:<key>` is a family, `...#<code>` one of its
+        # variants - one scan fills both.
         self.engines_by_key: dict[str, Engine] = {}
         self.transmissions_by_key: dict[str, Transmission] = {}
+        self.engine_variants: dict[tuple[str, str], int] = {}
         for external_id, engine_id, transmission_id in self.session.execute(
             select(ExternalId.external_id, ExternalId.engine_id, ExternalId.transmission_id).where(
                 ExternalId.source_id == self.source.id,
@@ -452,24 +455,14 @@ class _WikipediaPass:
             )
         ):
             kind, _, rest = external_id.partition(":")
-            key = rest.partition("#")[0]
-            if kind == "engine-article" and engine_id is not None and "#" not in rest:
-                self.engines_by_key[key] = self.session.get(Engine, engine_id)
-            elif kind == "transmission-article" and transmission_id is not None and "#" not in rest:
+            key, _, code = rest.partition("#")
+            if kind == "engine-article" and engine_id is not None:
+                if code:
+                    self.engine_variants[(key, code)] = engine_id
+                else:
+                    self.engines_by_key[key] = self.session.get(Engine, engine_id)
+            elif kind == "transmission-article" and transmission_id is not None and not code:
                 self.transmissions_by_key[key] = self.session.get(Transmission, transmission_id)
-        self.engine_variants: dict[tuple[str, str], int] = {
-            (rest.partition("#")[0], rest.partition("#")[2]): engine_id
-            for external_id, engine_id, _t in self.session.execute(
-                select(
-                    ExternalId.external_id, ExternalId.engine_id, ExternalId.transmission_id
-                ).where(
-                    ExternalId.source_id == self.source.id,
-                    ExternalId.external_id.like("engine-article:%#%"),
-                )
-            )
-            if engine_id is not None
-            for rest in [external_id.partition(":")[2]]
-        }
 
         self.live_engine_links: dict[int, dict[int, ConfigurationEngine]] = {}
         for row in self.session.scalars(
@@ -1068,7 +1061,7 @@ class _WikipediaPass:
                     self.powertrain_asserted.add(cid)
 
     def _sync_links(self, cid: int, desired: set[int], live_map, cls, id_col: str, record) -> None:
-        existing = live_map.get(cid, {})
+        existing = live_map.setdefault(cid, {})
         for entity_id in desired - existing.keys():
             link = cls(
                 configuration_id=cid,
@@ -1078,7 +1071,6 @@ class _WikipediaPass:
                 scraped_at=record.last_seen_at,
             )
             self.session.add(link)
-            existing = live_map.setdefault(cid, {})
             existing[entity_id] = link
             self.stats.powertrain_links += 1
         for entity_id in list(existing.keys() - desired):
