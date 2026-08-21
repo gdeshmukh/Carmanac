@@ -15,14 +15,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from carmanac.reconcile.sources.wikipedia_infobox import _COMMENT, _REF
+from carmanac.reconcile.sources.wikipedia_infobox import _COMMENT, _CONVERT, _REF, _UNIT_FACTORS
 
 # Table boundaries are line-anchored; nested tables (rare layout tricks)
 # stay inside their parent's body and are not descended into.
 _TABLE_OPEN = re.compile(r"^[ \t]*\{\|", re.MULTILINE)
 
 _LINK = re.compile(r"\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|[^\]]*)?\]\]")
-_CONVERT = re.compile(r"\{\{\s*(?:convert|cvt|cvrt)\s*\|([^{}]*)\}\}", re.IGNORECASE)
 _YEAR_SPAN = re.compile(
     r"\b(\d{4})\s*(?:[–—−-]|&ndash;)\s*(\d{4}|present|current|date)", re.IGNORECASE
 )
@@ -37,8 +36,17 @@ _TORQUE = re.compile(
     re.IGNORECASE,
 )
 
-_POWER_FACTORS = {"hp": 1.0, "bhp": 1.0, "ps": 0.9863, "kw": 1.34102}
-_TORQUE_FACTORS = {"nm": 1.0, "n⋅m": 1.0, "n·m": 1.0, "lbft": 1.35582}
+_POWER_FACTORS = _UNIT_FACTORS["power"]
+_TORQUE_FACTORS = {
+    "n.m": 1.0,  # the convert template's own code for newton-metres
+    "n⋅m": 1.0,
+    "n·m": 1.0,
+    "nm": 1.0,
+    "lb.ft": 1.35582,
+    "lbft": 1.35582,
+    "lb·ft": 1.35582,
+    "lb⋅ft": 1.35582,
+}
 
 _FUEL_WORDS = re.compile(r"\b(petrol|gasoline|diesel)\b", re.IGNORECASE)
 
@@ -268,7 +276,11 @@ def _roles(headers: list[str]) -> dict[int, str]:
 def _convert_value(text: str, factors: dict[str, float]) -> int | None:
     for hit in _CONVERT.finditer(text):
         positional = [a.strip() for a in hit.group(1).split("|") if "=" not in a]
-        if not positional or not re.fullmatch(r"[\d,]+(?:\.\d+)?", positional[0]):
+        if (
+            not positional
+            or not positional[0].replace(",", "")
+            or not re.fullmatch(r"[\d,]+(?:\.\d+)?", positional[0])
+        ):
             continue
         unit = next(
             (a for a in positional[1:] if not re.fullmatch(r"[\d,.]+|-|–", a)), ""
@@ -290,19 +302,7 @@ def _power(text: str) -> int | None:
 
 
 def _torque(text: str) -> int | None:
-    value = _convert_value(
-        text,
-        {
-            "n.m": 1.0,  # the convert template's own code for newton-metres
-            "n⋅m": 1.0,
-            "n·m": 1.0,
-            "nm": 1.0,
-            "lb.ft": 1.35582,
-            "lbft": 1.35582,
-            "lb·ft": 1.35582,
-            "lb⋅ft": 1.35582,
-        },
-    )
+    value = _convert_value(text, _TORQUE_FACTORS)
     if value is not None:
         return value
     m = _TORQUE.search(_CONVERT.sub(" ", text))

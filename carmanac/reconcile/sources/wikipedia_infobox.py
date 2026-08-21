@@ -215,6 +215,19 @@ _SPEC_FIELDS = (
     ("powerout", "power_hp", "power"),
 )
 
+# Outside these, the number is not the field's quantity (a misfiled length
+# under `wheelbase`, a typo'd unit) - it asserts nothing, like the
+# displacement bounds in the tables parser. Bounds reject the impossible
+# only; unusual stays in.
+_SPEC_BOUNDS = {
+    "length_mm": (1300, 7000),
+    "width_mm": (1000, 2600),
+    "height_mm": (800, 2600),
+    "wheelbase_mm": (1200, 4100),
+    "curb_weight_kg": (250, 4500),
+    "power_hp": (1, 2600),
+}
+
 # What the infobox can speak about on the defaults tables. `doors` rides the
 # body_style field (parsed by the pass); torque and seating have no infobox
 # field and stay out of coverage.
@@ -241,7 +254,8 @@ def _single_value(raw: str, kind: str) -> tuple[str, int] | None:
     if len(hits) != 1 or re.search(r"[\d(]", _CONVERT.sub("", cleaned)):
         return None
     positional = [a.strip() for a in hits[0].split("|") if "=" not in a]
-    if not positional or not _NUMBER.fullmatch(positional[0]):
+    head = positional[0].replace(",", "") if positional else ""
+    if not head or not _NUMBER.fullmatch(positional[0]):
         return None
     if len(positional) > 1 and positional[1].casefold() in _RANGE_TOKENS:
         return None
@@ -249,8 +263,20 @@ def _single_value(raw: str, kind: str) -> tuple[str, int] | None:
     factor = _UNIT_FACTORS[kind].get(unit.casefold())
     if factor is None:
         return None
+    value = float(head) * factor
+    # The compound form ({{convert|14|ft|4.2|in|...}}) states one quantity as
+    # major+minor unit, and reading the major alone silently shrinks it - so a
+    # value-like third argument either reads fully or asserts nothing. That
+    # rejects fractions (10+1/2), unknown minor units, and a minor that is
+    # not the strictly smaller unit.
+    if len(positional) >= 4 and any(c.isdigit() or c == "," for c in positional[2]):
+        minor = _UNIT_FACTORS[kind].get(positional[3].casefold())
+        digits = positional[2].replace(",", "")
+        if minor is None or minor >= factor or not digits or not _NUMBER.fullmatch(positional[2]):
+            return None
+        value += float(digits) * minor
     observed = " ".join(cleaned.split())[:120]
-    return observed, round(float(positional[0].replace(",", "")) * factor)
+    return observed, round(value)
 
 
 def parse_specs(wikitext: str) -> dict[str, tuple[str, int]]:
@@ -262,5 +288,7 @@ def parse_specs(wikitext: str) -> dict[str, tuple[str, int]]:
             continue
         value = _single_value(raw, kind)
         if value is not None:
-            facts[column] = value
+            lo, hi = _SPEC_BOUNDS[column]
+            if lo <= value[1] <= hi:
+                facts[column] = value
     return facts
