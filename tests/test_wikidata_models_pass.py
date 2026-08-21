@@ -834,10 +834,10 @@ def test_mint_label_twins_flag_as_a_group_and_none_mints(
     monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
 
     _land_sweep(
-        db, wikidata_source, "Q1100", "Citroën C6", description="1929 saloon", makers=["Q6746"]
+        db, wikidata_source, "Q1100", "Citroën C8", description="1929 saloon", makers=["Q6746"]
     )
     _land_sweep(
-        db, wikidata_source, "Q1101", "Citroën C6", description="executive car", makers=["Q6746"]
+        db, wikidata_source, "Q1101", "Citroën C8", description="executive car", makers=["Q6746"]
     )
 
     stats = run_wikidata_models_pass(db)
@@ -922,9 +922,9 @@ def test_mint_era_siblings_contest_as_one_group(db, wikidata_source, vpic_source
     dacia = _matched_make(db, wikidata_source, vpic_source, "Q27460", "Dacia", 904)
     monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q27460", "dacia")
 
-    _land_sweep(db, wikidata_source, "Q1500", "Dacia Dokker", makers=["Q27460"])
-    _land_sweep(db, wikidata_source, "Q1501", "Dacia Dokker I", makers=["Q27460"])
-    _land_sweep(db, wikidata_source, "Q1502", "Dacia Dokker II", makers=["Q27460"])
+    _land_sweep(db, wikidata_source, "Q1500", "Dacia Lodgy", makers=["Q27460"])
+    _land_sweep(db, wikidata_source, "Q1501", "Dacia Lodgy I", makers=["Q27460"])
+    _land_sweep(db, wikidata_source, "Q1502", "Dacia Lodgy II", makers=["Q27460"])
     _land_sweep(db, wikidata_source, "Q1503", "Dacia Bigster", makers=["Q27460"])
 
     stats = run_wikidata_models_pass(db)
@@ -1046,10 +1046,10 @@ def test_mint_contested_rerun_is_stable(db, wikidata_source, vpic_source, monkey
     monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
 
     _land_sweep(
-        db, wikidata_source, "Q1750", "Citroën C6", description="1929 saloon", makers=["Q6746"]
+        db, wikidata_source, "Q1750", "Citroën C8", description="1929 saloon", makers=["Q6746"]
     )
     _land_sweep(
-        db, wikidata_source, "Q1751", "Citroën C6", description="executive car", makers=["Q6746"]
+        db, wikidata_source, "Q1751", "Citroën C8", description="executive car", makers=["Q6746"]
     )
 
     first = run_wikidata_models_pass(db)
@@ -1162,6 +1162,9 @@ def test_twin_era_without_evidence_stays_flagged(
     stats = run_wikidata_models_pass(db)
     assert stats.twins_resolved == 0
     assert _decision(db, "Q1201").outcome == "twin_era_awaits_span"
+    assert stats.models_minted == 0, "a half-ruled group never mints its leftover"
+    assert _decision(db, "Q1200").outcome == "flagged_mint_twins"
+    assert _decision(db, "Q1200").detail["twins"] == ["Q1200", "Q1201"]
     open_flags = db.scalars(
         select(ReconciliationFlag).where(
             ReconciliationFlag.kind == "match_review", ReconciliationFlag.status == "open"
@@ -1169,4 +1172,31 @@ def test_twin_era_without_evidence_stays_flagged(
     ).all()
     assert [f for f in open_flags if f.detail.get("reason") == "mint_label_twins"], (
         "identity without time resolves nothing"
+    )
+
+
+def test_unruled_claimant_of_a_ruled_base_flags_never_attaches(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """An address the registry rules over takes no QID by label match: the
+    plain-labeled entity outside the registry is the group's open grain
+    question, not the nameplate's anchor."""
+    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citro\u00ebn", 900)
+    monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
+    db.add(Model(company_id=citroen.id, slug="pony", name="Pony"))
+    db.commit()
+    monkeypatch.setitem(policy.WIKIDATA_TWIN_NAMEPLATES, "Q1201", "era:citroen/pony")
+    _land_sweep(db, wikidata_source, "Q1200", "Citro\u00ebn Pony", makers=["Q6746"])
+
+    first = run_wikidata_models_pass(db)
+    second = run_wikidata_models_pass(db)
+    assert (first.models_matched, second.models_matched) == (0, 0)
+    assert (first.flags_opened, second.flags_opened) == (1, 0)
+    assert _decision(db, "Q1200").outcome == "flagged_twin_ruled_base"
+    assert _decision(db, "Q1200").detail["twins"] == ["Q1201"]
+    assert db.scalar(select(ExternalId).where(ExternalId.external_id == "Q1200")) is None, (
+        "the bare model keeps no anchor until a human rules"
     )

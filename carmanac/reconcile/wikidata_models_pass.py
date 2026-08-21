@@ -207,6 +207,7 @@ class _WikidataModelsPass:
 
         self._load_external_ids()
         self._load_companies()
+        self._load_twin_bases()
         self._load_models()
         self._load_structure()
         self._load_wikipedia_precedence()
@@ -237,6 +238,20 @@ class _WikidataModelsPass:
                 self.model_by_qid[external_id] = model_id
             elif generation_id is not None:
                 self.generation_by_qid[external_id] = generation_id
+
+    def _load_twin_bases(self) -> None:
+        """Base addresses under twin adjudication (ADR 0012 §7): each ruled
+        target's (company, slug), with its registered members. A QID outside
+        the registry never takes one of these addresses through an automatic
+        rung - not by mint and not by label match - it flags for a ruling
+        instead ("members left out of the registry keep contesting")."""
+        by_slug = {c.slug: cid for cid, c in self.companies.items() if c.slug}
+        self.twin_ruled_bases: dict[tuple[int, str], list[str]] = {}
+        for qid, target in sorted(policy.WIKIDATA_TWIN_NAMEPLATES.items()):
+            company_slug, _, slug = target.partition(":")[2].partition("/")
+            company_id = by_slug.get(company_slug)
+            if company_id is not None:
+                self.twin_ruled_bases.setdefault((company_id, slug), []).append(qid)
 
     def _load_companies(self) -> None:
         """Held companies, plus every name form they wear - what rung 3
@@ -789,6 +804,11 @@ class _WikidataModelsPass:
                 )
                 continue
 
+            # A registered twin's address comes from its ruling (§7), never
+            # from its label - rung 3 does not claim for it.
+            if qid in policy.WIKIDATA_TWIN_NAMEPLATES:
+                continue
+
             # Rung 3: exact-normalized name/alias match, never fuzzy. A unique
             # hit is only a CLAIM: generation entities carry the bare nameplate
             # label, so one model can be claimed by several entities at once.
@@ -909,6 +929,20 @@ class _WikidataModelsPass:
             self.claims, key=lambda m: min(int(q[1:]) for q, _, _ in self.claims[m])
         ):
             claimants = self.claims[model_id]
+            model = self.models[model_id]
+            ruled = self.twin_ruled_bases.get((model.company_id, model.slug))
+            if ruled:
+                # The address is under twin adjudication: no claimant attaches
+                # by name, each asks for a ruling.
+                for qid, method, _rank in sorted(claimants):
+                    detail = {
+                        "model": self._slug_pair(model_id),
+                        "label": self.subjects[qid].entity.label,
+                        "twins": sorted(ruled),
+                    }
+                    self._flag(self.subjects[qid], "twin_ruled_base", detail)
+                    self._decide(self.subjects[qid], "3", method, "flagged_twin_ruled_base", detail)
+                continue
             cluster = {q for q, _, _ in claimants}
             active = [
                 (q, method, rank)
@@ -1375,8 +1409,9 @@ class _WikidataModelsPass:
             # question as beside a candidate one.
             base_occupant = self.model_by_company_slug.get((company_id, base))
             dressed_single = len(cands) == 1 and cands[0][3] != base
-            if len(cands) > 1 or (base_occupant is not None and dressed_single):
-                twins = sorted(c[0].entity.qid for c in cands)
+            ruled_members = self.twin_ruled_bases.get((company_id, base), [])
+            if len(cands) > 1 or ruled_members or (base_occupant is not None and dressed_single):
+                twins = sorted({c[0].entity.qid for c in cands} | set(ruled_members))
                 if base_occupant is not None:
                     twins.append(self._slug_pair(base_occupant))
                 for subject, _, _name, slug in cands:
@@ -1467,10 +1502,12 @@ class _WikidataModelsPass:
         if wikipedia_id is None:
             return None, None
         record = self.session.scalar(
-            select(RawRecord).where(
+            select(RawRecord)
+            .where(
                 RawRecord.source_id == wikipedia_id,
                 RawRecord.external_id == f"article:{qid}",
             )
+            .order_by(RawRecord.last_seen_at.desc(), RawRecord.id.desc())
         )
         if record is None:
             return None, None
