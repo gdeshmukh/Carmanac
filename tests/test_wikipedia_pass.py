@@ -928,3 +928,55 @@ def test_ambiguous_rows_link_nothing_and_queue(
         {"k": f"configuration:{config.id}"},
     ).scalar()
     assert outcome == "engine_ambiguous"
+
+
+@pytest.mark.integration
+def test_family_page_mints_demanded_variant_and_link_repoints(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    """The table cites a variant code; the family page's per-code section
+    mints it (displacement riding along) and the configuration's link lands
+    at variant grain instead of the family."""
+    _z4_config(db, spine, routed, 2003, 2500, "25i")
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        '{| class="wikitable"\n! Engine !! Displacement !! Years\n'
+        "|-\n| [[BMW M54#M54B25|M54B25]] || 2494 cc || 2002–2005\n|}\n",
+    )
+    run_wikipedia_pass(db)  # mints the family; demand recorded, page not yet landed
+
+    payload = {
+        "qid": "engine-article:bmw m54",
+        "title": "BMW M54",
+        "requested_title": "BMW M54",
+        "revid": 1,
+        "wikitext": "== M54B25 ==\nThe 2,494 cc version.\n== M54B30 ==\n2,979 cc.\n",
+    }
+    db.add(
+        RawRecord(
+            source_id=wikipedia_source.id,
+            external_id="family:engine-article:bmw m54",
+            content_hash=content_hash(payload),
+            payload=payload,
+        )
+    )
+    db.commit()
+    stats = run_wikipedia_pass(db)
+    assert stats.variants_minted == 1
+
+    variant = db.scalars(select(Engine).where(Engine.family_code == "M54B25")).one()
+    assert (variant.slug, variant.displacement_cc) == ("bmw-m54-m54b25", 2494)
+    link = db.scalars(
+        select(ConfigurationEngine).where(ConfigurationEngine.superseded_by.is_(None))
+    ).one()
+    assert link.engine_id == variant.id, "the coded link repoints to the variant"
+
+    rerun = run_wikipedia_pass(db)
+    assert (rerun.variants_minted, rerun.powertrain_links, rerun.powertrain_retired) == (0, 0, 0)

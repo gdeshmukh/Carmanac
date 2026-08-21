@@ -298,18 +298,63 @@ def land_section_mains(session: Session, *, already_landed: bool = True) -> Land
     return _fetch_pages(session, source.id, requests)
 
 
+def land_family_articles(session: Session, *, already_landed: bool = True) -> LandResult:
+    """Fetch each minted powertrain family's own article (ADR 0020
+    Decision 3): the entity's name is the page, the external id names the
+    record - `family:<engine-article:key>` keeps the kind readable. The
+    per-variant sections are where displacement lives at the grain a
+    configuration wants."""
+    source = get_source(session, SOURCE_NAME)
+    rows = session.execute(
+        text(
+            """SELECT ei.external_id AS key, coalesce(e.name, t.name) AS title
+               FROM external_ids ei
+               LEFT JOIN engines e ON e.id = ei.engine_id
+               LEFT JOIN transmissions t ON t.id = ei.transmission_id
+               WHERE ei.source_id = :sid
+                 AND (ei.external_id LIKE 'engine-article:%'
+                      OR ei.external_id LIKE 'transmission-article:%')
+                 AND ei.external_id NOT LIKE '%#%'"""
+        ),
+        {"sid": source.id},
+    ).all()
+    requests = [
+        {
+            "qid": row.key,
+            "title": row.title,
+            "external_id": f"family:{row.key}",
+            "url": f"https://en.wikipedia.org/wiki/{row.title.replace(' ', '_')}",
+        }
+        for row in rows
+        if row.title
+    ]
+    if already_landed:
+        landed = set(
+            session.scalars(
+                select(RawRecord.external_id).where(
+                    RawRecord.source_id == source.id,
+                    RawRecord.external_id.like("family:%"),
+                )
+            )
+        )
+        requests = [r for r in requests if r["external_id"] not in landed]
+    return _fetch_pages(session, source.id, requests)
+
+
 def land_wikipedia(
     session: Session, *, already_landed: bool = True, wider: bool = False
 ) -> LandResult:
     """Articles, then the `{{Main}}` targets already-minted generations
-    defer to; targets minted from a fresh batch surface on the next
-    invocation (the fetch -> pass -> fetch cadence of the fill sequence)."""
+    defer to, then the minted powertrain families' own pages; targets
+    minted from a fresh batch surface on the next invocation (the
+    fetch -> pass -> fetch cadence of the fill sequence)."""
     articles = land_articles(session, already_landed=already_landed, wider=wider)
     mains = land_section_mains(session, already_landed=already_landed)
+    families = land_family_articles(session, already_landed=already_landed)
     return LandResult(
-        fetched=articles.fetched + mains.fetched,
-        inserted=articles.inserted + mains.inserted,
-        skipped_missing=articles.skipped_missing + mains.skipped_missing,
+        fetched=articles.fetched + mains.fetched + families.fetched,
+        inserted=articles.inserted + mains.inserted + families.inserted,
+        skipped_missing=articles.skipped_missing + mains.skipped_missing + families.skipped_missing,
     )
 
 

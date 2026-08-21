@@ -419,3 +419,34 @@ def parse_engine_tables(wikitext: str) -> list[EngineRow]:
                     )
                 )
     return rows
+
+
+# --- family pages (ADR 0020 Decision 3) ---------------------------------------
+
+_HEADING_LINE = re.compile(r"^(={2,5})\s*(.+?)\s*\1\s*$", re.MULTILINE)
+_ANCHOR_TPL = re.compile(r"\{\{\s*anchor\s*\|([^{}]*)\}\}", re.IGNORECASE)
+
+
+def family_sections(wikitext: str) -> dict[str, str]:
+    """Normalized code -> section body, keyed by heading text and every
+    `{{anchor}}` id with underscores undone - the two ways a model-page
+    cell's #fragment lands on a family page."""
+    marks = [(m.start(), m.end(), m.group(2)) for m in _HEADING_LINE.finditer(wikitext)]
+    out: dict[str, str] = {}
+    for i, (_start, end, raw) in enumerate(marks):
+        body = wikitext[end : marks[i + 1][0] if i + 1 < len(marks) else len(wikitext)]
+        names = [a.strip() for hit in _ANCHOR_TPL.findall(raw) for a in hit.split("|")]
+        cleaned = re.sub(r"\{\{[^{}]*\}\}", " ", raw)
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        names.append(re.sub(r"'{2,}", "", cleaned))
+        for name in names:
+            norm = re.sub(r"\s+", " ", name.replace("_", " ")).strip().casefold()
+            if norm:
+                out.setdefault(norm, body)
+    return out
+
+
+def section_displacement(body: str) -> int | None:
+    """The variant section's stated displacement; a section that states none
+    mints its variant lean rather than not at all."""
+    return _displacement(body.replace("&nbsp;", " ")[:600])

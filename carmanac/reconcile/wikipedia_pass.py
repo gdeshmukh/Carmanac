@@ -96,7 +96,12 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     parse_article,
     section_main_asserts,
 )
-from carmanac.reconcile.sources.wikipedia_tables import EngineRow, parse_engine_tables
+from carmanac.reconcile.sources.wikipedia_tables import (
+    EngineRow,
+    family_sections,
+    parse_engine_tables,
+    section_displacement,
+)
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +151,7 @@ class WikipediaStats:
     flagged_articles: int = 0
     engines_minted: int = 0
     transmissions_minted: int = 0
+    variants_minted: int = 0
     powertrain_links: int = 0
     powertrain_retired: int = 0
     powertrain_ambiguous: int = 0
@@ -164,6 +170,7 @@ class WikipediaStats:
             f"no_sections={self.no_sections} redirected={self.redirected} "
             f"unrouted={self.unrouted} flagged={self.flagged_articles} | "
             f"powertrain: minted={self.engines_minted}+{self.transmissions_minted} "
+            f"variants={self.variants_minted} "
             f"links={self.powertrain_links} (retired={self.powertrain_retired}) "
             f"ambiguous={self.powertrain_ambiguous} | "
             f"assertions={self.assertions_inserted} "
@@ -507,6 +514,8 @@ class _WikipediaPass:
         self.pt_rows: dict[int, list[tuple]] = {}  # cid -> [(EngineRow, record, company_id)]
         self.pt_seen: dict[int, RawRecord] = {}  # cid -> an article that spoke for its model
         self.pt_titles: dict[str, str] = {}
+        self.variant_demand: dict[str, set[str]] = {}  # family key -> codes the tables cite
+        self.family_records: list[RawRecord] = []
 
     # --- flags ----------------------------------------------------------------
 
@@ -899,12 +908,59 @@ class _WikipediaPass:
         for row in rows:
             for key, title in row.titles:
                 self.pt_titles.setdefault(key, title)
+        for row in rows:
+            for key, code in row.engines:
+                if code:
+                    self.variant_demand.setdefault(key, set()).add(code)
         for model_id in model_ids:
             for cid, start, end, cc, fuel in self.configs_by_model.get(model_id, []):
                 self.pt_seen[cid] = record
                 for row in rows:
                     if _row_matches(row, start, end, cc, fuel):
                         self.pt_rows.setdefault(cid, []).append((row, record, company_id))
+
+    def _family_variants(self, record: RawRecord) -> None:
+        """Mint the demanded variant codes from a family page's per-code
+        sections (ADR 0020 Decision 3): a code anchors to a heading or an
+        `{{anchor}}` id; displacement rides along where the section states
+        it. Codes whose anchors land nowhere keep the family-grain link -
+        still true, just coarser."""
+        kind, _, key = record.external_id.removeprefix("family:").partition(":")
+        if kind != "engine-article":
+            return
+        family = self.engines_by_key.get(key)
+        wanted = self.variant_demand.get(key, set())
+        if family is None or not wanted:
+            return
+        sections = family_sections(record.payload.get("wikitext", ""))
+        for code in sorted(wanted):
+            if (key, code) in self.engine_variants:
+                continue
+            body = sections.get(" ".join(code.split()).casefold())
+            if body is None:
+                continue
+            slug = slugify(f"{key} {code}")
+            if self.session.scalar(select(Engine.id).where(Engine.slug == slug)) is not None:
+                log.warning("variant slug %r already taken; %r#%r waits", slug, key, code)
+                continue
+            variant = Engine(
+                manufacturer_company_id=family.manufacturer_company_id,
+                slug=slug,
+                name=f"{family.name or key} {code}",
+                family_code=code,
+                displacement_cc=section_displacement(body),
+            )
+            self.session.add(variant)
+            self.session.flush()
+            self.session.add(
+                ExternalId(
+                    engine_id=variant.id,
+                    source_id=self.source.id,
+                    external_id=f"engine-article:{key}#{code}",
+                )
+            )
+            self.engine_variants[(key, code)] = variant.id
+            self.stats.variants_minted += 1
 
     def _powertrain_sync(self) -> None:
         """Judge the accumulated claims once per run: exactly one engine
@@ -1419,11 +1475,17 @@ class _WikipediaPass:
                 # archival - the article carries section 0.
                 mark_reconciled(self.session, record)
                 continue
+            if record.external_id.startswith("family:"):
+                self.family_records.append(record)
+                mark_reconciled(self.session, record)
+                continue
             if not record.external_id.startswith("article:"):
                 continue
             self.stats.processed += 1
             self._process_article(record)
             mark_reconciled(self.session, record)
+        for family_record in self.family_records:
+            self._family_variants(family_record)
         self._powertrain_sync()
         if self.powertrain_unmatched:
             top = sorted(self.powertrain_unmatched.items(), key=lambda kv: -kv[1])[:15]
