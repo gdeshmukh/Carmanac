@@ -77,19 +77,29 @@ def main() -> None:
         ids = [g.id for g, _t, _p in rows]
         if not ids:
             return
-        released = session.execute(
-            text("UPDATE configurations SET generation_id = NULL WHERE generation_id = ANY(:ids)"),
-            {"ids": ids},
-        ).rowcount
-        # The placement pass's own claim about each released car, so it
-        # re-decides from scratch rather than reading a stale winner.
-        session.execute(
-            text(
-                "DELETE FROM field_provenance WHERE field_name = 'generation_id'"
-                " AND configuration_id IN (SELECT id FROM configurations"
-                " WHERE generation_id IS NULL)"
+        released = (
+            session.execute(
+                text(
+                    "UPDATE configurations SET generation_id = NULL"
+                    " WHERE generation_id = ANY(:ids) RETURNING id"
+                ),
+                {"ids": ids},
             )
+            .scalars()
+            .all()
         )
+        # The placement pass's own claim about each released car, so it
+        # re-decides from scratch rather than reading a stale winner. Scoped
+        # to these cars: a configuration unplaced for other reasons keeps its
+        # provenance chain.
+        if released:
+            session.execute(
+                text(
+                    "DELETE FROM field_provenance WHERE field_name = 'generation_id'"
+                    " AND configuration_id = ANY(:cids)"
+                ),
+                {"cids": list(released)},
+            )
         for model in (FieldProvenance, GenerationSpecs, GenerationModelLink, ExternalId):
             session.execute(
                 text(f"DELETE FROM {model.__tablename__} WHERE generation_id = ANY(:ids)"),
@@ -97,7 +107,7 @@ def main() -> None:
             )
         session.execute(text("DELETE FROM generations WHERE id = ANY(:ids)"), {"ids": ids})
         session.commit()
-        print(f"\nretired {len(ids)} generations; released {released} configurations")
+        print(f"\nretired {len(ids)} generations; released {len(released)} configurations")
 
 
 if __name__ == "__main__":

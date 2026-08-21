@@ -167,13 +167,15 @@ class _PlacementPass:
             return
         landed: dict[str, RawRecord] = {}
         for record in self.session.scalars(
-            select(RawRecord).where(
+            select(RawRecord)
+            .where(
                 RawRecord.source_id == self.source.id,
                 RawRecord.external_id.in_(
                     [f"infobox:{qid}" for qid in qid_by_generation]
                     + [f"article:{qid}" for qid in qid_by_generation]
                 ),
             )
+            .order_by(RawRecord.last_seen_at, RawRecord.id)
         ):
             # The full article supersedes the retired section-0 record.
             if record.external_id.startswith("article:") or record.payload["qid"] not in landed:
@@ -222,10 +224,12 @@ class _PlacementPass:
             qid, _, ordinal = record.external_id.removeprefix("section-main:").partition("#")
             section_mains[(qid, int(ordinal))] = record
         for record in self.session.scalars(
-            select(RawRecord).where(
+            select(RawRecord)
+            .where(
                 RawRecord.source_id == self.source.id,
                 RawRecord.external_id.in_([f"article:{qid}" for qid in by_qid]),
             )
+            .order_by(RawRecord.last_seen_at, RawRecord.id)
         ):
             qid = record.payload["qid"]
             article = parse_article(record.payload["title"], record.payload.get("wikitext", ""))

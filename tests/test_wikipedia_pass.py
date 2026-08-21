@@ -49,6 +49,7 @@ from carmanac.reconcile.sources.wikipedia_sections import (
 from carmanac.reconcile.sources.wikipedia_tables import parse_engine_tables
 from carmanac.reconcile.wikipedia_pass import run_wikipedia_pass
 from tests.test_generation_placement import (  # noqa: F401
+    _land_article,
     spine,
     wikipedia_source,
 )
@@ -164,27 +165,8 @@ def test_epa_and_trim_signals():
 # --- integration ----------------------------------------------------------------
 
 
-def _land_article(db, source: Source, qid: str, title: str, wikitext: str) -> RawRecord:
-    payload = {
-        "qid": qid,
-        "title": title,
-        "requested_title": title,
-        "revid": 1,
-        "wikitext": wikitext,
-    }
-    rec = RawRecord(
-        source_id=source.id,
-        external_id=f"article:{qid}",
-        content_hash=content_hash(payload),
-        payload=payload,
-    )
-    db.add(rec)
-    db.commit()
-    return rec
-
-
 @pytest.fixture()
-def linkless_model(db, spine) -> Model:  # noqa: F811
+def linkless_model(db, spine) -> Model:
     model = Model(company_id=spine["company"].id, slug="z4", name="Z4")
     db.add(model)
     db.commit()
@@ -192,7 +174,7 @@ def linkless_model(db, spine) -> Model:  # noqa: F811
 
 
 @pytest.fixture()
-def routed(db, monkeypatch, wikidata_source, spine, linkless_model):  # noqa: F811
+def routed(db, monkeypatch, wikidata_source, spine, linkless_model):
     """Route article QIDs to models: Q7 1:1-attached to the link-less model,
     Q8 curated onto it (the SECTION_ARTICLE_MODELS mechanism)."""
     db.add(ExternalId(model_id=linkless_model.id, source_id=wikidata_source.id, external_id="Q7"))
@@ -212,7 +194,7 @@ def test_sections_mint_generations_with_links_and_facts(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     _land_article(
         db,
@@ -266,7 +248,7 @@ def test_duplicate_ordinals_flag_and_mint_nothing(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     _land_article(
         db,
@@ -295,7 +277,7 @@ def test_existing_inventory_reconciles_or_mints_distinct(
     db,
     wikidata_source,
     wikipedia_source,
-    spine,  # noqa: F811
+    spine,
 ):
     """The 330i has Wikidata-born E46/E90. A section carrying E46 reconciles
     (corroborating link, no new row); a section with disjoint codes would
@@ -335,7 +317,7 @@ def test_unreconcilable_sections_flag_instead_of_duplicating(
     db,
     wikidata_source,
     wikipedia_source,
-    spine,  # noqa: F811
+    spine,
 ):
     """Same article, but the existing generations carry no codes: nothing
     reconciles, nothing proves distinct, the article flags whole."""
@@ -359,7 +341,7 @@ def test_curated_routing_and_disjoint_codes_mint_the_amg_gt_shape(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """The proof-car mechanism end to end: the attached article mints
     C190/C192; the curated sibling article mints X290/C590 beside them
@@ -439,7 +421,7 @@ def test_body_veto_places_both_amg_gt_sides_without_overlap(
     wikipedia_source,
     epa_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """2019 holds C190 coupes beside X290 4-doors. The two-seater signal
     vetoes the 5-door X290; the four-door signal vetoes the all-2-door
@@ -533,7 +515,7 @@ def test_lead_era_mints_one_dated_generation(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     _land_article(
         db,
@@ -569,7 +551,7 @@ def test_lead_era_unparseable_span_mints_nothing(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     _land_article(
         db,
@@ -592,7 +574,7 @@ def test_lead_era_defers_to_existing_linked_generations(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """A model that already has linked generations never takes the
     whole-nameplate span as an era - the Civic hazard at mint scope."""
@@ -623,7 +605,7 @@ def test_lead_era_slug_collision_flags_and_mints_nothing(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     db.add(Generation(company_id=spine["company"].id, slug="z4", name="Z4 the elder"))
     db.commit()
@@ -652,7 +634,7 @@ def test_lead_era_generation_places_by_lead_model_years(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """Placement's decision-time loader reads the article lead for a
     `section:<QID>#0` generation: model years outrun production past the
@@ -706,13 +688,33 @@ def test_parse_specs_takes_single_values_only():
     assert "curb_weight_kg" not in specs, "a variant-labelled value is not a default"
 
 
+def test_parse_specs_sums_the_compound_convert_form():
+    specs = parse_specs(
+        "{{Infobox automobile\n"
+        "| length = {{convert|14|ft|4.2|in|in cm|1|abbr=on}}\n"
+        "| height = {{convert|4|ft|8|in|in cm|1|abbr=on}}\n"
+        "| width = {{convert|5|ft|60|ft|in cm|1|abbr=on}}\n"
+        "}}"
+    )
+    assert specs["length_mm"][1] == 4374, "feet AND inches, not feet alone"
+    assert specs["height_mm"][1] == 1422
+    assert "width_mm" not in specs, "a minor no smaller than the major asserts nothing"
+    assert "wheelbase_mm" not in parse_specs(
+        "{{Infobox automobile\n| wheelbase = {{convert|14|ft|4.2|in|in cm|1|abbr=on}}\n}}"
+    ), "an impossible magnitude asserts nothing"
+    assert "height_mm" not in parse_specs(
+        "{{Infobox automobile\n| height = {{convert|5|ft|10+1/2|in}}\n}}"
+    ), "a fraction minor cannot be read fully, so nothing lands"
+    assert parse_specs("{{Infobox automobile\n| length = {{convert|,|ft}}\n}}") == {}
+
+
 @pytest.mark.integration
 def test_lead_era_article_lands_model_grain_specs(
     db,
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     _land_article(
         db,
@@ -865,7 +867,7 @@ def test_engine_table_links_and_lands_power_on_physical_keys(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """The 2.5i config matches one row on years+displacement: the family
     mints through the prefix rung (BMW M54 under BMW), the link lands with
@@ -909,7 +911,7 @@ def test_ambiguous_rows_link_nothing_and_queue(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """Two same-displacement rows naming different engines in the config's
     years: nothing links, nothing lands, the decision log holds the case."""
@@ -938,7 +940,7 @@ def test_family_page_mints_demanded_variant_and_link_repoints(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """The table cites a variant code; the family page's per-code section
     mints it (displacement riding along) and the configuration's link lands
@@ -1010,7 +1012,7 @@ def test_lead_era_refuses_an_article_with_unparsed_eras(
     wikidata_source,
     wikipedia_source,
     spine,
-    routed,  # noqa: F811
+    routed,
 ):
     """Sequential eras the era grammar still refuses to name - here the
     headings are facelift phases. Minting one generation over the whole life
@@ -1059,3 +1061,8 @@ def test_era_grammar_reads_the_code_led_convention():
         "== Grand Sport (2009–2015) ==\nprose only, no infobox\n"
         "== Super Sport (2010–2011) ==\nprose only\n",
     ), "trim sections carry no infobox of their own"
+    assert not parse_era_sections(
+        "Toyota Hilux",
+        "== USA (1969–1972) ==\n{{Infobox automobile\n| production = 1969–1972\n}}\n"
+        "== UK (1973–1980) ==\n{{Infobox automobile\n| production = 1973–1980\n}}\n",
+    ), "an all-caps market name is not a chassis code"

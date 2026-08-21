@@ -1,10 +1,9 @@
 """The Wikipedia pass (ADR 0017): generation time and existence from
 nameplate articles.
 
-Consumes landed `article:<QID>` records (with `section-main:` evidence),
-one pass for what two used to split. A generation-attached QID's article
-dates that generation from its lead infobox (§2; the lead IS section 0, so
-the retired `infobox:` records' job rides the full article now). A
+Consumes landed `article:<QID>` records (with `section-main:` evidence).
+A generation-attached QID's article dates that generation from its lead
+infobox (§2; the lead is section 0, so the full article carries it). A
 model-attached QID's article works at nameplate grain: its per-generation
 sections mint generations under that model's company (§4), keyed
 `section:<QID>#<ordinal>` in `external_ids`. The QID routes by 1:1
@@ -41,6 +40,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
+from urllib.parse import unquote
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
@@ -356,8 +356,6 @@ class _WikipediaPass:
         self.sweep_qid_by_title: dict[str, str] = {}
         if not self.section_mains:
             return
-        from urllib.parse import unquote
-
         for sweep_qid, url in self.session.execute(
             select(
                 RawRecord.external_id,
@@ -389,8 +387,6 @@ class _WikipediaPass:
                 ExternalId.generation_id.isnot(None),
             )
         ).all()
-        from urllib.parse import unquote
-
         for payload, generation_id in rows:
             url = (payload.get("article") or {}).get("value") or ""
             if "/wiki/" in url:
@@ -1043,11 +1039,13 @@ class _WikipediaPass:
             facts: dict[str, tuple[str, object]] = {}
             powers = {(row.power_hp, row.power_observed) for row in matching if row.power_hp}
             if len({p for p, _ in powers}) == 1:
-                value, observed = next(iter(powers))
+                # One figure, two citations: pick by text, not set order.
+                value, observed = min(powers, key=lambda pair: pair[1] or "")
                 facts["power_hp"] = (observed or str(value), value)
             torques = {(row.torque_nm, row.torque_observed) for row in matching if row.torque_nm}
             if len({t for t, _ in torques}) == 1:
-                value, observed = next(iter(torques))
+                # One figure, two citations: pick by text, not set order.
+                value, observed = min(torques, key=lambda pair: pair[1] or "")
                 facts["torque_nm"] = (observed or str(value), value)
             if facts or cid in self.powertrain_asserted:
                 configuration = self.session.get(Configuration, cid)
@@ -1085,7 +1083,7 @@ class _WikipediaPass:
             row.superseded_by = row.id
             self.stats.powertrain_retired += 1
 
-    def _lead_era(self, model: Model, model_id: int, qid: str, parsed, record: RawRecord) -> None:
+    def _lead_era(self, model: Model, qid: str, parsed, record: RawRecord) -> None:
         """An article with no generation sections describes one era. For a
         model with no linked generations, that era IS a generation - the
         lead production span dates it, keyed `section:<QID>#0` (the lead is
@@ -1107,10 +1105,10 @@ class _WikipediaPass:
                 "lead_era_multi_era",
                 detail={"title": parsed.title},
             )
-            self._model_specs(self.models[model_id], parsed.top_wikitext, record)
+            self._model_specs(model, parsed.top_wikitext, record)
             return
         ruled_twin = policy.WIKIDATA_TWIN_NAMEPLATES.get(qid, "").startswith("model:")
-        if keyed is None and self.links_by_model.get(model_id) and not ruled_twin:
+        if keyed is None and self.links_by_model.get(model.id) and not ruled_twin:
             # A multi-era nameplate: its lead describes no single era, so it
             # asserts no model defaults either (the current-generation dims
             # a lead often shows must not smear across eras). A twin ruled
@@ -1119,9 +1117,9 @@ class _WikipediaPass:
             self.stats.no_sections += 1
             self._dismiss_article_flag(qid, "article_no_longer_has_sections")
             self.decisions.record(record, "no_sections")
-            self._model_specs(self.models[model_id], "", record)
+            self._model_specs(model, "", record)
             return
-        self._model_specs(self.models[model_id], parsed.top_wikitext, record)
+        self._model_specs(model, parsed.top_wikitext, record)
         if keyed is None:
             if lead.production is None:
                 self.stats.no_sections += 1
@@ -1148,7 +1146,7 @@ class _WikipediaPass:
             if reason is not None:
                 self._flag_article(
                     qid,
-                    model_id,
+                    model.id,
                     record,
                     "generation_slug_nonconforming",
                     {"title": parsed.title, "slug": slug, "reason": reason},
@@ -1164,7 +1162,7 @@ class _WikipediaPass:
             if occupant is not None:
                 self._flag_article(
                     qid,
-                    model_id,
+                    model.id,
                     record,
                     "generation_slug_collision",
                     {"title": parsed.title, "slug": slug, "existing_generation_id": occupant},
@@ -1195,7 +1193,7 @@ class _WikipediaPass:
                 if field_name == "production":
                     self._value_flag(generation, reason, raw, parsed.title, record)
 
-        self._assert_link(generation.id, model_id, record)
+        self._assert_link(generation.id, model.id, record)
         name = self._nameplate(model)
         facts: dict[str, tuple[str, object]] = {"name": (name, name)}
         if lead.production is not None:
@@ -1222,7 +1220,7 @@ class _WikipediaPass:
             "lead_era_processed",
             method="lead_infobox_parse",
             detail={
-                "model": self.model_pairs[model_id],
+                "model": self.model_pairs[model.id],
                 "generation": generation.slug,
                 "minted": keyed is None,
             },
@@ -1230,9 +1228,9 @@ class _WikipediaPass:
 
     def _process_article(self, record: RawRecord) -> None:
         qid = record.payload["qid"]
-        # Redirect detection first (ADR 0019 §3 companion fix): an article
+        # Redirect detection runs before routing (ADR 0019 §3): an article
         # that both lost its routing and got redirected must still tombstone
-        # its stale facts - the old order skipped the safety with the work.
+        # its stale facts.
         if not same_subject(record.payload.get("requested_title", ""), record.payload["title"]):
             generation_id = self.generation_by_qid.get(qid)
             if generation_id is not None:
@@ -1289,7 +1287,7 @@ class _WikipediaPass:
             if eras:
                 parsed = replace(parsed, sections=eras)
             else:
-                self._lead_era(model, model_id, qid, parsed, record)
+                self._lead_era(model, qid, parsed, record)
                 return
         self._model_specs(model, "", record)
 
@@ -1480,8 +1478,8 @@ class _WikipediaPass:
         self.decisions.record(record, "sections_processed", method="section_parse", detail=detail)
 
     def run(self) -> WikipediaStats:
-        # One pass replaced wikipedia_infobox + wikipedia_sections; their
-        # decision rows would otherwise linger as a retired queue forever.
+        # No pass owns these queues now, so their rows would sit unresolved
+        # forever - a retired queue reads as an open one.
         self.session.execute(
             delete(MatchDecision).where(
                 MatchDecision.pass_name.in_(["wikipedia_infobox", "wikipedia_sections"])

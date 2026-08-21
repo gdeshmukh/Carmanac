@@ -12,7 +12,7 @@ from the placement guards.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from carmanac.reconcile.sources.wikipedia_infobox import (
     _COMMENT,
@@ -252,8 +252,10 @@ _ERA_STOPWORDS = re.compile(
     r"|models?|range|line-?up|predecessor|successor|based\s+on|launch|name\s+reuse)\b",
     re.IGNORECASE,
 )
-# Whole-label matches only: a market or body word IS the heading, rather than
-# appearing in it ("Japan (1970-1978)", "Hatchback (FK1-3; 2005)").
+# Matched against the heading's head, left of the year parenthetical: the
+# market or body word IS the section's subject rather than appearing in it
+# ("Japan (1970-1978)", "Hatchback (FK1-3; 2005)"). Without this, `USA` and
+# `UK` read as chassis codes.
 _ERA_WHOLE_LABEL = re.compile(
     r"^(?:(?:north|south)\s+america|united\s+states|usa?|canada|mexico|brazil|europe|japan|china"
     r"|australia|new\s+zealand|india|korea|south\s+africa|russia|uk|united\s+kingdom"
@@ -321,7 +323,7 @@ def parse_era_heading(
     maintained anchor; failing every code, the era's own label (`Mk1`,
     `Series I`, `A`). A heading yielding neither is not named and not read."""
     cleaned = clean_heading(raw)
-    if not cleaned or _ERA_STOPWORDS.search(cleaned) or _ERA_WHOLE_LABEL.match(cleaned):
+    if not cleaned or _ERA_STOPWORDS.search(cleaned):
         return None
     match = _ERA_PAREN.match(cleaned)
     head = match.group("head") if match else cleaned
@@ -329,7 +331,7 @@ def parse_era_heading(
     years = tuple(int(y) for y in _ERA_YEAR.findall(cleaned))
     if not years:
         return None
-    if not head.strip():
+    if not head.strip() or _ERA_WHOLE_LABEL.match(head.strip()):
         return None
 
     head_codes, head_labels = _era_tokens(head, title_words)
@@ -397,15 +399,7 @@ def parse_era_sections(title: str, wikitext: str) -> tuple[GenerationSection, ..
     if len({section.heading for section, _s in candidates}) != len(candidates):
         return ()  # a repeated name is the nameplate, not the era
     return tuple(
-        GenerationSection(
-            ordinal=i,
-            heading=section.heading,
-            codes=section.codes or (section.heading,),
-            heading_years=section.heading_years,
-            main_targets=section.main_targets,
-            has_infobox=section.has_infobox,
-            body=section.body,
-        )
+        replace(section, ordinal=i, codes=section.codes or (section.heading,))
         for i, (section, _start) in enumerate(candidates, start=1)
     )
 
