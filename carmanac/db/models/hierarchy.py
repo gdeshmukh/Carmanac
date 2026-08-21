@@ -281,6 +281,47 @@ class Generation(Base, TimestampMixin):
     )
 
 
+class ModelSpecs(Base, TimestampMixin):
+    """Physical spec defaults at model grain: what a source states about the
+    nameplate as a whole. Configurations inherit these wherever they carry
+    nothing finer (configuration > generation > model, resolved in
+    `v_configuration_full`); the row is a read-through fallback, never a
+    claim that outranks finer data. PK doubles as the FK: at most one row
+    per model."""
+
+    __tablename__ = "model_specs"
+
+    model_id: Mapped[int] = mapped_column(ForeignKey("models.id"), primary_key=True)
+    length_mm: Mapped[int | None] = mapped_column(Integer)
+    width_mm: Mapped[int | None] = mapped_column(Integer)
+    height_mm: Mapped[int | None] = mapped_column(Integer)
+    wheelbase_mm: Mapped[int | None] = mapped_column(Integer)
+    curb_weight_kg: Mapped[int | None] = mapped_column(Integer)
+    doors: Mapped[int | None] = mapped_column(SmallInteger)
+    seating_capacity: Mapped[int | None] = mapped_column(SmallInteger)
+    power_hp: Mapped[int | None] = mapped_column(Integer)
+    torque_nm: Mapped[int | None] = mapped_column(Integer)
+
+
+class GenerationSpecs(Base, TimestampMixin):
+    """`ModelSpecs` one level finer: what a source states about one era.
+    Generations stay outside the four-level hierarchy - a configuration
+    with no generation inherits straight from its model."""
+
+    __tablename__ = "generation_specs"
+
+    generation_id: Mapped[int] = mapped_column(ForeignKey("generations.id"), primary_key=True)
+    length_mm: Mapped[int | None] = mapped_column(Integer)
+    width_mm: Mapped[int | None] = mapped_column(Integer)
+    height_mm: Mapped[int | None] = mapped_column(Integer)
+    wheelbase_mm: Mapped[int | None] = mapped_column(Integer)
+    curb_weight_kg: Mapped[int | None] = mapped_column(Integer)
+    doors: Mapped[int | None] = mapped_column(SmallInteger)
+    seating_capacity: Mapped[int | None] = mapped_column(SmallInteger)
+    power_hp: Mapped[int | None] = mapped_column(Integer)
+    torque_nm: Mapped[int | None] = mapped_column(Integer)
+
+
 class GenerationModelLink(Base, ProvenanceMixin):
     """One source's assertion that a generation belongs to a model's history
     (ADR 0016) - the candidate gate for placement, replacing the parent FK

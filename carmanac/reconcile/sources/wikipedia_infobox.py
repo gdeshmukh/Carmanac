@@ -49,6 +49,17 @@ _SEGMENT_SPLIT = re.compile(
 _PAREN_LABEL = re.compile(r"\([^()]*\)")
 
 
+def same_subject(requested: str, resolved: str) -> bool:
+    """Underscore/space and case wobble is a rename; anything more is a
+    redirect that may have changed the article's grain - a whole-nameplate
+    span must never land on one generation."""
+
+    def norm(t: str) -> str:
+        return t.replace("_", " ").strip().casefold()
+
+    return norm(requested) == norm(resolved)
+
+
 @dataclass(frozen=True)
 class Span:
     start: int
@@ -178,3 +189,106 @@ def title_code_tokens(title: str) -> str | None:
     generation') go through the same strict pattern and assert nothing."""
     m = _TITLE_PARENTHETICAL.search(title)
     return m.group(1) if m else None
+
+
+# --- physical specs (the defaults tables) -------------------------------------
+
+_CONVERT = re.compile(r"\{\{\s*(?:convert|cvt|cvrt)\s*\|([^{}]*)\}\}", re.IGNORECASE)
+_MULTI_VALUE = re.compile(r"<br|\{\{\s*(?:ubl|unbulleted list|plainlist|flatlist)\b", re.IGNORECASE)
+_RANGE_TOKENS = frozenset({"-", "–", "—", "to", "and", "x", "by", "±"})
+_NUMBER = re.compile(r"[\d,]+(?:\.\d+)?")
+
+# Dimensions normalize to mm, mass to kg, power to mechanical hp; an unknown
+# unit rejects the value rather than guessing a factor.
+_UNIT_FACTORS = {
+    "length": {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4, "ft": 304.8},
+    "mass": {"kg": 1.0, "lb": 0.45359237, "lbs": 0.45359237},
+    "power": {"hp": 1.0, "bhp": 1.0, "ps": 0.9863, "kw": 1.34102},
+}
+
+_SPEC_FIELDS = (
+    ("length", "length_mm", "length"),
+    ("width", "width_mm", "length"),
+    ("height", "height_mm", "length"),
+    ("wheelbase", "wheelbase_mm", "length"),
+    ("weight", "curb_weight_kg", "mass"),
+    ("powerout", "power_hp", "power"),
+)
+
+# Outside these, the number is not the field's quantity (a misfiled length
+# under `wheelbase`, a typo'd unit) - it asserts nothing, like the
+# displacement bounds in the tables parser. Bounds reject the impossible
+# only; unusual stays in.
+_SPEC_BOUNDS = {
+    "length_mm": (1300, 7000),
+    "width_mm": (1000, 2600),
+    "height_mm": (800, 2600),
+    "wheelbase_mm": (1200, 4100),
+    "curb_weight_kg": (250, 4500),
+    "power_hp": (1, 2600),
+}
+
+# What the infobox can speak about on the defaults tables. `doors` rides the
+# body_style field (parsed by the pass); torque and seating have no infobox
+# field and stay out of coverage.
+SPEC_COVERAGE: tuple[str, ...] = (
+    "length_mm",
+    "width_mm",
+    "height_mm",
+    "wheelbase_mm",
+    "curb_weight_kg",
+    "doors",
+    "power_hp",
+)
+
+
+def _single_value(raw: str, kind: str) -> tuple[str, int] | None:
+    """(observed, normalized) when the field states exactly one number with a
+    known unit: one {{convert}}, no list markers, nothing else numeric or
+    labelled. A default must be one number - ranges, era-prefixed lists
+    ("1991–93: ...") and per-variant lists ("... (FWD)") assert nothing."""
+    cleaned = _COMMENT.sub("", _REF.sub("", raw)).strip()
+    if _MULTI_VALUE.search(cleaned):
+        return None
+    hits = _CONVERT.findall(cleaned)
+    if len(hits) != 1 or re.search(r"[\d(]", _CONVERT.sub("", cleaned)):
+        return None
+    positional = [a.strip() for a in hits[0].split("|") if "=" not in a]
+    head = positional[0].replace(",", "") if positional else ""
+    if not head or not _NUMBER.fullmatch(positional[0]):
+        return None
+    if len(positional) > 1 and positional[1].casefold() in _RANGE_TOKENS:
+        return None
+    unit = next((a for a in positional[1:] if not _NUMBER.fullmatch(a)), "")
+    factor = _UNIT_FACTORS[kind].get(unit.casefold())
+    if factor is None:
+        return None
+    value = float(head) * factor
+    # The compound form ({{convert|14|ft|4.2|in|...}}) states one quantity as
+    # major+minor unit, and reading the major alone silently shrinks it - so a
+    # value-like third argument either reads fully or asserts nothing. That
+    # rejects fractions (10+1/2), unknown minor units, and a minor that is
+    # not the strictly smaller unit.
+    if len(positional) >= 4 and any(c.isdigit() or c == "," for c in positional[2]):
+        minor = _UNIT_FACTORS[kind].get(positional[3].casefold())
+        digits = positional[2].replace(",", "")
+        if minor is None or minor >= factor or not digits or not _NUMBER.fullmatch(positional[2]):
+            return None
+        value += float(digits) * minor
+    observed = " ".join(cleaned.split())[:120]
+    return observed, round(value)
+
+
+def parse_specs(wikitext: str) -> dict[str, tuple[str, int]]:
+    """Spec-column facts a lead or section infobox states unambiguously."""
+    facts: dict[str, tuple[str, int]] = {}
+    for field_name, column, kind in _SPEC_FIELDS:
+        raw = infobox_field(wikitext, field_name)
+        if raw is None:
+            continue
+        value = _single_value(raw, kind)
+        if value is not None:
+            lo, hi = _SPEC_BOUNDS[column]
+            if lo <= value[1] <= hi:
+                facts[column] = value
+    return facts

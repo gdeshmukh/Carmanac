@@ -76,9 +76,9 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     epa_body_signal,
     generation_doors,
     parse_article,
+    section_main_asserts,
     trim_body_signal,
 )
-from carmanac.reconcile.wikipedia_sections_pass import section_main_asserts
 
 log = logging.getLogger(__name__)
 
@@ -149,9 +149,10 @@ class _PlacementPass:
         self._load_live_placements()
 
     def _load_model_year_spans(self) -> None:
-        """Per QID-attached generation: the infobox `model_years` span parsed
-        from its landed section-0 record, and the door counts its
-        `body_style` asserts (decision-time reads, ADR §3/§4)."""
+        """Per QID-attached generation: the infobox `model_years` span and
+        `body_style` door counts, from its landed section-0 record or the
+        full article's lead (which replaced it) - decision-time reads,
+        ADR §3/§4."""
         wikidata_id = self.session.scalar(select(Source.id).where(Source.name == "Wikidata"))
         qid_by_generation: dict[str, int] = {
             qid: generation_id
@@ -164,14 +165,26 @@ class _PlacementPass:
         }
         if not qid_by_generation:
             return
+        landed: dict[str, RawRecord] = {}
         for record in self.session.scalars(
-            select(RawRecord).where(
+            select(RawRecord)
+            .where(
                 RawRecord.source_id == self.source.id,
-                RawRecord.external_id.in_([f"infobox:{qid}" for qid in qid_by_generation]),
+                RawRecord.external_id.in_(
+                    [f"infobox:{qid}" for qid in qid_by_generation]
+                    + [f"article:{qid}" for qid in qid_by_generation]
+                ),
             )
+            .order_by(RawRecord.last_seen_at, RawRecord.id)
         ):
-            generation_id = qid_by_generation[record.payload["qid"]]
+            # The full article supersedes the retired section-0 record.
+            if record.external_id.startswith("article:") or record.payload["qid"] not in landed:
+                landed[record.payload["qid"]] = record
+        for qid, record in landed.items():
+            generation_id = qid_by_generation[qid]
             wikitext = record.payload.get("wikitext", "")
+            if record.external_id.startswith("article:"):
+                wikitext = parse_article(record.payload["title"], wikitext).top_wikitext
             parsed = parse_infobox(record.payload["title"], wikitext)
             if parsed.model_years is not None:
                 self.model_year_spans[generation_id] = (parsed.model_years, record.id)
@@ -211,27 +224,30 @@ class _PlacementPass:
             qid, _, ordinal = record.external_id.removeprefix("section-main:").partition("#")
             section_mains[(qid, int(ordinal))] = record
         for record in self.session.scalars(
-            select(RawRecord).where(
+            select(RawRecord)
+            .where(
                 RawRecord.source_id == self.source.id,
                 RawRecord.external_id.in_([f"article:{qid}" for qid in by_qid]),
             )
+            .order_by(RawRecord.last_seen_at, RawRecord.id)
         ):
             qid = record.payload["qid"]
             article = parse_article(record.payload["title"], record.payload.get("wikitext", ""))
             sections = {s.ordinal: s for s in article.sections}
             for ordinal, generation_id in by_qid[qid].items():
                 section = sections.get(ordinal)
-                if section is None:
+                if section is None and ordinal != 0:
                     continue
+                # Ordinal 0 is a lead-era generation: the article's lead is
+                # its section.
+                body = article.top_wikitext if section is None else section.body
                 section_main = section_mains.get((qid, ordinal))
                 target_wikitext = None
                 target_record_id = None
                 if section_main is not None and section_main_asserts(section_main.payload):
                     target_wikitext = section_main.payload.get("wikitext", "")
                     target_record_id = section_main.id
-                raw = infobox_field(section.body, "model years") or infobox_field(
-                    section.body, "model_years"
-                )
+                raw = infobox_field(body, "model years") or infobox_field(body, "model_years")
                 if raw is not None:
                     span, _reason = parse_span(raw)
                     if span is not None:
@@ -244,7 +260,7 @@ class _PlacementPass:
                         span, _reason = parse_span(traw)
                         if span is not None:
                             self.model_year_spans[generation_id] = (span, target_record_id)
-                doors = generation_doors(section.body, target_wikitext, article.top_wikitext)
+                doors = generation_doors(body, target_wikitext, article.top_wikitext)
                 if doors:
                     self.generation_doors[generation_id] = doors
 

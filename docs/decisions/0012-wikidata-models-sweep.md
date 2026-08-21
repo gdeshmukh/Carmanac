@@ -1,6 +1,6 @@
 # ADR 0012 — The Wikidata models sweep: the ladder, lines, and generations
 
-- Status: Accepted (2026-07-30, PR #24, as amended - expansion tabled, E46-page-as-view); amended 2026-08-19 (§7, the mint registry)
+- Status: Accepted (2026-07-30, PR #24, as amended - expansion tabled, E46-page-as-view); amended 2026-08-19 (§7, the mint registry); amended 2026-08-20 (§7, duplicate rulings resolve through a registry)
 - Date: 2026-07-30
 - Depends on: ADR 0007 (reconciler contract), ADR 0008 (match-pass
   precedent), ADR 0010 (the models pass), ADR 0011 (as-filed models;
@@ -198,7 +198,7 @@ What a mechanical rule cannot carry, a registry can: which companies deserve
 the fill is a judgment, recorded per company, with the census reviewed before
 each addition.
 
-Terms. To **mint** is to create a `models` row. **Label twins** are distinct
+Terms. To **mint** is to create a `models` row. **Label duplicates** are distinct
 entities sharing one label under one maker — usually different-era cars
 sharing a nameplate (the census found four "Škoda Rapid" and three
 "Citroën C6").
@@ -218,15 +218,15 @@ sharing a nameplate (the census found four "Škoda Rapid" and three
    wait for its ruling; the label does not wear another held marque
    ("Fiat 850" files under Abarth with a label that says whose car it is);
    the stripped name is not the company name itself.
-3. **Contested slugs never mint.** Label twins flag as a group — unlike the
+3. **Contested slugs never mint.** Label duplicates flag as a group — unlike the
    vPIC collision rule (ADR 0010 §2.3, lower filing keeps the slug), because
-   there the colliding records are one nameplate seen twice, while twins are
+   there the colliding records are one nameplate seen twice, while duplicates are
    different cars: minting any one would enthrone an arbitrary era at the
-   plain address. Which twin deserves the plain name, and what the others are
+   plain address. Which duplicate deserves the plain name, and what the others are
    called, is one naming ruling per group. A slug worn by an existing model
    the entity did not name-match flags with the occupant as candidate — the
    accent-divergence case (vPIC "Mehari", label "Méhari") is either the same
-   nameplate for `WIKIDATA_MODEL_MATCHES` or a genuine twin.
+   nameplate for `WIKIDATA_MODEL_MATCHES` or a genuine duplicate.
 4. **A minted model's name is the prefix-stripped label**, asserted with
    provenance under `MINTED_MODEL_COVERAGE` — the one case Wikidata names a
    model, because here it is the filing source. The QID becomes the model's
@@ -244,7 +244,7 @@ sharing a nameplate (the census found four "Škoda Rapid" and three
   three deliberately mixed ones (Renault, Opel, Lancia) as the US/EU overlap
   probes — their vPIC-born filings and Wikidata-born mints now share a
   catalogue, which is where naming and identity issues will first surface.
-- The twins queue is new review work with a naming-ruling shape; resolutions
+- The duplicates queue is new review work with a naming-ruling shape; resolutions
   land as era-qualified names or `WIKIDATA_MODEL_MATCHES` entries.
 - Un-listing a company stops future mints but keeps existing rows (they hold
   QID external ids and refresh like any matched model). Retiring minted rows
@@ -252,3 +252,32 @@ sharing a nameplate (the census found four "Škoda Rapid" and three
   shape, if ever needed.
 - The empty-company page copy stays honest either way: it names our coverage
   limit, not a claim about the marque.
+
+---
+
+## Amendment (2026-08-20): §7 — duplicate rulings resolve through a registry
+
+The 2026-08-19 ruling: same-name different-era cars share ONE model row
+under the plain nameplate, and the eras separate as dated generations —
+never as era-forked names. `WIKIDATA_DUPLICATE_NAMEPLATES` records the per-
+entity verdicts, reviewed as named cars:
+
+- `model:<company>/<slug>` — this entity IS the nameplate: it mints or
+  adopts the model row and attaches at model grain; its own single era
+  arrives through the lead-era mint (ADR 0017 amendment of the same date).
+- `era:<company>/<slug>` — this entity is one era: it becomes a generation
+  under that nameplate, named by its article's era parenthetical (or its
+  span), linked and attached 1:1. Time itself is asserted by the Wikipedia
+  pass from the era's own article — this rung sets identity only. The
+  nameplate model is created bare when no member owns it (no entity means
+  the nameplate; ADR 0011 §4). An era whose only distinguisher is its span
+  lands **unaddressed** — production time is a fact, not identity
+  (ADR 0019 §4) — and an era with no article span and no Wikidata date
+  waits visibly at `duplicate_era_awaits_span`.
+
+The rung runs before the mint groups, so a ruled member never contests;
+unregistered members keep contesting exactly as the pinned tests demand,
+which is how concurrent-market duplicates (Kamiq China, Rapid China/India) and
+unresolved identities stay open for their own rulings. Flags dismiss with
+recorded resolutions. Applied 2026-08-20: 27 entities resolved across 21
+nameplates; 48 ruled eras await evidence; 52 flags remain open.

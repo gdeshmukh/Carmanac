@@ -39,6 +39,18 @@ def main() -> int:
             ("model_lines", "SELECT count(*) FROM model_lines"),
             ("model_line_members", "SELECT count(*) FROM model_line_members"),
             ("generations", "SELECT count(*) FROM generations"),
+            ("model_specs", "SELECT count(*) FROM model_specs"),
+            ("generation_specs", "SELECT count(*) FROM generation_specs"),
+            ("engines", "SELECT count(*) FROM engines"),
+            ("transmissions", "SELECT count(*) FROM transmissions"),
+            (
+                "engine links (live)",
+                "SELECT count(*) FROM configuration_engines WHERE superseded_by IS NULL",
+            ),
+            (
+                "transmission links (live)",
+                "SELECT count(*) FROM configuration_transmissions WHERE superseded_by IS NULL",
+            ),
             ("catalogue_periods", "SELECT count(*) FROM catalogue_periods"),
             ("configurations", "SELECT count(*) FROM configurations"),
             ("external_ids", "SELECT count(*) FROM external_ids"),
@@ -68,6 +80,7 @@ def main() -> int:
                             WHEN rr.external_id LIKE 'infobox:%' THEN 'infoboxes'
                             WHEN rr.external_id LIKE 'article:%' THEN 'articles'
                             WHEN rr.external_id LIKE 'section-main:%' THEN 'section-mains'
+                            WHEN rr.external_id LIKE 'family:%' THEN 'family pages'
                             WHEN rr.payload->>'sweep' = 'company_logos' THEN 'company logos'
                             -- bare QIDs split by the landing-stamped sweep
                             -- marker (ADR 0012 §1), never by payload shape

@@ -1,7 +1,10 @@
 # ADR 0020 — Generation skeletons read from Wikipedia articles
 
 - Status: Proposed; amended 2026-08-14 (configuration–engine links from the
-  article tables; the first engine and transmission entities)
+  article tables; the first engine and transmission entities); amended
+  2026-08-20 (spec defaults at model/generation grain; power and torque
+  unparked; the tables and family passes land inside the unified
+  Wikipedia pass)
 - Date: 2026-08-13
 - Depends on: ADR 0011 (models are as-filed; lines are not models), ADR 0016
   (generations belong to a company, not a model), ADR 0017/0018 (Wikipedia
@@ -321,3 +324,68 @@ registries, never at run time.
   per-variant section, and three in five of those sections state
   displacement. The 210 variant codes already seen on model pages are
   the first candidates to repoint links onto.
+
+---
+
+## Amendment (2026-08-20): spec defaults, power unparked, the passes land
+
+Three rulings, all applied on the `feat/infobox-widening` branch.
+
+### Spec defaults at model and generation grain
+
+The 2026-08-14 note above rejected generation-grain spec facts, and that
+rejection stands for what it rejected: no `generation_attributes` EAV, no
+per-generation claims that promote generations into the hierarchy. What it
+did not cover is the statistic a source states honestly at a coarser grain
+than a configuration — a nameplate page's one wheelbase, an era page's one
+curb weight — which until now had nowhere to land and left model pages
+empty.
+
+Two 1:1 sibling tables now hold them: `model_specs` and `generation_specs`
+(length, width, height, wheelbase, curb weight, doors, seating, power,
+torque — the same columns and units configurations carry). They exist
+purely as **defaults**: `v_configuration_full` resolves each spec column
+configuration-first, then generation, then model, so finer data always
+wins and a configuration with no generation inherits straight from its
+model. Generations stay outside the four-level hierarchy and carry no new
+load. The landing grain is the grain of the page that states the value —
+a single-era nameplate article's lead lands at model grain, a
+generation-attached article or per-generation section at generation grain;
+a multi-era nameplate's lead asserts nothing (its lead shows the current
+generation's dims, which must not smear across eras). Only single
+unambiguous values land: one `{{convert}}`, a known unit, no lists, no
+ranges, no variant labels. Provenance rides the existing model/generation
+arcs in `field_provenance`, per field, superseding like everything else.
+
+### Power and torque, unparked
+
+"Power and torque stay unextracted" above is withdrawn (ruled 2026-08-20):
+figures land **standardless**, with the per-field provenance keeping the
+source's own observed string ("250 PS (184 kW; 247 hp)") so nothing is
+lost and the read surface can state the source. The rating-standards
+refinement (SAE gross/net, DIN, JIS) stays an open question — it no longer
+blocks extraction, and cross-era comparisons mix standards until it is
+settled.
+
+### The tables and family passes, landed
+
+Decisions 1–3 run inside the unified Wikipedia pass (ADR 0017 amendment,
+same date), not as separate modules. Two mechanics sharpened in
+implementation:
+
+- **Claims accumulate before judgment.** A configuration is anchored by
+  every article that reaches it — its model's page and its generations'
+  pages overlap — so table rows collect per configuration across the whole
+  run and one sync judges the union. Per-article judgment would let the
+  last article fight the first, and never converge.
+- **Variants mint on demand.** A family page's per-code sections mint only
+  the codes the model-page tables actually cite (anchored to a heading or
+  `{{anchor}}` id, underscores undone, displacement riding along where
+  stated). Coded links then repoint from family grain to the variant; the
+  full-section sweep can widen later if a consumer appears.
+
+First live run: 10 families + 1 transmission + 91 variants minted, 290
+engine and 61 transmission links, 177 configurations with power — the
+first power figures in the database. Most table-bearing articles belong to
+European models whose configurations do not exist yet; the reviewed
+registries fire as those arrive.

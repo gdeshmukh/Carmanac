@@ -161,6 +161,7 @@ def assert_field_facts(
     source_id: int,
     record,
     skip_projection: frozenset[str] = frozenset(),
+    project_onto=None,
 ) -> tuple[int, int]:
     """Upsert one record's assertions for one entity into `field_provenance`,
     tombstone coverage fields the source went quiet on, and project winners
@@ -171,8 +172,13 @@ def assert_field_facts(
     outranked pass still keeps its assertion current in `field_provenance` -
     the evidence trail must not thin out - but leaves the entity column to
     the source that outranks it.
+
+    `project_onto` splits the two roles `entity` normally plays: provenance
+    stays keyed on `entity.id` while the value columns live on a 1:1 sibling
+    row (the spec-defaults tables).
     """
     inserted = superseded = 0
+    target = entity if project_onto is None else project_onto
     live: dict[str, FieldProvenance] = {
         row.field_name: row
         for row in session.scalars(
@@ -202,7 +208,7 @@ def assert_field_facts(
                     },
                 )
                 if field_name not in skip_projection:
-                    setattr(entity, field_name, None)
+                    setattr(target, field_name, None)
             continue
         observed, projected = fact
         values = {
@@ -221,7 +227,7 @@ def assert_field_facts(
             inserted += 1
             superseded += 1
         if field_name not in skip_projection:
-            setattr(entity, field_name, projected)
+            setattr(target, field_name, projected)
     return inserted, superseded
 
 

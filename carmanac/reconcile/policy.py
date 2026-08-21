@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "19"
+RECONCILER_VERSION = "20"
 
 # --- identity --------------------------------------------------------------
 
@@ -96,8 +96,8 @@ IDENTITY_MERGES: dict[str, str] = {
     # substantive row + a stub whose description identifies the SAME company
     # (mostly the brand-artifact wave). Namesake groups (Ace, Ajax, Caribe,
     # Star OH/IL...) and ambiguous stubs (Imperial, Clipper, the Mazda
-    # chinesische-Automarke twin) deliberately stay separate pending
-    # cross-source checks. TVR's twin Q80901538 is an assembly PLANT, not a
+    # chinesische-Automarke duplicate) deliberately stay separate pending
+    # cross-source checks. TVR's duplicate Q80901538 is an assembly PLANT, not a
     # merge candidate - it needs a deny decision, parked.
     "Q135773766": "Q27110",  # Autobianchi (car brand artifact)
     "Q45144846": "Q27377",  # Borgward (Automobilmarke artifact)
@@ -222,7 +222,7 @@ VPIC_MATCHES: dict[str, str] = {
 VPIC_MODEL_MERGES: dict[str, str] = {
     # The Santana verdict (2026-07-30): both its MakeIds filed the same three
     # licensee-built wheelbase models - one page per wheelbase, LAND ROVER
-    # SANTANA's ModelId attaches to the row its SANTANA twin created.
+    # SANTANA's ModelId attaches to the row its SANTANA duplicate created.
     "model:36864": "model:36863",  # 110" WB
     "model:36866": "model:36865",  # 90" WB
     "model:37552": "model:37551",  # 88" WB
@@ -285,6 +285,113 @@ WIKIDATA_MINT_COMPANIES: dict[str, str] = {
     "Q6686": "renault",  # overlap probe: 5 as-filed US models beside ~190 EU entities
     "Q40966": "opel",  # overlap probe: 6 as-filed models, no configurations
     "Q35896": "lancia",  # overlap probe: 3 as-filed models
+}
+
+# Duplicate rulings (ADR 0012 §7): a contested label-duplicate group resolves under ONE
+# nameplate - same-name different-era cars share one model row, and the eras
+# separate as dated generations, never as era-forked names. Keys are member
+# QIDs; values record the verdict:
+#
+#   "model:<company-slug>/<model-slug>" - this entity IS the nameplate's model
+#     row (its own article is the plain-titled page); it mints/attaches at
+#     model grain and its single era arrives through the lead-era mint.
+#   "era:<company-slug>/<model-slug>"   - this entity is one era; it becomes a
+#     generation under that nameplate, named by its article's era
+#     parenthetical (or its span), dated by the Wikipedia pass from its own
+#     article. The nameplate model is created bare if no member owns it - no
+#     QID attaches (no entity means the nameplate; ADR 0011 §4).
+#
+# A registered era with no landed article span and no Wikidata date stays
+# flagged (identity without time helps nobody). Members left out of the
+# registry keep contesting - concurrent-market duplicates (Kamiq China, Rapid
+# India) wait here for their own ruling, since time cannot separate them.
+WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
+    # Ruled 2026-08-20, reviewed as named cars. Resolves on evidence in hand:
+    "Q741857": "model:alpine/a110",  # Alpine A110, the 1963-1977 original's page
+    "Q24936559": "era:alpine/a110",  # Alpine A110 (2017-present)
+    "Q28555429": "model:opel/grandland",  # Opel Grandland (2017-present)
+    "Q56234269": "model:renault/arkana",  # Renault Arkana (2019-present)
+    "Q109042999": "model:renault/express",  # Renault Express, the 1985-2000 van's own page
+    "Q105737028": "era:renault/express",  # Renault Express (2021-present)
+    "Q2702123": "model:renault/symbol",  # Renault Symbol (1999-2021)
+    "Q827056": "model:seat/leon",  # SEAT Leon (1999-present)
+    "Q391936": "model:skoda-auto/120",  # Skoda 120 (1976-1990, the Type 742 page)
+    "Q52054487": "model:skoda-auto/kamiq",  # Skoda Kamiq (2019-present, global car)
+    "Q392083": "model:skoda-auto/superb",  # Skoda Superb, the modern car's page
+    "Q392060": "era:skoda-auto/superb",  # Skoda Superb (1934-1949)
+    "Q392016": "model:skoda-auto/felicia",  # Skoda Felicia, the 1994-2001 car's page
+    "Q391899": "era:skoda-auto/felicia",  # Skoda Felicia (1959-1964 roadster)
+    "Q391996": "model:skoda-auto/favorit",  # Skoda Favorit, the 1987 hatchback's page
+    "Q391999": "era:skoda-auto/favorit",  # Skoda Favorit (1936-1941)
+    "Q163053": "model:skoda-auto/fabia",  # Skoda Fabia (1999-present)
+    "Q1123579": "model:seat/toledo",  # SEAT Toledo, the nameplate's own page
+    "Q5122860": "model:citroen/c3-aircross",  # Citroen C3 Aircross, the nameplate's own page
+    "Q933825": "model:dacia/dokker",  # Dacia Dokker, the real 2012 van
+    "Q657450": "model:opel/admiral",  # Opel Admiral, one page holds all three eras
+    # Four separate early-1900s Renault models; the era grouping mistook the
+    # letters I/V/X for numerals:
+    "Q17561176": "model:renault/type-i",  # Renault Type I
+    "Q18412545": "model:renault/type-ii",  # Renault Type II
+    "Q18027311": "model:renault/type-v",  # Renault Type V
+    "Q3932908": "model:renault/type-x",  # Renault Type X
+    # The Rapid ruling: one nameplate, three era pages; the name-only entity
+    # (its page is a directory stub) carries the model:
+    "Q346196": "model:skoda-auto/rapid",  # the name itself
+    "Q392029": "era:skoda-auto/rapid",  # Skoda Rapid (1935-1947)
+    "Q392038": "era:skoda-auto/rapid",  # Skoda Garde/Rapid (1981-1990 coupe)
+    "Q180270": "era:skoda-auto/rapid",  # Skoda Rapid (2012 liftback)
+    # Ruled now, dates arrive later (no page of their own yet):
+    "Q20724366": "era:citroen/c3",  # Citroen C3 III
+    "Q123113826": "era:citroen/c3",  # Citroen C3 IV
+    "Q108760254": "era:citroen/c3",  # Citroen C3 (CC21, the 2022 S-America car)
+    "Q39076504": "era:citroen/c3-aircross",  # C3 Aircross (2017)
+    "Q125574525": "era:citroen/c3-aircross",  # C3 Aircross (CC24)
+    "Q113147169": "era:citroen/c4-picasso",  # C4 Picasso (1st generation)
+    "Q13403069": "era:citroen/c4-picasso",  # C4 Picasso II
+    "Q18589891": "era:citroen/c5",  # Citroen C5 I
+    "Q18745497": "era:citroen/c5",  # Citroen C5 II
+    "Q23021883": "era:citroen/c6",  # Citroen C6 (the 2005 executive car)
+    "Q2974503": "era:citroen/c6",  # Citroen C6 (the 1929 saloon)
+    "Q91025324": "era:citroen/xm",  # Citroen XM Serie I
+    "Q91025333": "era:citroen/xm",  # Citroen XM Serie II
+    "Q82263266": "era:dacia/dokker",  # Dokker I (ghost entry)
+    "Q126083830": "era:dacia/dokker",  # Dokker II (ghost entry)
+    "Q48746330": "era:dacia/duster",  # Duster I
+    "Q39075664": "era:dacia/duster",  # Duster II
+    "Q3011626": "era:dacia/logan",  # Logan I
+    "Q48746437": "era:dacia/logan",  # Logan II
+    "Q20965598": "era:dacia/sandero",  # Sandero I
+    "Q81656534": "era:dacia/sandero",  # Sandero III
+    "Q126085521": "era:dacia/sandero-stepway",  # Stepway I
+    "Q126085460": "era:dacia/sandero-stepway",  # Stepway II
+    "Q126085442": "era:dacia/sandero-stepway",  # Stepway III
+    "Q13377701": "era:lancia/thema",  # Lancia Thema (2011, the Chrysler-based one)
+    "Q3882854": "era:opel/admiral",  # the second Admiral entry
+    "Q125574658": "era:opel/grandland",  # Opel Grandland X
+    "Q119575950": "era:renault/symbol",  # Symbol II
+    "Q126083756": "era:renault/symbol",  # Symbol III
+    "Q126083679": "era:renault/symbol",  # Symbol IV
+    "Q15847025": "era:seat/leon",  # Leon I
+    "Q3476824": "era:seat/toledo",  # Toledo I
+    "Q3476819": "era:seat/toledo",  # Toledo II
+    "Q3476820": "era:seat/toledo",  # Toledo III
+    "Q18412995": "era:seat/toledo",  # Toledo IV
+    "Q137771826": "era:skoda-auto/120",  # the second Skoda 120 entry
+    "Q391966": "era:skoda-auto/fabia",  # Fabia I
+    "Q391971": "era:skoda-auto/fabia",  # Fabia II
+    "Q18410434": "era:skoda-auto/fabia",  # Fabia III
+    "Q392024": "era:skoda-auto/pick-up",  # Skoda Pick-up (one of the pair)
+    "Q90701201": "era:skoda-auto/pick-up",  # Skoda Pick-up (the other)
+    "Q392063": "era:skoda-auto/superb",  # Superb I
+    "Q392067": "era:skoda-auto/superb",  # Superb II
+    "Q19758190": "era:skoda-auto/superb",  # Superb III
+    "Q1609671": "era:skoda-auto/octavia",  # Octavia III
+    "Q75030046": "era:skoda-auto/octavia",  # Octavia IV
+    # Held with open flags, no entry: the SEAT 124 Sport duplicate pair (its
+    # English link lands on the Fiat 124 Sport Coupe, a different car), the
+    # three same-time market duplicates (Kamiq China, Rapid China/India), the
+    # duplicate-suspect second Arkana entry, and the plain "Citroen C5" entry
+    # whose grain cannot be told.
 }
 
 # Words that hold an entity out of the mint, matched on word boundaries over
@@ -506,7 +613,7 @@ NOT_A_POWERTRAIN: dict[str, str] = {
     "straight-three": "layout",
     "straight-four": "layout",
     "straight-six": "layout",
-    "straight-twin": "layout",
+    "straight-duplicate": "layout",
     "v10": "layout",
     "v12": "layout",
     "v6": "layout",
@@ -526,9 +633,9 @@ NOT_A_POWERTRAIN: dict[str, str] = {
     "supercharged": "technology",
     "turbocharger": "technology",
     "turbodiesel": "technology",
-    "twin turbo": "technology",
-    "twin-turbo": "technology",
-    "twin-turbocharged": "technology",
+    "duplicate turbo": "technology",
+    "duplicate-turbo": "technology",
+    "duplicate-turbocharged": "technology",
     "variable displacement": "technology",
     "variable geometry turbocharger": "technology",
     "variable-geometry turbocharger": "technology",
