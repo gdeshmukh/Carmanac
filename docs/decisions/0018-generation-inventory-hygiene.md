@@ -161,3 +161,20 @@ QID; no name matching is introduced.
   denominator.
 - Reconciler v15 (policy and pass behavior change what runs produce).
 - No schema change; no new flag kinds; alembic head unchanged.
+
+---
+
+## Amendment (2026-08-20): one fetch module, wider reach
+
+The three Wikipedia landers (`articles`, `infoboxes`, `section_mains`)
+collapse into `carmanac/ingest/wikipedia/fetch.py`. The §3 Main-target gate
+is unchanged. What widened is the article target set, still identity-
+inherited: QIDs attached to our models **or generations**, the curated
+routings, and the members of open mint twin groups (their own sitelinks
+carry the era spans the twins ruling resolves by). `--wider` adds two
+archive layers — P179 line-case entities and unattached entities under
+companies that hold models — landed raw and asserted by no pass, so the
+skeleton work and any future admission decision read from disk instead of
+re-fetching. New `infobox:` records stop landing (the full article contains
+section 0); minted powertrain families' own pages land as `family:<key>`
+records for the ADR 0020 variant work.

@@ -308,3 +308,32 @@ that can drift must not veto its own car.
 - Wikipedia's demotion of Wikidata here is evidence-driven, recorded,
   and reversible per field through provenance — no raw data is
   discarded either way (ADR 0004).
+
+---
+
+## Amendment (2026-08-20): one pass, and the lead-era mint
+
+The §2 infobox pass and the §4 sections pass are one module now
+(`carmanac/reconcile/wikipedia_pass.py`, pass name `wikipedia`). Nothing in
+either half's rules changed by the merge: a generation-attached article
+dates its generation from the lead infobox — the lead IS MediaWiki's
+section 0, so the retired `infobox:` section-0 records stay archival and
+the full article carries their job — and a model-attached article runs the
+§4 sections machinery unchanged. The two retired decision queues are
+deleted on run; the redirect rule and flag-never-guess hold everywhere.
+
+One new §4 case, the degenerate one. An article with **no generation
+sections** describes one era. For a model with **no linked generations**,
+that era mints as a dated generation: keyed `section:<QID>#0`, named by the
+stripped nameplate, spanned by the lead production field through the same
+parser as §2. A model that already has linked generations takes nothing —
+the whole-nameplate span must not land on any one of them (§2's hazard, at
+mint scope). A lead span that does not reduce queues as
+`lead_era_unparseable` in the decision log; a slug collision flags. The
+placement loaders read the article lead for `#0` keys, so these
+generations' model-years and body evidence stay visible.
+
+Run live 2026-08-20: 406 lead-era generations minted and dated; placement
+moved 2,682 → 4,662 configurations. Physical specs from the same articles
+land per the ADR 0020 amendment of the same date (the defaults tables) —
+identity and time stay the only generation-grain facts.
