@@ -38,6 +38,7 @@ from carmanac.reconcile.generation_placement_pass import run_generation_placemen
 from carmanac.reconcile.sources.wikipedia_infobox import parse_span, parse_specs
 from carmanac.reconcile.sources.wikipedia_sections import (
     BodySignal,
+    looks_multi_era,
     door_counts,
     epa_body_signal,
     parse_article,
@@ -980,3 +981,51 @@ def test_family_page_mints_demanded_variant_and_link_repoints(
 
     rerun = run_wikipedia_pass(db)
     assert (rerun.variants_minted, rerun.powertrain_links, rerun.powertrain_retired) == (0, 0, 0)
+
+
+def test_looks_multi_era_reads_both_signals():
+    """The lead-era mint's veto: era structure the heading grammar cannot
+    read is still era structure - but a second infobox alone is not it."""
+    assert looks_multi_era(
+        "{{Infobox automobile\n| production = 1984–1988\n}}\n"
+        "{{Infobox automobile\n| production = 1988–1995\n}}\n"
+    ), "sequential spans are eras"
+    assert not looks_multi_era(
+        "{{Infobox automobile\n| production = 2022–present\n}}\n"
+        "{{Infobox automobile\n| production = 2022–present\n}}\n"
+    ), "a rebadge twin or body variant shares its era's span"
+    assert looks_multi_era("== E28 M5 (1984–1988) ==\nprose\n== E34 M5 (1988–1995) ==\nprose\n"), (
+        "the chassis-code heading convention BMW and Mazda use"
+    )
+    assert not looks_multi_era(
+        "{{Infobox automobile\n| production = 1948–1990\n}}\n"
+        "== History (1948–1990) ==\nprose\n== Motorsport ==\nprose\n"
+    ), "one infobox and one dated heading is a single-era page"
+
+
+@pytest.mark.integration
+def test_lead_era_refuses_an_article_with_unparsed_eras(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    """The M5 shape: seven eras under code-style headings the grammar does
+    not read. Minting one generation over the whole life is the defect this
+    veto exists for."""
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n| production = 1984–present\n}}\n"
+        "== E28 Z4 (1984–1988) ==\n{{Infobox automobile\n| production = 1984–1988\n}}\n"
+        "== E34 Z4 (1988–1995) ==\n{{Infobox automobile\n| production = 1988–1995\n}}\n",
+    )
+    stats = run_wikipedia_pass(db)
+    assert (stats.lead_era_minted, stats.generations_created) == (0, 0)
+    outcome = db.execute(
+        text("SELECT outcome FROM match_decisions WHERE external_id = 'article:Q7'")
+    ).scalar()
+    assert outcome == "lead_era_multi_era"

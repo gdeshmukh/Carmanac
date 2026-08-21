@@ -18,6 +18,7 @@ from carmanac.reconcile.sources.wikipedia_infobox import (
     _COMMENT,
     _REF,
     infobox_field,
+    parse_span,
     same_subject,
     title_code_tokens,
 )
@@ -67,7 +68,9 @@ _CODE_MIXED = re.compile(r"^[A-Z0-9][A-Za-z0-9-]{0,7}$")
 _TYP_PREFIX = re.compile(r"^Typ?e?\s+", re.IGNORECASE)
 
 _MAIN_TEMPLATE = re.compile(r"\{\{\s*[Mm]ain(?:\s+article)?\s*\|([^{}]*)\}\}")
-_INFOBOX_START = re.compile(r"\{\{\s*Infobox\s+(?:automobile|car)\b", re.IGNORECASE)
+_INFOBOX_START = re.compile(
+    r"\{\{\s*Infobox\s+(?:automobile|electric vehicle|car)\b", re.IGNORECASE
+)
 
 _DOOR_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 _DOORS = re.compile(r"\b(2|3|4|5|6|two|three|four|five|six)[-\s]doors?\b", re.IGNORECASE)
@@ -165,6 +168,60 @@ def parse_heading(raw: str) -> GenerationSection | None:
         has_infobox=False,
         body="",
     )
+
+
+_ERA_HEADING_YEARS = re.compile(r"\b(?:19|20)\d\d\s*(?:[–—−-]|&ndash;)\s*(?:(?:19|20)\d\d|present)")
+_H2 = re.compile(r"^==\s*([^=].*?)\s*==\s*$", re.MULTILINE)
+
+
+def _infobox_bodies(wikitext: str) -> list[str]:
+    """Each `{{Infobox automobile}}` template's own text, brace-balanced so a
+    nested `{{convert}}` does not end it early."""
+    bodies = []
+    for match in _INFOBOX_START.finditer(wikitext):
+        depth = 0
+        i = match.start()
+        while i < len(wikitext) - 1:
+            if wikitext[i : i + 2] == "{{":
+                depth += 1
+                i += 2
+                continue
+            if wikitext[i : i + 2] == "}}":
+                depth -= 1
+                i += 2
+                if depth == 0:
+                    break
+                continue
+            i += 1
+        bodies.append(wikitext[match.start() : i])
+    return bodies
+
+
+def looks_multi_era(wikitext: str) -> bool:
+    """Does this article describe several eras this module's heading grammar
+    could not read? Either signal is sufficient:
+
+    - **Sequential production spans.** Two sub-infoboxes whose spans start at
+      least two years apart are eras (`1984`, `1988`, `1998` on the M5's
+      page). Counting infoboxes alone would not do: rebadge twins, market
+      variants and body styles all carry their own box over the SAME span -
+      the bZ4X's Solterra, the Arkana's China car, the Altea XL.
+    - **Dated top-level headings.** `TT Mk1 (Type 8N, 1998-2006)`,
+      `Rodeo 4 (1970-1981)` - conventions the strict grammar rejects, needing
+      two to distinguish an era list from one `History (1948-1990)` heading.
+
+    Absence of parsed sections is NOT evidence of a single era, and reading
+    it as one mints a generation over a nameplate's whole life."""
+    starts = set()
+    for body in _infobox_bodies(wikitext):
+        raw = infobox_field(body, "production")
+        if raw:
+            span, _reason = parse_span(raw)
+            if span is not None:
+                starts.add(span.start)
+    if len(starts) >= 2 and max(starts) - min(starts) >= 2:
+        return True
+    return sum(1 for h in _H2.findall(wikitext) if _ERA_HEADING_YEARS.search(h)) >= 2
 
 
 def section_main_asserts(payload: dict) -> bool:

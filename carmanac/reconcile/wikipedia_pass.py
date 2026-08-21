@@ -93,6 +93,7 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     ORDINAL_WORDS,
     GenerationSection,
     door_counts,
+    looks_multi_era,
     parse_article,
     section_main_asserts,
 )
@@ -1089,6 +1090,19 @@ class _WikipediaPass:
         them (§2's hazard, at mint scope)."""
         lead = parse_infobox(record.payload["title"], parsed.top_wikitext)
         keyed = self.section_generations.get(f"section:{qid}#0")
+        if keyed is None and looks_multi_era(record.payload.get("wikitext", "")):
+            # The article shows era structure the heading grammar could not
+            # read; one era is exactly what it does NOT describe. Widening
+            # the grammar is the real fix - this is the review vein for it.
+            self.stats.no_sections += 1
+            self._dismiss_article_flag(qid, "article_no_longer_has_sections")
+            self.decisions.record(
+                record,
+                "lead_era_multi_era",
+                detail={"title": parsed.title},
+            )
+            self._model_specs(self.models[model_id], "", record)
+            return
         if keyed is None and self.links_by_model.get(model_id):
             # A multi-era nameplate: its lead describes no single era, so it
             # asserts no model defaults either (the current-generation dims
