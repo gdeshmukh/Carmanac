@@ -1107,10 +1107,13 @@ class _WikipediaPass:
             )
             self._model_specs(self.models[model_id], "", record)
             return
-        if keyed is None and self.links_by_model.get(model_id):
+        ruled_twin = policy.WIKIDATA_TWIN_NAMEPLATES.get(qid, "").startswith("model:")
+        if keyed is None and self.links_by_model.get(model_id) and not ruled_twin:
             # A multi-era nameplate: its lead describes no single era, so it
             # asserts no model defaults either (the current-generation dims
-            # a lead often shows must not smear across eras).
+            # a lead often shows must not smear across eras). A twin ruled
+            # `model:` is exempt - the ruling already says this page IS one
+            # era of a group, and its siblings are the linked generations.
             self.stats.no_sections += 1
             self._dismiss_article_flag(qid, "article_no_longer_has_sections")
             self.decisions.record(record, "no_sections")
