@@ -1035,8 +1035,10 @@ def test_lead_era_refuses_an_article_with_unparsed_eras(
 def test_era_grammar_reads_the_code_led_convention():
     """The M5 shape, which the ordinal grammar cannot see at all."""
     article = (
-        "== E28 M5 (1984–1988) {{anchor|E28}} ==\n{{Infobox automobile\n| production = 1984–1988\n}}\n"
-        "== E34 M5 (1988–1995) {{anchor|E34}} ==\n{{Infobox automobile\n| production = 1988–1995\n}}\n"
+        "== E28 M5 (1984–1988) {{anchor|E28}} ==\n"
+        "{{Infobox automobile\n| production = 1984–1988\n}}\n"
+        "== E34 M5 (1988–1995) {{anchor|E34}} ==\n"
+        "{{Infobox automobile\n| production = 1988–1995\n}}\n"
         "== Motorsport ==\nprose\n"
     )
     eras = parse_era_sections("BMW M5", article)

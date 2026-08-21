@@ -1152,7 +1152,7 @@ def test_twin_era_without_evidence_stays_flagged(
     vpic_source,  # noqa: F811
     monkeypatch,
 ):
-    citroen = _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
+    _matched_make(db, wikidata_source, vpic_source, "Q6746", "Citroën", 900)
     monkeypatch.setitem(policy.WIKIDATA_MINT_COMPANIES, "Q6746", "citroen")
     _land_sweep(db, wikidata_source, "Q1200", "Citroën Pony", makers=["Q6746"])
     _land_sweep(db, wikidata_source, "Q1201", "Citroën Pony II", makers=["Q6746"])
