@@ -40,7 +40,7 @@ these cars); section parsing never invents a link to any other model.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
@@ -95,6 +95,7 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     door_counts,
     looks_multi_era,
     parse_article,
+    parse_era_sections,
     section_main_asserts,
 )
 from carmanac.reconcile.sources.wikipedia_tables import (
@@ -657,11 +658,14 @@ class _WikipediaPass:
         return name
 
     def _display_name(self, model: Model, section: GenerationSection) -> str:
-        name = self._nameplate(model)
+        # Ruled 2026-08-21: a generation is its code, not its nameplate - an
+        # "M5" generation under the M5 model reads as a second model. Only a
+        # code-less era needs the nameplate, to stay distinguishable among a
+        # company's generations (they are company-anchored, not model-owned).
         if section.codes:
-            return f"{name} ({'/'.join(section.codes)})"
+            return "/".join(section.codes)
         word = ORDINAL_WORDS[section.ordinal - 1]
-        return f"{name} ({word} generation)"
+        return f"{self._nameplate(model)} ({word} generation)"
 
     def _reconcile_section(
         self, section: GenerationSection, competitors: set[int]
@@ -1276,8 +1280,12 @@ class _WikipediaPass:
 
         parsed = parse_article(record.payload["title"], record.payload.get("wikitext", ""))
         if not parsed.sections:
-            self._lead_era(model, model_id, qid, parsed, record)
-            return
+            eras = parse_era_sections(parsed.title, record.payload.get("wikitext", ""))
+            if eras:
+                parsed = replace(parsed, sections=eras)
+            else:
+                self._lead_era(model, model_id, qid, parsed, record)
+                return
         self._model_specs(model, "", record)
 
         ordinals = [s.ordinal for s in parsed.sections]

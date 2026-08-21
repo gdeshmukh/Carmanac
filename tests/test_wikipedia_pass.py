@@ -38,10 +38,11 @@ from carmanac.reconcile.generation_placement_pass import run_generation_placemen
 from carmanac.reconcile.sources.wikipedia_infobox import parse_span, parse_specs
 from carmanac.reconcile.sources.wikipedia_sections import (
     BodySignal,
-    looks_multi_era,
     door_counts,
     epa_body_signal,
+    looks_multi_era,
     parse_article,
+    parse_era_sections,
     parse_heading,
     trim_body_signal,
 )
@@ -231,7 +232,7 @@ def test_sections_mint_generations_with_links_and_facts(
         .join(ExternalId, ExternalId.generation_id == Generation.id)
         .where(ExternalId.external_id == "section:Q7#1")
     )
-    assert e85.name == "Z4 (E85)" and e85.chassis_codes == ["E85"]
+    assert e85.name == "E85" and e85.chassis_codes == ["E85"]
     assert (e85.start_year, e85.end_year) == (2002, 2008)
     assert (
         db.scalars(
@@ -399,7 +400,7 @@ def test_curated_routing_and_disjoint_codes_mint_the_amg_gt_shape(
             )
         )
     )
-    assert slugs == {"z4-c190-r190", "z4-c192", "z4-x290", "z4-c590"}
+    assert slugs == {"c190-r190", "c192", "x290", "c590"}
 
 
 @pytest.fixture()
@@ -503,8 +504,8 @@ def test_body_veto_places_both_amg_gt_sides_without_overlap(
     db.refresh(four_door)
     db.refresh(signalless)
 
-    c190 = db.scalar(select(Generation).where(Generation.slug == "z4-c190"))
-    x290 = db.scalar(select(Generation).where(Generation.slug == "z4-x290"))
+    c190 = db.scalar(select(Generation).where(Generation.slug == "c190"))
+    x290 = db.scalar(select(Generation).where(Generation.slug == "x290"))
     assert coupe.generation_id == c190.id, "the two-seater was never an X290 candidate"
     assert four_door.generation_id == x290.id, "the four-door was never a C190 candidate"
     assert signalless.generation_id is None
@@ -515,7 +516,7 @@ def test_body_veto_places_both_amg_gt_sides_without_overlap(
             ReconciliationFlag.status == "open",
         )
     ).one()
-    assert {c["generation"] for c in flag.detail["candidates"]} == {"z4-c190", "z4-x290"}
+    assert {c["generation"] for c in flag.detail["candidates"]} == {"c190", "x290"}
     assert stats.body_vetoed >= 2
 
     # Convergence.
@@ -1011,17 +1012,17 @@ def test_lead_era_refuses_an_article_with_unparsed_eras(
     spine,
     routed,  # noqa: F811
 ):
-    """The M5 shape: seven eras under code-style headings the grammar does
-    not read. Minting one generation over the whole life is the defect this
-    veto exists for."""
+    """Sequential eras the era grammar still refuses to name - here the
+    headings are facelift phases. Minting one generation over the whole life
+    is the defect this veto exists for."""
     _land_article(
         db,
         wikipedia_source,
         "Q7",
         "BMW Z4",
         "{{Infobox automobile\n| production = 1984–present\n}}\n"
-        "== E28 Z4 (1984–1988) ==\n{{Infobox automobile\n| production = 1984–1988\n}}\n"
-        "== E34 Z4 (1988–1995) ==\n{{Infobox automobile\n| production = 1988–1995\n}}\n",
+        "== Pre-facelift (1984–1988) ==\n{{Infobox automobile\n| production = 1984–1988\n}}\n"
+        "== Facelift (1988–1995) ==\n{{Infobox automobile\n| production = 1988–1995\n}}\n",
     )
     stats = run_wikipedia_pass(db)
     assert (stats.lead_era_minted, stats.generations_created) == (0, 0)
@@ -1029,3 +1030,30 @@ def test_lead_era_refuses_an_article_with_unparsed_eras(
         text("SELECT outcome FROM match_decisions WHERE external_id = 'article:Q7'")
     ).scalar()
     assert outcome == "lead_era_multi_era"
+
+
+def test_era_grammar_reads_the_code_led_convention():
+    """The M5 shape, which the ordinal grammar cannot see at all."""
+    article = (
+        "== E28 M5 (1984–1988) {{anchor|E28}} ==\n{{Infobox automobile\n| production = 1984–1988\n}}\n"
+        "== E34 M5 (1988–1995) {{anchor|E34}} ==\n{{Infobox automobile\n| production = 1988–1995\n}}\n"
+        "== Motorsport ==\nprose\n"
+    )
+    eras = parse_era_sections("BMW M5", article)
+    assert [e.heading for e in eras] == ["E28", "E34"], "named by code, not by nameplate"
+    assert [e.ordinal for e in eras] == [1, 2]
+
+    assert not parse_era_sections(
+        "BMW M5",
+        "== E28 M5 (1984–1988) ==\n{{Infobox automobile\n| production = 1984–1988\n}}\n",
+    ), "one era-shaped heading is a variant far more often than a generation"
+    assert not parse_era_sections(
+        "Porsche 911 (991)",
+        "== 991.1 (2011–2016) ==\n{{Infobox automobile\n| production = 2011–2016\n}}\n"
+        "== 991.2 (2016–2019) ==\n{{Infobox automobile\n| production = 2016–2019\n}}\n",
+    ), "an article already at one generation's grain holds phases, not eras"
+    assert not parse_era_sections(
+        "Bugatti Veyron",
+        "== Grand Sport (2009–2015) ==\nprose only, no infobox\n"
+        "== Super Sport (2010–2011) ==\nprose only\n",
+    ), "trim sections carry no infobox of their own"

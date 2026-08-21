@@ -224,6 +224,192 @@ def looks_multi_era(wikitext: str) -> bool:
     return sum(1 for h in _H2.findall(wikitext) if _ERA_HEADING_YEARS.search(h)) >= 2
 
 
+# --- the widened era grammar (ADR 0017 §4 amendment) --------------------------
+#
+# Marques that do not use the "<ordinal> generation" convention still list
+# their eras in structured headings - `E28 M5 (1984-1988)`, `TT Mk1 (Type 8N,
+# 1998-2006)`, `Commodore A (1967-1971)`. Reading them is a PRECISION problem,
+# not a parsing one: `Pre-facelift release (2003-2008)` and `Bugatti Veyron
+# 16.4 Grand Sport (2009-2015)` wear the identical shape and are a facelift
+# and a trim. Censused over 817 landed articles, three conjuncts reach 99%
+# precision where the shape alone reaches 71%:
+#
+#   1. the heading looks era-shaped (code-led, or ending in a dated
+#      parenthetical),
+#   2. no disqualifying word anywhere in it, and
+#   3. THE SECTION CARRIES ITS OWN INFOBOX - the load-bearing gate. Of 33
+#      censused trim sections and 14 facelift sections, none had one.
+#
+# Article-grain gates then run over the survivors, because a lone era-shaped
+# heading is a variant far more often than a generation.
+
+_ERA_STOPWORDS = re.compile(
+    r"\b(?:face-?lift|restyl\w*|refresh\w*|updated?|updates|revision|phase|concept|prototype"
+    r"|study|show\s+car|special|editions?|variants?|versions?|trims?|engines?|powertrains?"
+    r"|drivetrain|transmission|chassis|suspension|brakes|interior|safety|awards?|sales"
+    r"|production|marketing|reception|history|overview|background|development|design"
+    r"|specifications?|gallery|legacy|timeline|recalls?|motorsports?|racing|rally|competition"
+    r"|models?|range|line-?up|predecessor|successor|based\s+on|launch|name\s+reuse)\b",
+    re.IGNORECASE,
+)
+# Whole-label matches only: a market or body word IS the heading, rather than
+# appearing in it ("Japan (1970-1978)", "Hatchback (FK1-3; 2005)").
+_ERA_WHOLE_LABEL = re.compile(
+    r"^(?:(?:north|south)\s+america|united\s+states|usa?|canada|mexico|brazil|europe|japan|china"
+    r"|australia|new\s+zealand|india|korea|south\s+africa|russia|uk|united\s+kingdom"
+    r"|hatchback|sedan|saloon|coup[eé]|convertible|cabriolet|roadster|wagon|estate|pick-?up|van"
+    r"|suv|liftback|fastback|targa|spyder|tourer)"
+    r"(?:\s*(?:and|&|/|,)\s*.+)?$",
+    re.IGNORECASE,
+)
+_ERA_PAREN = re.compile(r"^(?P<head>.*?)\s*\((?P<paren>[^()]*)\)\s*$")
+_ERA_YEAR = re.compile(r"\b(?:18[5-9]\d|19\d\d|20[0-4]\d)\b")
+_ERA_CODE = re.compile(r"^(?:[A-Z]{1,4}\d{1,4}[A-Z0-9]*|\d{1,2}[A-Z]{1,3}\d{0,2}|[A-Z]{2,4})$")
+_ERA_ROMAN = re.compile(r"^(?:I{1,3}|IV|VI{0,3}|IX|XI{0,2}|X)$")
+_ERA_LABEL = re.compile(r"^(?:Mk\.?\s?[IVX0-9]+|Mark\s+[IVX]+|Series\s+[IVX0-9]+)$", re.IGNORECASE)
+_ANCHOR_ID = re.compile(
+    r"\{\{\s*(?:visible\s+)?anchor\s*\|([^{}]*)\}\}|<span[^>]*\bid\s*=\s*[\"']([^\"']+)[\"']",
+    re.IGNORECASE,
+)
+# An article already at one generation's grain ("Porsche 911 (991)",
+# "Honda Civic (eighth generation)") holds body styles under its headings,
+# never eras.
+_SUB_GRAIN_TITLE = re.compile(
+    r"\((?:[A-Z0-9][A-Za-z0-9/.-]*|(?:" + "|".join(ORDINAL_WORDS) + r")\s+generation)\)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _anchor_codes(raw_heading: str) -> list[str]:
+    """Maintained `{{anchor|E28}}` / `id="LA2"` values, filtered to code
+    shapes - they name the era more cleanly than the prose does."""
+    out = []
+    for template, span_id in _ANCHOR_ID.findall(raw_heading):
+        for value in (template or span_id or "").split("|"):
+            value = value.strip()
+            if value and _ERA_CODE.match(value) and not _ERA_ROMAN.match(value):
+                out.append(value)
+    return out
+
+
+def _era_tokens(text: str, title_words: set[str]) -> tuple[list[str], list[str]]:
+    """(codes, labels) among a heading fragment's tokens, dropping tokens the
+    article title already contributes - the nameplate is not the era."""
+    codes, labels = [], []
+    for token in re.split(r"[\s,/]+", text.strip()):
+        token = token.strip("-–—;:")
+        if not token or token.casefold() in title_words:
+            continue
+        if token.casefold() in {"series", "type", "typ", "model", "models", "and", "the", "of"}:
+            continue
+        if _ERA_ROMAN.match(token):
+            labels.append(token)
+        elif _ERA_CODE.match(token) and not _ERA_YEAR.match(token):
+            codes.append(token)
+        elif _ERA_LABEL.match(token) or re.fullmatch(r"[A-Z]|\d{1,2}", token):
+            labels.append(token)
+    return codes, labels
+
+
+def parse_era_heading(
+    raw: str, title_words: set[str]
+) -> tuple[str, tuple[str, ...], tuple[int, ...]] | None:
+    """(name, codes, years) for a non-ordinal era heading, or None.
+
+    Name follows the chassis-code-over-nameplate rule: the first code found
+    in the head, then the parenthetical (after an optional `Typ`), then the
+    maintained anchor; failing every code, the era's own label (`Mk1`,
+    `Series I`, `A`). A heading yielding neither is not named and not read."""
+    cleaned = clean_heading(raw)
+    if not cleaned or _ERA_STOPWORDS.search(cleaned) or _ERA_WHOLE_LABEL.match(cleaned):
+        return None
+    match = _ERA_PAREN.match(cleaned)
+    head = match.group("head") if match else cleaned
+    paren = match.group("paren") if match else ""
+    years = tuple(int(y) for y in _ERA_YEAR.findall(cleaned))
+    if not years:
+        return None
+    if not head.strip():
+        return None
+
+    head_codes, head_labels = _era_tokens(head, title_words)
+    # Everything left of the first `;`/`,` in the parenthetical is the code
+    # list; the rest is years and prose.
+    paren_codes, paren_labels = _era_tokens(re.split(r"[;,]", paren)[0], title_words)
+    codes = head_codes + paren_codes + _anchor_codes(raw)
+    labels = head_labels + paren_labels
+    name = codes[0] if codes else (labels[0] if labels else "")
+    if not name:
+        return None
+    return name, tuple(dict.fromkeys(codes)), years
+
+
+def parse_era_sections(title: str, wikitext: str) -> tuple[GenerationSection, ...]:
+    """Era sections for an article the ordinal grammar could not read.
+
+    Level 2 only - censused, level 3 is model-year and trim sections. The
+    article-grain gates: at least two candidates, each carrying its own
+    infobox, start years strictly increasing in document order, and the
+    article's own title not already at one generation's grain."""
+    if _SUB_GRAIN_TITLE.search(title):
+        return ()
+    title_words = {w.casefold() for w in re.split(r"[\s()/-]+", title) if w}
+    marks = [m for m in _HEADING.finditer(wikitext) if len(m.group(1)) == 2]
+    candidates: list[tuple[GenerationSection, int]] = []
+    for i, match in enumerate(marks):
+        parsed = parse_era_heading(match.group(2), title_words)
+        if parsed is None:
+            continue
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(wikitext)
+        body = wikitext[match.end() : end]
+        if not _INFOBOX_START.search(body):
+            continue
+        name, codes, years = parsed
+        span, _reason = parse_span(infobox_field(body, "production") or "")
+        start = span.start if span is not None else years[0]
+        candidates.append(
+            (
+                GenerationSection(
+                    ordinal=0,  # assigned below, once the cohort is admitted
+                    heading=name,
+                    codes=codes,
+                    heading_years=years,
+                    main_targets=tuple(
+                        part.strip()
+                        for hit in _MAIN_TEMPLATE.findall(body[:800])
+                        for part in hit.split("|")
+                        if part.strip()
+                    ),
+                    has_infobox=True,
+                    body=body,
+                ),
+                start,
+            )
+        )
+    if len(candidates) < 2:
+        return ()
+    starts = [start for _s, start in candidates]
+    if any(b <= a for a, b in zip(starts, starts[1:], strict=False)):
+        # Not a sequence of eras: parallel siblings, or a list of variants.
+        return ()
+    if all(section.main_targets for section, _start in candidates):
+        return ()  # a family index page, deferring every entry elsewhere
+    if len({section.heading for section, _s in candidates}) != len(candidates):
+        return ()  # a repeated name is the nameplate, not the era
+    return tuple(
+        GenerationSection(
+            ordinal=i,
+            heading=section.heading,
+            codes=section.codes or (section.heading,),
+            heading_years=section.heading_years,
+            main_targets=section.main_targets,
+            has_infobox=section.has_infobox,
+            body=section.body,
+        )
+        for i, (section, _start) in enumerate(candidates, start=1)
+    )
+
+
 def section_main_asserts(payload: dict) -> bool:
     """The grain guards on a landed `section-main:` record (ADR 0018 §3):
     a redirected target asserts nothing, and so does a bare-title target -
