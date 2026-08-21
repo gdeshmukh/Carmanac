@@ -46,8 +46,15 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
+    CataloguePeriod,
     Company,
+    Configuration,
+    ConfigurationEngine,
+    ConfigurationTransmission,
+    Engine,
     ExternalId,
+    FieldProvenance,
+    FuelType,
     Generation,
     GenerationModelLink,
     GenerationSpecs,
@@ -57,6 +64,7 @@ from carmanac.db.models import (
     RawRecord,
     ReconciliationFlag,
     Source,
+    Transmission,
 )
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikipedia import SOURCE_NAME
@@ -88,8 +96,29 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     parse_article,
     section_main_asserts,
 )
+from carmanac.reconcile.sources.wikipedia_tables import EngineRow, parse_engine_tables
 
 log = logging.getLogger(__name__)
+
+
+def _row_matches(
+    row: EngineRow, start: int | None, end: int | None, cc: int | None, fuel: str | None
+) -> bool:
+    """The physical-key predicate: a missing key on either side never
+    excludes; a present pair must agree. Displacement is required on OUR
+    side - a configuration without one cannot be physically matched at all
+    (mostly EVs and thin filings, per the census)."""
+    if cc is None or row.displacement_cc is None:
+        return False
+    if abs(row.displacement_cc - cc) > max(20, round(cc * 0.03)):
+        return False
+    if row.years is not None and start is not None:
+        row_start, row_end = row.years
+        upper = end if end is not None else start
+        if row_start > upper or (row_end is not None and row_end < start):
+            return False
+    return row.fuel is None or fuel is None or row.fuel == fuel
+
 
 PASS_NAME = "wikipedia"
 
@@ -115,6 +144,11 @@ class WikipediaStats:
     redirected: int = 0
     unrouted: int = 0
     flagged_articles: int = 0
+    engines_minted: int = 0
+    transmissions_minted: int = 0
+    powertrain_links: int = 0
+    powertrain_retired: int = 0
+    powertrain_ambiguous: int = 0
     assertions_inserted: int = 0
     assertions_superseded: int = 0
     flags_opened: int = 0
@@ -129,6 +163,9 @@ class WikipediaStats:
             f"links={self.links_asserted} reconciled={self.sections_reconciled} "
             f"no_sections={self.no_sections} redirected={self.redirected} "
             f"unrouted={self.unrouted} flagged={self.flagged_articles} | "
+            f"powertrain: minted={self.engines_minted}+{self.transmissions_minted} "
+            f"links={self.powertrain_links} (retired={self.powertrain_retired}) "
+            f"ambiguous={self.powertrain_ambiguous} | "
             f"assertions={self.assertions_inserted} "
             f"(superseded={self.assertions_superseded}) "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
@@ -153,6 +190,7 @@ class _WikipediaPass:
         self._load_section_mains()
         self._load_sitelink_titles()
         self._load_open_flags()
+        self._load_powertrain()
 
     # --- loaders --------------------------------------------------------------
 
@@ -370,6 +408,105 @@ class _WikipediaPass:
                     self.open_article_flags[qid] = flag
             elif flag.generation_id is not None:
                 self.open_value_flags[(flag.generation_id, flag.field_name)] = flag
+
+    def _load_powertrain(self) -> None:
+        """The engine-tables stage's working set (ADR 0020 amendment): every
+        configuration's physical keys, the minted family entities by their
+        article key, and this source's live links and power/torque claims."""
+        petrol_ids: set[int] = set()
+        diesel_ids: set[int] = set()
+        for fuel_id, name in self.session.execute(select(FuelType.id, FuelType.name)):
+            if "gasoline" in name.lower() or "petrol" in name.lower():
+                petrol_ids.add(fuel_id)
+            elif "diesel" in name.lower():
+                diesel_ids.add(fuel_id)
+        self.configs_by_model: dict[int, list[tuple]] = {}
+        for cid, model_id, start, end, cc, fuel_id in self.session.execute(
+            select(
+                Configuration.id,
+                CataloguePeriod.model_id,
+                CataloguePeriod.start_year,
+                CataloguePeriod.end_year,
+                Configuration.engine_displacement_cc,
+                Configuration.fuel_type_id,
+            ).join(CataloguePeriod, CataloguePeriod.id == Configuration.catalogue_period_id)
+        ):
+            fuel = (
+                "petrol" if fuel_id in petrol_ids else "diesel" if fuel_id in diesel_ids else None
+            )
+            self.configs_by_model.setdefault(model_id, []).append((cid, start, end, cc, fuel))
+
+        self.engines_by_key: dict[str, Engine] = {}
+        self.transmissions_by_key: dict[str, Transmission] = {}
+        for external_id, engine_id, transmission_id in self.session.execute(
+            select(ExternalId.external_id, ExternalId.engine_id, ExternalId.transmission_id).where(
+                ExternalId.source_id == self.source.id,
+                ExternalId.external_id.like("%-article:%"),
+            )
+        ):
+            kind, _, rest = external_id.partition(":")
+            key = rest.partition("#")[0]
+            if kind == "engine-article" and engine_id is not None and "#" not in rest:
+                self.engines_by_key[key] = self.session.get(Engine, engine_id)
+            elif kind == "transmission-article" and transmission_id is not None and "#" not in rest:
+                self.transmissions_by_key[key] = self.session.get(Transmission, transmission_id)
+        self.engine_variants: dict[tuple[str, str], int] = {
+            (rest.partition("#")[0], rest.partition("#")[2]): engine_id
+            for external_id, engine_id, _t in self.session.execute(
+                select(
+                    ExternalId.external_id, ExternalId.engine_id, ExternalId.transmission_id
+                ).where(
+                    ExternalId.source_id == self.source.id,
+                    ExternalId.external_id.like("engine-article:%#%"),
+                )
+            )
+            if engine_id is not None
+            for rest in [external_id.partition(":")[2]]
+        }
+
+        self.live_engine_links: dict[int, dict[int, ConfigurationEngine]] = {}
+        for row in self.session.scalars(
+            select(ConfigurationEngine).where(
+                ConfigurationEngine.source_id == self.source.id,
+                ConfigurationEngine.superseded_by.is_(None),
+            )
+        ):
+            self.live_engine_links.setdefault(row.configuration_id, {})[row.engine_id] = row
+        self.live_transmission_links: dict[int, dict[int, ConfigurationTransmission]] = {}
+        for row in self.session.scalars(
+            select(ConfigurationTransmission).where(
+                ConfigurationTransmission.source_id == self.source.id,
+                ConfigurationTransmission.superseded_by.is_(None),
+            )
+        ):
+            self.live_transmission_links.setdefault(row.configuration_id, {})[
+                row.transmission_id
+            ] = row
+        # Configurations whose power/torque we asserted before: the heal set,
+        # so a claim the tables stop making tombstones back to NULL.
+        self.powertrain_asserted: set[int] = set(
+            self.session.scalars(
+                select(FieldProvenance.configuration_id).where(
+                    FieldProvenance.source_id == self.source.id,
+                    FieldProvenance.configuration_id.isnot(None),
+                    FieldProvenance.field_name.in_(["power_hp", "torque_nm"]),
+                    FieldProvenance.superseded_by.is_(None),
+                )
+            )
+        )
+        self.company_id_by_slug: dict[str, int] = {
+            slug: cid
+            for cid, slug in self.session.execute(select(Company.id, Company.slug))
+            if slug
+        }
+        self.powertrain_unmatched: dict[str, int] = {}
+        # Claims accumulate per configuration across ALL the articles that
+        # anchor it (a model's page and its generations' pages overlap);
+        # one sync at end of run judges the union - per-article syncing
+        # would let the last article fight the first.
+        self.pt_rows: dict[int, list[tuple]] = {}  # cid -> [(EngineRow, record, company_id)]
+        self.pt_seen: dict[int, RawRecord] = {}  # cid -> an article that spoke for its model
+        self.pt_titles: dict[str, str] = {}
 
     # --- flags ----------------------------------------------------------------
 
@@ -700,6 +837,201 @@ class _WikipediaPass:
             record=record,
         )
 
+    def _powertrain_entity(self, kind: str, key: str, title: str, company_id: int):
+        """The minting ladder (ADR 0020 amendment, Decision 2), per link
+        target: recorded registry judgments first, then the mechanical
+        maker-prefix rung, else nothing - generic technology and list pages
+        wait in raw. Returns the entity row or None."""
+        cache = self.engines_by_key if kind == "engine" else self.transmissions_by_key
+        entity = cache.get(key)
+        if entity is not None:
+            return entity
+        if key in policy.NOT_A_POWERTRAIN:
+            return None
+        registry = (
+            policy.ENGINE_FAMILY_ARTICLES
+            if kind == "engine"
+            else policy.TRANSMISSION_FAMILY_ARTICLES
+        )
+        if key in registry:
+            maker_slug = registry[key]
+            maker_id = self.company_id_by_slug.get(maker_slug) if maker_slug else None
+            if maker_slug and maker_id is None:
+                log.warning("%s registry names unknown company %r for %r", kind, maker_slug, key)
+        else:
+            normalized = normalize_name(key)
+            if not any(
+                normalized.startswith(prefix)
+                for prefix in self.company_prefixes.get(company_id, ())
+            ):
+                self.powertrain_unmatched[key] = self.powertrain_unmatched.get(key, 0) + 1
+                return None
+            maker_id = company_id
+        slug = slugify(key)
+        cls = Engine if kind == "engine" else Transmission
+        if self.session.scalar(select(cls.id).where(cls.slug == slug)) is not None:
+            log.warning("powertrain slug %r already taken; %r waits", slug, key)
+            return None
+        entity = cls(manufacturer_company_id=maker_id, slug=slug, name=title)
+        self.session.add(entity)
+        self.session.flush()
+        self.session.add(
+            ExternalId(
+                **{("engine_id" if kind == "engine" else "transmission_id"): entity.id},
+                source_id=self.source.id,
+                external_id=f"{kind}-article:{key}",
+            )
+        )
+        cache[key] = entity
+        if kind == "engine":
+            self.stats.engines_minted += 1
+        else:
+            self.stats.transmissions_minted += 1
+        return entity
+
+    def _engine_tables(self, model_ids: list[int], company_id: int, record: RawRecord) -> None:
+        """Collect the article's engine-table claims against its models'
+        configurations (ADR 0020 amendment, Decision 1). Physical keys only:
+        catalogue years overlap, displacement within 3%, petrol/diesel not
+        contradicted. Judgment happens in `_powertrain_sync`, over every
+        article's claims together."""
+        rows = parse_engine_tables(record.payload.get("wikitext", ""))
+        for row in rows:
+            for key, title in row.titles:
+                self.pt_titles.setdefault(key, title)
+        for model_id in model_ids:
+            for cid, start, end, cc, fuel in self.configs_by_model.get(model_id, []):
+                self.pt_seen[cid] = record
+                for row in rows:
+                    if _row_matches(row, start, end, cc, fuel):
+                        self.pt_rows.setdefault(cid, []).append((row, record, company_id))
+
+    def _powertrain_sync(self) -> None:
+        """Judge the accumulated claims once per run: exactly one engine
+        identity standing across every matching row -> a link; several ->
+        the decision log's open queue, re-attempted every run. Power and
+        torque land only when every matching row agrees on one value -
+        tunes we cannot tell apart assert nothing. Configurations whose
+        articles stopped claiming heal back to nothing."""
+        stale = (
+            (
+                set(self.live_engine_links)
+                | set(self.live_transmission_links)
+                | self.powertrain_asserted
+            )
+            & set(self.pt_seen)
+        ) - set(self.pt_rows)
+        for cid in sorted(set(self.pt_rows) | stale):
+            claims = self.pt_rows.get(cid, [])
+            record = claims[0][1] if claims else self.pt_seen[cid]
+            company_id = claims[0][2] if claims else 0
+            matching = [row for row, _r, _c in claims]
+
+            engine_keys = sorted({key for row in matching for key, _code in row.engines})
+            desired_engines: set[int] = set()
+            if len(engine_keys) == 1:
+                key = engine_keys[0]
+                entity = self._powertrain_entity(
+                    "engine", key, self.pt_titles.get(key, key), company_id
+                )
+                if entity is not None:
+                    codes = {
+                        code
+                        for row in matching
+                        for k, code in row.engines
+                        if k == key and code is not None
+                    }
+                    variant_id = (
+                        self.engine_variants.get((key, codes.pop())) if len(codes) == 1 else None
+                    )
+                    desired_engines.add(variant_id or entity.id)
+                    self.decisions.record_key(
+                        f"configuration:{cid}",
+                        "engine_linked",
+                        raw_record_id=record.id,
+                        method="table_physical_keys",
+                        detail={"engine": key, "rows": len(matching)},
+                    )
+            elif len(engine_keys) > 1:
+                self.stats.powertrain_ambiguous += 1
+                self.decisions.record_key(
+                    f"configuration:{cid}",
+                    "engine_ambiguous",
+                    raw_record_id=record.id,
+                    method="table_physical_keys",
+                    detail={"engines": engine_keys},
+                )
+            desired_transmissions: set[int] = set()
+            for key in sorted({key for row in matching for key, _code in row.transmissions}):
+                entity = self._powertrain_entity(
+                    "transmission", key, self.pt_titles.get(key, key), company_id
+                )
+                if entity is not None:
+                    desired_transmissions.add(entity.id)
+
+            self._sync_links(
+                cid,
+                desired_engines,
+                self.live_engine_links,
+                ConfigurationEngine,
+                "engine_id",
+                record,
+            )
+            self._sync_links(
+                cid,
+                desired_transmissions,
+                self.live_transmission_links,
+                ConfigurationTransmission,
+                "transmission_id",
+                record,
+            )
+
+            facts: dict[str, tuple[str, object]] = {}
+            powers = {(row.power_hp, row.power_observed) for row in matching if row.power_hp}
+            if len({p for p, _ in powers}) == 1:
+                value, observed = next(iter(powers))
+                facts["power_hp"] = (observed or str(value), value)
+            torques = {(row.torque_nm, row.torque_observed) for row in matching if row.torque_nm}
+            if len({t for t, _ in torques}) == 1:
+                value, observed = next(iter(torques))
+                facts["torque_nm"] = (observed or str(value), value)
+            if facts or cid in self.powertrain_asserted:
+                configuration = self.session.get(Configuration, cid)
+                inserted, superseded = assert_field_facts(
+                    self.session,
+                    arc_col="configuration_id",
+                    entity=configuration,
+                    coverage=("power_hp", "torque_nm"),
+                    facts=facts,
+                    source_id=self.source.id,
+                    record=record,
+                )
+                self.stats.assertions_inserted += inserted
+                self.stats.assertions_superseded += superseded
+                if facts:
+                    self.powertrain_asserted.add(cid)
+
+    def _sync_links(self, cid: int, desired: set[int], live_map, cls, id_col: str, record) -> None:
+        existing = live_map.get(cid, {})
+        for entity_id in desired - existing.keys():
+            link = cls(
+                configuration_id=cid,
+                **{id_col: entity_id},
+                source_id=self.source.id,
+                raw_record_id=record.id,
+                scraped_at=record.last_seen_at,
+            )
+            self.session.add(link)
+            existing = live_map.setdefault(cid, {})
+            existing[entity_id] = link
+            self.stats.powertrain_links += 1
+        for entity_id in list(existing.keys() - desired):
+            # Retirement, not correction: no successor claim exists.
+            row = existing.pop(entity_id)
+            self.session.flush()
+            row.superseded_by = row.id
+            self.stats.powertrain_retired += 1
+
     def _lead_era(self, model: Model, model_id: int, qid: str, parsed, record: RawRecord) -> None:
         """An article with no generation sections describes one era. For a
         model with no linked generations, that era IS a generation - the
@@ -865,7 +1197,11 @@ class _WikipediaPass:
 
         generation_id = self.generation_by_qid.get(qid)
         if generation_id is not None:
-            self._lead_facts(self.generations[generation_id], record)
+            generation = self.generations[generation_id]
+            linked_models = [m for m, gens in self.links_by_model.items() if generation_id in gens]
+            if linked_models:
+                self._engine_tables(linked_models, generation.company_id, record)
+            self._lead_facts(generation, record)
             return
 
         model_id = self.model_by_qid.get(qid)
@@ -874,6 +1210,7 @@ class _WikipediaPass:
             self.decisions.record(record, "waits_unrouted_article")
             return
         model = self.models[model_id]
+        self._engine_tables([model_id], model.company_id, record)
 
         parsed = parse_article(record.payload["title"], record.payload.get("wikitext", ""))
         if not parsed.sections:
@@ -1087,6 +1424,13 @@ class _WikipediaPass:
             self.stats.processed += 1
             self._process_article(record)
             mark_reconciled(self.session, record)
+        self._powertrain_sync()
+        if self.powertrain_unmatched:
+            top = sorted(self.powertrain_unmatched.items(), key=lambda kv: -kv[1])[:15]
+            log.info(
+                "powertrain targets outside every rung (registry review vein): %s",
+                ", ".join(f"{k} x{n}" for k, n in top),
+            )
         self.decisions.flush()
         self.session.commit()
         return self.stats

@@ -19,6 +19,8 @@ from sqlalchemy import select, text
 from carmanac.db.models import (
     CataloguePeriod,
     Configuration,
+    ConfigurationEngine,
+    Engine,
     ExternalId,
     FieldProvenance,
     Generation,
@@ -42,6 +44,7 @@ from carmanac.reconcile.sources.wikipedia_sections import (
     parse_heading,
     trim_body_signal,
 )
+from carmanac.reconcile.sources.wikipedia_tables import parse_engine_tables
 from carmanac.reconcile.wikipedia_pass import run_wikipedia_pass
 from tests.test_generation_placement import (  # noqa: F401
     spine,
@@ -790,3 +793,138 @@ def test_generation_attached_article_lands_generation_grain_specs(
         )
     ).one()
     assert prov.observed_value.startswith("{{convert|2725")
+
+
+# --- the engine tables (ADR 0020 amendment) ------------------------------------
+
+_Z4_TABLE = (
+    "== Engines ==\n"
+    '{| class="wikitable"\n'
+    "! Model !! Engine !! Displacement !! Power !! Torque !! Years\n"
+    "|-\n"
+    "| 2.5i || rowspan=2 | [[BMW M54]] || {{convert|2494|cc|L|abbr=on}} "
+    "|| {{convert|192|PS|kW hp|abbr=on}} || {{convert|245|N.m|lbft|abbr=on}} || 2002–2005\n"
+    "|-\n"
+    "| 3.0i || {{convert|2979|cc|L|abbr=on}} || {{convert|231|PS|kW hp|abbr=on}} "
+    "|| {{convert|300|N.m|lbft|abbr=on}} || 2002–2005\n"
+    "|}\n"
+)
+
+
+def test_parse_engine_tables_reads_rows_spans_and_units():
+    rows = parse_engine_tables(_Z4_TABLE)
+    assert len(rows) == 2
+    first, second = rows
+    assert first.engines == (("bmw m54", None),)
+    assert second.engines == (("bmw m54", None),), "the rowspan carries the engine down"
+    assert (first.displacement_cc, first.years) == (2494, (2002, 2005))
+    assert first.power_hp == 189, "PS normalizes to mechanical hp"
+    assert first.torque_nm == 245
+
+
+def test_parse_engine_tables_ignores_sales_tables_and_banner_rows():
+    rows = parse_engine_tables(
+        '{| class="wikitable"\n! Year !! Europe !! Brazil\n|-\n| 2007 || 1 || 2\n|}\n'
+        '{| class="wikitable"\n! Engine !! Power !! Years\n'
+        "|-\n! colspan=3 | Diesel engines\n"
+        "|-\n| [[Alpina B3|B3]] || {{convert|90|kW|PS hp|abbr=on}} || 1998–2003\n|}\n"
+    )
+    assert len(rows) == 1
+    assert rows[0].fuel == "diesel", "the banner row is fuel context, not data"
+
+
+def _z4_config(db, spine, routed, year: int, cc: int | None, slug: str) -> Configuration:
+    market = db.execute(text("SELECT id FROM market_regions ORDER BY id LIMIT 1")).scalar()
+    period = db.scalar(
+        select(CataloguePeriod).where(
+            CataloguePeriod.model_id == routed.id, CataloguePeriod.start_year == year
+        )
+    )
+    if period is None:
+        period = CataloguePeriod(
+            model_id=routed.id, period_kind_id=spine["kind"].id, start_year=year, end_year=year
+        )
+        db.add(period)
+        db.flush()
+    config = Configuration(
+        catalogue_period_id=period.id,
+        market_region_id=market,
+        slug=slug,
+        engine_displacement_cc=cc,
+    )
+    db.add(config)
+    db.commit()
+    return config
+
+
+@pytest.mark.integration
+def test_engine_table_links_and_lands_power_on_physical_keys(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    """The 2.5i config matches one row on years+displacement: the family
+    mints through the prefix rung (BMW M54 under BMW), the link lands with
+    the article as evidence, and the row's power/torque land standardless
+    with the observed string kept."""
+    config = _z4_config(db, spine, routed, 2003, 2500, "25i")
+    away = _z4_config(db, spine, routed, 2015, 2500, "later")  # outside every row's years
+    _land_article(db, wikipedia_source, "Q7", "BMW Z4", _Z4_TABLE)
+    stats = run_wikipedia_pass(db)
+    assert stats.engines_minted == 1 and stats.powertrain_links == 1
+
+    engine = db.scalars(select(Engine)).one()
+    assert (engine.slug, engine.name) == ("bmw-m54", "BMW M54")
+    assert engine.manufacturer_company_id == spine["company"].id
+    link = db.scalars(
+        select(ConfigurationEngine).where(ConfigurationEngine.superseded_by.is_(None))
+    ).one()
+    assert (link.configuration_id, link.engine_id) == (config.id, engine.id)
+    assert link.raw_record_id is not None
+
+    db.refresh(config)
+    assert (config.power_hp, config.torque_nm) == (189, 245)
+    prov = db.scalars(
+        select(FieldProvenance).where(
+            FieldProvenance.configuration_id == config.id,
+            FieldProvenance.field_name == "power_hp",
+            FieldProvenance.superseded_by.is_(None),
+        )
+    ).one()
+    assert "PS" in prov.observed_value, "the observed string keeps the source's own units"
+    db.refresh(away)
+    assert away.power_hp is None, "a config outside the rows' years takes nothing"
+
+    rerun = run_wikipedia_pass(db)
+    assert (rerun.engines_minted, rerun.powertrain_links, rerun.assertions_inserted) == (0, 0, 0)
+
+
+@pytest.mark.integration
+def test_ambiguous_rows_link_nothing_and_queue(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,  # noqa: F811
+):
+    """Two same-displacement rows naming different engines in the config's
+    years: nothing links, nothing lands, the decision log holds the case."""
+    config = _z4_config(db, spine, routed, 2003, 2500, "25i")
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        '{| class="wikitable"\n! Engine !! Displacement !! Years\n'
+        "|-\n| [[BMW M54]] || 2494 cc || 2002–2005\n"
+        "|-\n| [[BMW N52]] || 2497 cc || 2002–2005\n|}\n",
+    )
+    stats = run_wikipedia_pass(db)
+    assert stats.powertrain_links == 0 and stats.powertrain_ambiguous == 1
+    outcome = db.execute(
+        text("SELECT outcome FROM match_decisions WHERE external_id = :k"),
+        {"k": f"configuration:{config.id}"},
+    ).scalar()
+    assert outcome == "engine_ambiguous"
