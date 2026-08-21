@@ -1503,10 +1503,17 @@ class _WikidataModelsPass:
                 log.warning("WIKIDATA_TWIN_NAMEPLATES[%s] -> %r: no such company", qid, target)
                 continue
             entity = subject.entity
-            base_name = _TRAILING_ROMAN.sub(
-                "", _TRAILING_PAREN.sub("", self._mint_name(entity.label or "", company_id))
-            ).strip()
             model_id = self.model_by_company_slug.get((company_id, model_slug))
+            # The ruled slug decides how much of the label is the nameplate:
+            # "Renault Type I" keeps its numeral under `type-i`, "Express I"
+            # sheds it under `express`.
+            full_name = self._mint_name(entity.label or "", company_id)
+            if model_id is not None:
+                base_name = self.models[model_id].name
+            elif slugify(full_name) == model_slug:
+                base_name = full_name
+            else:
+                base_name = _TRAILING_ROMAN.sub("", _TRAILING_PAREN.sub("", full_name)).strip()
 
             if kind == "model":
                 if model_id is None:
