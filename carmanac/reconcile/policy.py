@@ -287,10 +287,6 @@ WIKIDATA_MINT_COMPANIES: dict[str, str] = {
     "Q35896": "lancia",  # overlap probe: 3 as-filed models
 }
 
-# Words that hold an entity out of the mint, matched on word boundaries over
-# the label and description together. Concept cars, prototypes and race-only
-# cars are an open scope question in the charter; until it is ruled they
-# wait rather than mint.
 # Twin rulings (ADR 0012 §7): a contested label-twin group resolves under ONE
 # nameplate - same-name different-era cars share one model row, and the eras
 # separate as dated generations, never as era-forked names. Keys are member
@@ -398,6 +394,10 @@ WIKIDATA_TWIN_NAMEPLATES: dict[str, str] = {
     # whose grain cannot be told.
 }
 
+# Words that hold an entity out of the mint, matched on word boundaries over
+# the label and description together. Concept cars, prototypes and race-only
+# cars are an open scope question in the charter; until it is ruled they
+# wait rather than mint.
 WIKIDATA_MINT_EXCLUDE: tuple[str, ...] = (
     "concept",
     "prototype",

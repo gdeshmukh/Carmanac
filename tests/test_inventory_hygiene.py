@@ -111,7 +111,7 @@ def test_registry_holds_wd_pass_from_resurrecting_links(db, wikidata_source, spi
 
 
 @pytest.mark.integration
-def test_sections_pass_excludes_demoted_from_reconciliation(
+def test_wikipedia_pass_excludes_demoted_from_reconciliation(
     db, wikidata_source, wikipedia_source, spine, monkeypatch
 ):
     """A model whose only linked generations are ruled wrong-grain mints

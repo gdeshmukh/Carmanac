@@ -1,4 +1,4 @@
-"""Fetch English-Wikipedia wikitext into raw (ADR 0017/0018, one module).
+"""Fetch English-Wikipedia wikitext into raw (ADR 0017/0018).
 
 Two record kinds, told apart by the namespaced external id:
 
@@ -17,8 +17,8 @@ articles carry the era spans the twins ruling resolves by). `--wider` adds
 the archive layers — P179 line-case entities and unattached entities under
 companies that hold models — landed raw, asserted by no pass today.
 
-The retired `infobox:<QID>` section-0 records stay archival; nothing lands
-new ones (the full article contains section 0).
+`infobox:<QID>` section-0 records are archival: the full article
+contains section 0, so this module lands none.
 """
 
 from __future__ import annotations
@@ -154,12 +154,7 @@ def _fetch_pages(session: Session, source_id: int, requests: list[dict]) -> Land
 def land_articles(
     session: Session, *, already_landed: bool = True, wider: bool = False
 ) -> LandResult:
-    """Fetch and land one `article:<QID>` record per target page.
-
-    `already_landed` skips QIDs with a current article record - the
-    resumability switch. A refresh run passes False; unchanged wikitext
-    lands as a hash-rejected no-op.
-    """
+    """Fetch and land one `article:<QID>` record per target page."""
     source = get_source(session, SOURCE_NAME)
     rows = session.execute(
         text(_TARGETS_SQL).bindparams(bindparam("curated", expanding=True)),
@@ -263,12 +258,7 @@ def section_main_targets(session: Session) -> list[SectionMainTarget]:
 
 
 def land_section_mains(session: Session, *, already_landed: bool = True) -> LandResult:
-    """Fetch and land one `section-main:<QID>#<ordinal>` record per target.
-
-    `already_landed` skips keys with a landed record - the resumability
-    switch. A refresh run passes False; unchanged wikitext lands as a
-    hash-rejected no-op.
-    """
+    """Fetch and land one `section-main:<QID>#<ordinal>` record per target."""
     source = get_source(session, SOURCE_NAME)
     targets = section_main_targets(session)
     if already_landed:

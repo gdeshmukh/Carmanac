@@ -166,7 +166,7 @@ def _configuration(db, spine, year: int, slug: str) -> Configuration:
 
 
 @pytest.mark.integration
-def test_infobox_pass_times_and_codes_generation(db, wikidata_source, wikipedia_source, spine):
+def test_wikipedia_pass_times_and_codes_generation(db, wikidata_source, wikipedia_source, spine):
     _land_article(
         db,
         wikipedia_source,
@@ -195,7 +195,7 @@ def test_infobox_pass_times_and_codes_generation(db, wikidata_source, wikipedia_
 
 
 @pytest.mark.integration
-def test_infobox_pass_flags_unreducible_span(db, wikidata_source, wikipedia_source, spine):
+def test_wikipedia_pass_flags_unreducible_span(db, wikidata_source, wikipedia_source, spine):
     _land_article(
         db,
         wikipedia_source,
@@ -411,7 +411,7 @@ def test_redirected_article_asserts_nothing(db, wikidata_source, wikipedia_sourc
 
 
 @pytest.mark.integration
-def test_wd_models_refresh_does_not_stomp_infobox_columns(
+def test_wd_models_refresh_does_not_stomp_article_columns(
     db,
     wikidata_source,
     wikipedia_source,
