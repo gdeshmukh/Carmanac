@@ -2,7 +2,8 @@
 
 - Status: Accepted (2026-07-30, PR #22 — including the §1 C-Class
   carve-out, confirmed after the VIN-decode probe, and the §3 amendment
-  deleting the fabricated demo raw records)
+  deleting the fabricated demo raw records); amended 2026-08-25 (§2, where
+  a line files)
 - Date: 2026-07-30
 - Depends on: ADR 0007 (reconciler contract), ADR 0010 (the models pass)
 
@@ -63,6 +64,38 @@ relation** (Wikidata's "part of the series" is the obvious first assertion
 of it), rendered as a view or page over the member models. A page does not
 require an identity row. Designing that relation belongs to the Wikidata
 models ADR, not this one.
+
+**Where a line files (amended 2026-08-25).** A line row needs a company,
+and the source's maker statement is the wrong anchor for it: Wikidata
+points its maker property at corporate parents (Mercedes-Benz Group, Ford
+Motor Company) while the models a line aggregates are filed under
+carmakers (Mercedes-Benz, Ford). Filing lines under the stated maker
+stranded 79 rows under six companies holding zero models. The rule,
+censused over every line row before adoption:
+
+- A line whose own name states its maker stays with that maker, whatever
+  it holds — TVR's lines are TVR's before any US filing exists.
+- A maker that holds models keeps its lines even when the name wears
+  another brand: Lexus GS under Toyota is the maker's own assertion, and
+  namesake companies (a company named Delta, a company named Skyline)
+  would poison any vote there.
+- A model-less maker is the stranded case, and there the name decides: the
+  line files under the unique model-holding company whose exact name leads
+  the line's own name. Brand tokens bind at whitespace, so "Mercedes-Benz
+  C-Class" wears Mercedes-Benz and never the pre-war marque "Mercedes".
+- Anything else is a review flag, never a guess: a name-brand matching
+  more than one company (two companies are named "Mercury"), or matching
+  only a model-less one. The row keeps filing where it sits while the
+  question stays open.
+
+`WIKIDATA_LINE_HOLDS` pins named rows out of the rule entirely: series
+entities that are really generation-grain (Corvette C7, Passat B6 —
+they resolve in the generations table, not by relocation) and pages with
+no scope ruling yet (several van nameplates, category pages like
+"full-size Ford"). A held row files under its maker exactly as before
+the rule. `scripts/decisions/relocate_stranded_lines.py` moved the
+already-stranded rows with the same vote, so the pass re-derives every
+row exactly where it sits.
 
 ### 3. The demo seed retires, artifacts included
 

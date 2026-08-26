@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import func, select
 
 from carmanac.db.models import (
+    Company,
     ExternalId,
     FieldProvenance,
     Generation,
@@ -37,6 +38,7 @@ from carmanac.reconcile import policy
 from carmanac.reconcile.engine import run_companies_pass
 from carmanac.reconcile.sources import wikidata
 from carmanac.reconcile.wikidata_models_pass import run_wikidata_models_pass
+from tests.test_reconcile import _land as _land_wd
 from tests.test_vpic_models_pass import _land_model, _matched_make, vpic_source  # noqa: F401
 from tests.test_wikidata_models_landing import _ENTITY
 from tests.test_wikipedia_pass import _land_article
@@ -282,6 +284,263 @@ def test_idempotent_rerun_and_stable_decisions(db, wikidata_source, vpic_source)
     assert db.scalar(select(MatchDecision.id).order_by(MatchDecision.id.desc())) == (
         decisions_before
     ), "decisions upsert - a re-run must not append rows"
+
+
+# --- the line destination rule (ADR 0011 §2, amended) ------------------------
+
+
+def _stranded_line_fixture(db, wikidata_source, vpic_source):  # noqa: F811
+    """The stranded shape: Wikidata's maker is a model-less holding company
+    while vPIC filed the models under the carmaker - Mercedes-Benz Group
+    holding the C-Class series entity, Mercedes-Benz holding the models."""
+    mb = _matched_make(db, wikidata_source, vpic_source, "Q36008", "Mercedes-Benz", 449)
+    _land_model(db, vpic_source, 7, "C-Class", 449, "MERCEDES-BENZ")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_wd(db, wikidata_source, "Q36009", label="Mercedes-Benz Group")
+    run_companies_pass(db, wikidata)
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1000",
+        "Mercedes-Benz C-Class",
+        classes=["Q59773381"],
+        makers=["Q36009"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1001",
+        "Mercedes-Benz C300",
+        makers=["Q36009"],
+        series_of=["Q1000"],
+    )
+    return mb
+
+
+def test_stranded_line_files_under_the_carmaker(db, wikidata_source, vpic_source):  # noqa: F811
+    """A series whose maker holds zero models files under the model-holding
+    company its own name wears: C-Class lands under Mercedes-Benz, prefix-
+    stripped, not under Mercedes-Benz Group - and the re-run re-derives it
+    exactly there."""
+    mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.lines_created == 1 and stats.flags_opened == 0
+    line = db.scalars(select(ModelLine)).one()
+    assert (line.company_id, line.slug, line.name) == (mb.id, "c-class", "C-Class")
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.lines_created == 0 and stats.lines_matched == 1
+    assert db.scalars(select(ModelLine)).one().company_id == mb.id
+
+
+def test_held_line_stays_under_its_maker(db, wikidata_source, vpic_source):  # noqa: F811
+    """A WIKIDATA_LINE_HOLDS entry pins the row where it sits: the pass files
+    it under the maker exactly as before the destination rule, unstripped and
+    unflagged, until the hold's owner resolves it."""
+    _stranded_line_fixture(db, wikidata_source, vpic_source)
+    policy.WIKIDATA_LINE_HOLDS[("mercedes-benz-group", "Mercedes-Benz C-Class")] = (
+        "generation-grain"
+    )
+    try:
+        stats = run_wikidata_models_pass(db)
+    finally:
+        del policy.WIKIDATA_LINE_HOLDS[("mercedes-benz-group", "Mercedes-Benz C-Class")]
+
+    assert stats.lines_created == 1 and stats.flags_opened == 0
+    line = db.scalars(select(ModelLine)).one()
+    group = db.scalars(select(Company).where(Company.slug == "mercedes-benz-group")).one()
+    assert (line.company_id, line.slug, line.name) == (
+        group.id,
+        "mercedes-benz-c-class",
+        "Mercedes-Benz C-Class",
+    )
+
+
+def test_line_brand_namesake_flags_and_stays(db, wikidata_source, vpic_source):  # noqa: F811
+    """Two companies named Mercury: the vote never picks between namesakes.
+    The row keeps filing under its model-less maker - staying put is not a
+    guess - and the open question rides a match_review flag, asked once."""
+    _land_wd(db, wikidata_source, "Q2000", label="Ford Motor Company")
+    _land_wd(db, wikidata_source, "Q2001", label="Mercury")
+    _land_wd(db, wikidata_source, "Q2002", label="Mercury")
+    run_companies_pass(db, wikidata)
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1100",
+        "Mercury Marquis",
+        classes=["Q59773381"],
+        makers=["Q2000"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1101",
+        "Mercury Marquis Brougham",
+        makers=["Q2000"],
+        series_of=["Q1100"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.lines_created == 1 and stats.flags_opened == 1
+    line = db.scalars(select(ModelLine)).one()
+    fomoco = db.scalars(select(Company).where(Company.name == "Ford Motor Company")).one()
+    assert (line.company_id, line.name) == (fomoco.id, "Mercury Marquis")
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).one()
+    assert flag.detail["reason"] == "line_brand_ambiguous"
+    assert [c["company"] for c in flag.detail["candidates"]] == ["Mercury", "Mercury"]
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.lines_matched == 1 and stats.flags_opened == 0
+
+
+def test_line_brand_model_less_destination_flags(db, wikidata_source, vpic_source):  # noqa: F811
+    """The name's brand exists but holds no models: relocating there would
+    re-strand the row, so it stays under its maker with the question open."""
+    _land_wd(db, wikidata_source, "Q3000", label="Auto Union")
+    _land_wd(db, wikidata_source, "Q3001", label="DKW")
+    run_companies_pass(db, wikidata)
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1200",
+        "DKW Meisterklasse",
+        classes=["Q59773381"],
+        makers=["Q3000"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1201",
+        "DKW F89",
+        makers=["Q3000"],
+        series_of=["Q1200"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.lines_created == 1 and stats.flags_opened == 1
+    line = db.scalars(select(ModelLine)).one()
+    auto_union = db.scalars(select(Company).where(Company.name == "Auto Union")).one()
+    assert line.company_id == auto_union.id
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).one()
+    assert flag.detail["reason"] == "line_brand_model_less"
+
+
+def test_vote_flip_awaits_relocation_never_duplicates(db, wikidata_source, vpic_source):  # noqa: F811
+    """A flagged vote that later turns clean must not mint a duplicate at the
+    destination: derivation never abandons an existing maker-side row. The
+    open flag flips to line_awaits_relocation and the row stays put until the
+    relocation script's reviewed run."""
+    _land_wd(db, wikidata_source, "Q3000", label="Auto Union")
+    _land_wd(db, wikidata_source, "Q3001", label="DKW")
+    run_companies_pass(db, wikidata)
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1200",
+        "DKW Meisterklasse",
+        classes=["Q59773381"],
+        makers=["Q3000"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1201",
+        "DKW F89",
+        makers=["Q3000"],
+        series_of=["Q1200"],
+    )
+    stats = run_wikidata_models_pass(db)
+    assert stats.lines_created == 1 and stats.flags_opened == 1
+
+    dkw = db.scalars(select(Company).where(Company.name == "DKW")).one()
+    db.add(Model(company_id=dkw.id, slug="f89", name="F89"))
+    db.commit()
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.lines_created == 0 and stats.flags_dismissed == 0
+    line = db.scalars(select(ModelLine)).one()
+    auto_union = db.scalars(select(Company).where(Company.name == "Auto Union")).one()
+    assert line.company_id == auto_union.id
+    flag = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).one()
+    assert flag.status == "open"
+    assert flag.detail["reason"] == "line_awaits_relocation"
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.lines_created == 0 and stats.flags_opened == 0
+
+
+def test_line_wearing_its_model_less_maker_stays(db, wikidata_source, vpic_source):  # noqa: F811
+    """The maker-in-wearers arm: a line whose name states its own model-less
+    maker stays with it - TVR's lines are TVR's before any US filing."""
+    _land_wd(db, wikidata_source, "Q4000", label="TVR")
+    run_companies_pass(db, wikidata)
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1400",
+        "TVR Tuscan",
+        classes=["Q59773381"],
+        makers=["Q4000"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1401",
+        "TVR Tuscan Speed Six",
+        makers=["Q4000"],
+        series_of=["Q1400"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.lines_created == 1 and stats.flags_opened == 0
+    line = db.scalars(select(ModelLine)).one()
+    tvr = db.scalars(select(Company).where(Company.name == "TVR")).one()
+    assert (line.company_id, line.slug, line.name) == (tvr.id, "tuscan", "Tuscan")
+
+
+def test_model_holding_maker_keeps_foreign_badged_line(db, wikidata_source, vpic_source):  # noqa: F811
+    """A maker that holds models keeps its foreign-badged lines: Lexus GS
+    under Toyota is the maker's own assertion, and namesake companies would
+    poison any vote there. No move, no flag."""
+    toyota = _matched_make(db, wikidata_source, vpic_source, "Q53268", "Toyota", 448)
+    _land_model(db, vpic_source, 1, "4Runner", 448, "TOYOTA")
+    lexus = _matched_make(db, wikidata_source, vpic_source, "Q35919", "Lexus", 453)
+    _land_model(db, vpic_source, 2, "GS", 453, "LEXUS")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1300",
+        "Lexus GS",
+        classes=["Q59773381"],
+        makers=["Q53268"],
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q1301",
+        "Lexus GS 300",
+        makers=["Q53268"],
+        series_of=["Q1300"],
+    )
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.flags_opened == 0
+    line = db.scalars(select(ModelLine)).one()
+    assert (line.company_id, line.name) == (toyota.id, "Lexus GS")
+    assert lexus.id != toyota.id
 
 
 # --- waits and flags (rungs 2 and 6) -----------------------------------------

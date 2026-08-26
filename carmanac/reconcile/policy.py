@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "20"
+RECONCILER_VERSION = "21"
 
 # --- identity --------------------------------------------------------------
 
@@ -392,6 +392,50 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     # three same-time market duplicates (Kamiq China, Rapid China/India), the
     # duplicate-suspect second Arkana entry, and the plain "Citroen C5" entry
     # whose grain cannot be told.
+}
+
+# Line rows held in place, keyed (maker company slug, line name as the pass
+# derives it under that maker). The line phase files a held row under its
+# maker exactly as before the destination rule and the relocation script
+# leaves it alone, so neither settles a question that is not theirs:
+#
+#   "generation-grain" - Wikidata files a per-generation entity as a series
+#     (Corvette C7, Passat B6). Relocating it would leave a generation
+#     sitting in the lines table looking settled; it resolves in the
+#     generations table instead - merged into a generation that already
+#     exists under the same brand, or turned into one.
+#   "scope-unruled"    - category pages and the van nameplates ruled held
+#     2026-08-25 ("full-size Ford", the Transporter family). Cars first: no
+#     scope ruling covers them yet, so they hold as-is rather than being
+#     relocated, dropped, or decided silently.
+#   "awaits-review"    - the destination vote is clean but the maker was
+#     unfamiliar at ruling time; moves on an explicit go-ahead.
+WIKIDATA_LINE_HOLDS: dict[tuple[str, str], str] = {
+    # Generation-grain, awaiting the generations-table resolution:
+    ("daimler-benz-ag", "Mercedes-Benz 190 Cosworth"): "generation-grain",
+    ("daimler-benz-ag", "Mercedes-Benz W201"): "generation-grain",
+    ("ford-motor-company", "Ford Ranger T6"): "generation-grain",
+    ("general-motors", "Chevrolet Caprice 9C1"): "generation-grain",
+    ("general-motors", "Chevrolet Corvette C7"): "generation-grain",
+    ("mercedes-benz-group", "Mercedes-Benz C218"): "generation-grain",
+    ("mercedes-benz-group", "Mercedes-Benz W212"): "generation-grain",
+    ("volkswagen-group", "Volkswagen Passat B6"): "generation-grain",
+    ("volkswagen-group", "Volkswagen Passat NMS"): "generation-grain",
+    ("volkswagen-group", "Volkswagen Polo Mk1"): "generation-grain",
+    ("volkswagen-group", "Volkswagen Polo Mk2"): "generation-grain",
+    ("volkswagen-group", "Volkswagen Polo Mk3"): "generation-grain",
+    ("stellantis-north-america", "Jeep XJ"): "generation-grain",  # the Cherokee's chassis code
+    # Clean votes under makers unfamiliar at the 2026-08-25 ruling:
+    ("groupe-psa", "Citroën DS3"): "awaits-review",
+    ("sevel", "Citroën Jumper"): "awaits-review",
+    # Vans and category pages, awaiting a cars-first scope ruling:
+    ("daimler-benz-ag", "Mercedes-Benz L series vans"): "scope-unruled",
+    ("ford-motor-company", "full-size Ford"): "scope-unruled",
+    ("mercedes-benz-group", "Mercedes-Benz 300"): "scope-unruled",
+    ("mercedes-benz-group", "Mercedes-Benz Citan"): "scope-unruled",
+    ("volkswagen-group", "Volkswagen Caddy"): "scope-unruled",
+    ("volkswagen-group", "Volkswagen LT"): "scope-unruled",
+    ("volkswagen-group", "Volkswagen Transporter"): "scope-unruled",
 }
 
 # Words that hold an entity out of the mint, matched on word boundaries over
