@@ -185,6 +185,7 @@ class WikidataModelsStats:
     models_refreshed: int = 0
     models_matched: int = 0
     generations_created: int = 0
+    generations_adopted: int = 0
     generations_refreshed: int = 0
     generation_links_asserted: int = 0
     generation_links_adopted: int = 0
@@ -210,6 +211,7 @@ class WikidataModelsStats:
             f"matched={self.models_matched} | lines: created={self.lines_created} "
             f"matched={self.lines_matched} memberships={self.memberships_inserted} | "
             f"generations: created={self.generations_created} "
+            f"adopted={self.generations_adopted} "
             f"refreshed={self.generations_refreshed} "
             f"links={self.generation_links_asserted} "
             f"(adopted={self.generation_links_adopted}) "
@@ -463,6 +465,23 @@ class _WikidataModelsPass:
                 self.live_generation_links.add((generation_id, model_id))
             elif source_id is None:
                 self.anonymous_links[(generation_id, model_id)] = link_id
+
+        # Ruled generation grain, resolved to rows once: qid -> (company_id,
+        # model_id | None, display name). An anchor naming a company or model
+        # not landed stays unresolved and flags in the structure phase.
+        company_by_slug = {c.slug: cid for cid, c in self.companies.items() if c.slug}
+        self.generation_grain: dict[str, tuple[int, int | None, str]] = {}
+        for qid, (anchor, name) in policy.WIKIDATA_GENERATION_GRAIN.items():
+            company_slug, _, model_slug = anchor.partition("/")
+            company_id = company_by_slug.get(company_slug)
+            if company_id is None:
+                continue
+            model_id = None
+            if model_slug:
+                model_id = self.model_by_company_slug.get((company_id, model_slug))
+                if model_id is None:
+                    continue
+            self.generation_grain[qid] = (company_id, model_id, name)
 
     def _load_wikipedia_precedence(self) -> None:
         """Generation fields the infobox pass asserts live (ADR 0017 §2):
@@ -859,6 +878,11 @@ class _WikidataModelsPass:
             if qid in policy.WIKIDATA_DUPLICATE_NAMEPLATES:
                 continue
 
+            # Same rule one registry over: a grain-ruled entity is a
+            # generation, and rung 3 must not claim it as a model.
+            if qid in policy.WIKIDATA_GENERATION_GRAIN:
+                continue
+
             # Rung 3: exact-normalized name/alias match, never fuzzy. A unique
             # hit is only a CLAIM: generation entities carry the bare nameplate
             # label, so one model can be claimed by several entities at once.
@@ -1066,6 +1090,7 @@ class _WikidataModelsPass:
             and not self.subjects[qid].decided
             and qid not in self.model_by_qid
             and qid not in self.generation_by_qid
+            and qid not in policy.WIKIDATA_GENERATION_GRAIN
         ]
         model_holding = set(self.models_by_name)
         for qid in line_qids:
@@ -1213,13 +1238,19 @@ class _WikidataModelsPass:
         self.stats.generation_links_asserted += 1
 
     def _refresh_generation(self, subject: _Subject) -> None:
-        generation = self.session.get(Generation, self.generation_by_qid[subject.entity.qid])
-        display = (
-            self._strip(subject.entity.label, generation.company_id)
-            if subject.entity.label
-            and subject.entity.qid not in policy.WIKIDATA_DUPLICATE_NAMEPLATES
-            else generation.name
-        )
+        qid = subject.entity.qid
+        generation = self.session.get(Generation, self.generation_by_qid[qid])
+        grain = policy.WIKIDATA_GENERATION_GRAIN.get(qid)
+        if grain is not None:
+            # The ruled display, not the label: "Chevrolet Corvette C7"
+            # stripped would rename the row the ruling called "C7". Read
+            # from the registry itself, not the resolved anchors - an
+            # anchor that stops resolving must not rename the row either.
+            display = grain[1]
+        elif subject.entity.label and qid not in policy.WIKIDATA_DUPLICATE_NAMEPLATES:
+            display = self._strip(subject.entity.label, generation.company_id)
+        else:
+            display = generation.name
         self._generation_facts(generation, subject, display)
         for target in subject.entity.series_of:
             model_id = self.model_by_qid.get(target)
@@ -1304,6 +1335,55 @@ class _WikidataModelsPass:
             {"model": self._slug_pair(model_id), "generation": slug},
         )
 
+    def _grain_generation(self, subject: _Subject) -> None:
+        """A registry-ruled generation Wikidata files as a series. Mint it
+        under the ruled anchor - or adopt the generation already standing at
+        its slug - and attach the external id, which is what keeps the line
+        track from ever deriving this entity again."""
+        entity = subject.entity
+        resolved = self.generation_grain.get(entity.qid)
+        if resolved is None:
+            self._flag(
+                subject,
+                "generation_grain_unresolved",
+                {
+                    "label": entity.label,
+                    "anchor": policy.WIKIDATA_GENERATION_GRAIN[entity.qid][0],
+                },
+            )
+            self._decide(subject, "5", "generation_grain_registry", "flagged_unresolved_anchor")
+            return
+        company_id, model_id, display = resolved
+        slug = slugify(display)
+        occupant = self.generation_by_company_slug.get((company_id, slug))
+        if occupant is not None:
+            generation = self.session.get(Generation, occupant)
+            self.stats.generations_adopted += 1
+        else:
+            generation = Generation(company_id=company_id, slug=slug, name=display)
+            self.session.add(generation)
+            self.session.flush()
+            self.generation_by_company_slug[(company_id, slug)] = generation.id
+            self.stats.generations_created += 1
+        self.session.add(
+            ExternalId(
+                generation_id=generation.id,
+                source_id=self.source.id,
+                external_id=entity.qid,
+            )
+        )
+        self.session.flush()
+        self.generation_by_qid[entity.qid] = generation.id
+        if model_id is not None:
+            self._assert_generation_link(generation.id, model_id, subject)
+        self._generation_facts(generation, subject, display)
+        outcome = "generation_adopted" if occupant is not None else "generation_created"
+        detail = {"generation": f"{self.companies[company_id].slug}/{slug}"}
+        if model_id is not None:
+            detail["model"] = self._slug_pair(model_id)
+        self._dismiss_flags(entity.qid, f"{outcome}:{detail['generation']}")
+        self._decide(subject, "5", "generation_grain_registry", outcome, detail)
+
     def _structure_phase(self) -> None:
         for qid in sorted(self.subjects, key=lambda q: int(q[1:])):
             subject = self.subjects[qid]
@@ -1324,6 +1404,9 @@ class _WikidataModelsPass:
                 self._refresh_generation(subject)
                 continue
             if subject.decided:
+                continue
+            if qid in policy.WIKIDATA_GENERATION_GRAIN:
+                self._grain_generation(subject)
                 continue
             entity = subject.entity
 

@@ -1459,3 +1459,190 @@ def test_unruled_claimant_of_a_ruled_base_flags_never_attaches(
     assert db.scalar(select(ExternalId).where(ExternalId.external_id == "Q1200")) is None, (
         "the bare model keeps no anchor until a human rules"
     )
+
+
+# --- generation grain: series entities ruled generations (ADR 0018 §1) -------
+
+
+def test_generation_grain_entity_mints_not_a_line(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """A registry-ruled entity never enters the line track: it mints a
+    generation under the ruled anchor with the ruled display name, linked to
+    the ruled model, carrying the external id - and the re-run refreshes it
+    without renaming it back to its label."""
+    mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
+    monkeypatch.setitem(
+        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
+    )
+
+    first = run_wikidata_models_pass(db)
+    assert (first.lines_created, first.generations_created) == (0, 1)
+    assert first.flags_opened == 0
+    assert db.scalars(select(ModelLine)).all() == []
+    generation = db.scalars(select(Generation)).one()
+    assert (generation.company_id, generation.slug, generation.name) == (mb.id, "w205", "W205")
+    anchor = db.scalars(select(ExternalId).where(ExternalId.external_id == "Q1000")).one()
+    assert anchor.generation_id == generation.id
+    model = db.scalars(select(Model).where(Model.slug == "c-class")).one()
+    link = db.scalars(
+        select(GenerationModelLink).where(GenerationModelLink.superseded_by.is_(None))
+    ).one()
+    assert (link.generation_id, link.model_id) == (generation.id, model.id)
+
+    second = run_wikidata_models_pass(db)
+    assert (second.generations_created, second.generations_refreshed) == (0, 1)
+    assert second.lines_created == 0
+    assert db.scalars(select(Generation)).one().name == "W205"
+
+
+def test_generation_grain_adopts_the_standing_row(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """A generation already standing at the ruled slug is the ruling's
+    target, not a collision: the entity's external id lands on it and no
+    second row appears."""
+    mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
+    standing = Generation(company_id=mb.id, slug="w205", name="W205")
+    db.add(standing)
+    db.commit()
+    monkeypatch.setitem(
+        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
+    )
+
+    stats = run_wikidata_models_pass(db)
+    assert (stats.generations_created, stats.generations_adopted) == (0, 1)
+    assert stats.flags_opened == 0 and stats.lines_created == 0
+    generation = db.scalars(select(Generation)).one()
+    anchor = db.scalars(select(ExternalId).where(ExternalId.external_id == "Q1000")).one()
+    assert anchor.generation_id == generation.id == standing.id
+    model = db.scalars(select(Model).where(Model.slug == "c-class")).one()
+    assert {
+        (link.generation_id, link.model_id)
+        for link in db.scalars(
+            select(GenerationModelLink).where(GenerationModelLink.superseded_by.is_(None))
+        )
+    } == {(generation.id, model.id)}
+
+
+def test_generation_grain_links_when_the_nameplate_lands(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """A company-only anchor mints link-less; when the entity's own series
+    target later matches a model, the refresh asserts the link from that
+    evidence - the Polo shape, whose nameplate is not landed yet."""
+    _stranded_line_fixture(db, wikidata_source, vpic_source)
+    monkeypatch.setitem(policy.WIKIDATA_GENERATION_GRAIN, "Q1001", ("mercedes-benz", "W205"))
+
+    first = run_wikidata_models_pass(db)
+    assert first.generations_created == 1
+    generation = db.scalars(select(Generation)).one()
+    assert (
+        db.scalars(
+            select(GenerationModelLink).where(
+                GenerationModelLink.generation_id == generation.id,
+                GenerationModelLink.superseded_by.is_(None),
+            )
+        ).all()
+        == []
+    )
+
+    model = db.scalars(select(Model).where(Model.slug == "c-class")).one()
+    db.add(ExternalId(model_id=model.id, source_id=wikidata_source.id, external_id="Q1000"))
+    db.commit()
+    second = run_wikidata_models_pass(db)
+    assert second.generations_refreshed >= 1
+    link = db.scalars(
+        select(GenerationModelLink).where(
+            GenerationModelLink.generation_id == generation.id,
+            GenerationModelLink.superseded_by.is_(None),
+        )
+    ).one()
+    assert link.model_id == model.id
+
+
+def test_retired_generation_grain_line_stays_retired(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """The defect-2 regression: a line row created before the ruling, then
+    deleted by the retirement script, never comes back - the registry routes
+    the entity to the generations table on every later run."""
+    mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
+    first = run_wikidata_models_pass(db)
+    assert first.lines_created == 1
+    db.delete(db.scalars(select(ModelLine)).one())
+    db.commit()
+    monkeypatch.setitem(
+        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
+    )
+
+    second = run_wikidata_models_pass(db)
+    assert (second.lines_created, second.generations_created) == (0, 1)
+    assert db.scalars(select(ModelLine)).all() == []
+    third = run_wikidata_models_pass(db)
+    assert (third.lines_created, third.generations_created, third.generations_refreshed) == (
+        0,
+        0,
+        1,
+    )
+    assert db.scalars(select(ModelLine)).all() == []
+    assert db.scalars(select(Generation)).one().company_id == mb.id
+
+
+def test_generation_grain_unresolved_anchor_flags(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """An anchor naming a model not landed flags instead of guessing - and
+    the entity derives nothing on either track until the anchor resolves."""
+    _stranded_line_fixture(db, wikidata_source, vpic_source)
+    monkeypatch.setitem(
+        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/no-such-model", "W205")
+    )
+
+    first = run_wikidata_models_pass(db)
+    second = run_wikidata_models_pass(db)
+    assert (first.flags_opened, second.flags_opened) == (1, 0)
+    assert (first.lines_created, first.generations_created) == (0, 0)
+    assert db.scalars(select(ModelLine)).all() == []
+    assert db.scalars(select(Generation)).all() == []
+    assert _decision(db, "Q1000").outcome == "flagged_unresolved_anchor"
+
+
+def test_generation_grain_display_survives_a_broken_anchor(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+    monkeypatch,
+):
+    """The ruled display outlives the anchor's resolution: if the anchor
+    model later disappears, the refresh keeps the ruled name rather than
+    renaming the row back to its stripped label."""
+    mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
+    monkeypatch.setitem(
+        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
+    )
+    first = run_wikidata_models_pass(db)
+    assert first.generations_created == 1
+
+    monkeypatch.setitem(
+        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/no-such-model", "W205")
+    )
+    second = run_wikidata_models_pass(db)
+    assert second.generations_refreshed >= 1
+    generation = db.scalars(select(Generation)).one()
+    assert (generation.company_id, generation.name) == (mb.id, "W205")

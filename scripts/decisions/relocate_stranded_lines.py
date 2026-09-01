@@ -62,7 +62,15 @@ def main() -> None:
         held, flagged, blocked, moved_keys = [], [], [], set()
         for qid in sorted(pass_.p179_referenced, key=lambda q: int(q[1:])):
             subject = pass_.subjects.get(qid)
-            if subject is None or qid in pass_.model_by_qid or qid in pass_.generation_by_qid:
+            if (
+                subject is None
+                or qid in pass_.model_by_qid
+                or qid in pass_.generation_by_qid
+                # Grain-ruled entities retire, never relocate - moving one
+                # would strand the row at a key the retire script must then
+                # re-derive.
+                or qid in policy.WIKIDATA_GENERATION_GRAIN
+            ):
                 continue
             entity = subject.entity
             if entity.label is None:

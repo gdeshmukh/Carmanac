@@ -2,8 +2,8 @@
 
 - Status: Accepted (2026-07-30, PR #22 — including the §1 C-Class
   carve-out, confirmed after the VIN-decode probe, and the §3 amendment
-  deleting the fabricated demo raw records); amended 2026-08-25 (§2, where
-  a line files)
+  deleting the fabricated demo raw records); amended 2026-08-25 (§2: where
+  a line files, and which series-filed entities are not lines at all)
 - Date: 2026-07-30
 - Depends on: ADR 0007 (reconciler contract), ADR 0010 (the models pass)
 
@@ -88,14 +88,21 @@ censused over every line row before adoption:
   only a model-less one. The row keeps filing where it sits while the
   question stays open.
 
-`WIKIDATA_LINE_HOLDS` pins named rows out of the rule entirely: series
-entities that are really generation-grain (Corvette C7, Passat B6 —
-they resolve in the generations table, not by relocation) and pages with
-no scope ruling yet (several van nameplates, category pages like
-"full-size Ford"). A held row files under its maker exactly as before
-the rule. `scripts/decisions/relocate_stranded_lines.py` moved the
+`WIKIDATA_LINE_HOLDS` pins named rows out of the rule entirely: pages
+with no scope ruling yet (several van nameplates, category pages like
+"full-size Ford") and clean votes under makers unfamiliar at ruling
+time. A held row files under its maker exactly as before the rule.
+`scripts/decisions/relocate_stranded_lines.py` moved the
 already-stranded rows with the same vote, so the pass re-derives every
 row exactly where it sits.
+
+Some series-filed entities are not lines at all: Wikidata carries P179
+to a per-generation entity (Corvette C7, Passat B6), which put it on the
+line track. Those are ruled per entity in `WIKIDATA_GENERATION_GRAIN`
+and resolve in the generations table — adopted or minted there, never
+relocated — with the line rows retired. The machinery is ADR 0018's
+(the inverse of its `NOT_A_GENERATION` verdict; see its 2026-08-25
+amendment).
 
 ### 3. The demo seed retires, artifacts included
 
