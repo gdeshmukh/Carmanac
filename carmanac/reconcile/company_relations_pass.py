@@ -41,6 +41,7 @@ class CompanyRelationsStats:
     eras_retired: int = 0
     waits_parent_not_held: int = 0
     self_edges: int = 0
+    implausible_eras: int = 0
     unattached: int = 0
 
     def summary(self) -> str:
@@ -48,7 +49,8 @@ class CompanyRelationsStats:
             f"records={self.records} eras={self.eras_asserted} "
             f"(inserted={self.eras_inserted}, retired={self.eras_retired}) "
             f"waits_parent_not_held={self.waits_parent_not_held} "
-            f"self_edges={self.self_edges} unattached={self.unattached}"
+            f"self_edges={self.self_edges} implausible_eras={self.implausible_eras} "
+            f"unattached={self.unattached}"
         )
 
 
@@ -100,6 +102,7 @@ def run_company_relations_pass(session: Session) -> CompanyRelationsStats:
             continue
         asserted: list[Era] = []
         not_held: list[str] = []
+        implausible: list[str] = []
         self_edges = 0
         for edge in ("parents", "subsidiaries"):
             for claim in record.payload.get(edge, []):
@@ -114,11 +117,15 @@ def run_company_relations_pass(session: Session) -> CompanyRelationsStats:
                     continue
                 child, parent = (own, other) if edge == "parents" else (other, own)
                 era = _era(child, parent, claim)
+                if era.start_year and era.end_year and era.start_year > era.end_year:
+                    implausible.append(claim.get("label") or claim["qid"])
+                    continue
                 wanted.setdefault(era, record)
                 asserted.append(era)
         stats.waits_parent_not_held += len(not_held)
         stats.self_edges += self_edges
-        if asserted or not_held or self_edges:
+        stats.implausible_eras += len(implausible)
+        if asserted or not_held or self_edges or implausible:
             decisions.record(
                 record,
                 "relations_asserted" if asserted else "waits_parent_not_held",
@@ -127,6 +134,7 @@ def run_company_relations_pass(session: Session) -> CompanyRelationsStats:
                     "asserted": len(asserted),
                     "not_held": sorted(set(not_held)),
                     "self_edges": self_edges,
+                    "implausible": sorted(set(implausible)),
                 },
             )
         else:

@@ -264,11 +264,11 @@ class CompanyRelationship(Base, ProvenanceMixin):
     __table_args__ = (
         *provenance_table_args(),
         CheckConstraint(
-            "company_id <> parent_company_id", name="ck_company_relationships_not_self"
+            "company_id <> parent_company_id", name="not_self"
         ),
         CheckConstraint(
             "start_year IS NULL OR end_year IS NULL OR start_year <= end_year",
-            name="ck_company_relationships_era_order",
+            name="era_order",
         ),
         # One LIVE assertion per (era, source). NULLS NOT DISTINCT so an
         # undated claim collides with itself instead of never colliding.

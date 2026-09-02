@@ -214,3 +214,14 @@ def test_a_withdrawn_era_is_retired_not_deleted(db, wikidata_source, graph):
     assert len(rows) == 2
     retired = next(r for r in rows if r.superseded_by is not None)
     assert retired.end_year is None and retired.superseded_by == retired.id
+
+
+def test_an_era_ending_before_it_starts_is_never_asserted(db, wikidata_source, graph):
+    _land(
+        db,
+        [_binding("Q1", "parents", "Q2", start="1896-01-01T00:00:00Z", end="1891-01-01T00:00:00Z")],
+    )
+    stats = run_company_relations_pass(db)
+    assert stats.implausible_eras == 1 and stats.eras_asserted == 0
+    decision = db.scalar(select(MatchDecision).where(MatchDecision.external_id == "Q1"))
+    assert decision.detail["implausible"] == ["Q2"]

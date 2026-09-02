@@ -79,7 +79,7 @@ def _payloads(qids: list[str], bindings: list[dict[str, Any]]) -> dict[str, dict
         if qid not in claims or edge not in claims[qid] or not target.startswith("http"):
             continue
         target_qid = _qid(target)
-        rank = _qid(binding["rank"]["value"]).removesuffix("Rank").lower()
+        rank = binding["rank"]["value"].rsplit("#", 1)[-1].removesuffix("Rank").lower()
         claim = claims[qid][edge].setdefault(
             (target_qid, rank),
             {

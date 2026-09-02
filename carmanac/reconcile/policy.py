@@ -116,6 +116,33 @@ IDENTITY_MERGES: dict[str, str] = {
     # materialized here, so the normal path applies: the member row (sparse)
     # collapses into the canonical (substantive).
     "Q63197612": "Q105334279",  # Techrules (marque stub) -> Techrules (manufacturer)
+    # --- ADR 0022 §4: the brand artifact names the company it belongs to.
+    # The artifact row holds the catalogue (models, make match, slug) and
+    # survives; the company's id attaches to it and the company record
+    # asserts the facts. The badge names the page (§5).
+    "Q20827633": "Q44294",  # Ford (brand artifact) -> Ford Motor Company
+    "Q125054811": "Q55931",  # Hyundai (brand artifact) -> Hyundai Motor Company
+    "Q125552548": "Q569235",  # Saturn (brand artifact) -> Saturn Corporation
+    "Q125097536": "Q35935",  # Lotus (brand artifact) -> Lotus Cars
+    "Q131552505": "Q1351854",  # McLaren (brand artifact) -> McLaren Automotive
+    "Q63049904": "Q27074",  # Aston Martin (brand artifact) -> Aston Martin Lagonda
+    "Q125553067": "Q181642",  # Suzuki (brand artifact) -> Suzuki Motor Corporation
+    "Q21170490": "Q30055",  # Jaguar (brand artifact) -> Jaguar Cars
+    "Q125141709": "Q234803",  # Rolls-Royce (brand artifact) -> Rolls-Royce Motor Cars
+    "Q124966356": "Q48957",  # Saab (brand artifact) -> Saab Automobile
+    "Q125552500": "Q7338847",  # Rivian (brand artifact) -> Rivian Automotive
+    "Q132560748": "Q749239",  # Pagani (brand artifact) -> Pagani Automobili
+    "Q125130248": "Q1241608",  # Delorean (brand artifact) -> DeLorean Motor Company
+    # Mitsubishi's artifact is "owned by" the keiretsu, which is not a company
+    # we hold; Mitsubishi Motors is the maker Wikidata states on the marque's
+    # models, and its name is led by the badge.
+    "Q63118791": "Q36033",  # Mitsubishi (brand artifact) -> Mitsubishi Motors
+    # Model-less artifacts beside the company that holds the cars. The Volvo
+    # trademark entity is co-owned with Volvo Group (trucks); it attaches as a
+    # member only, so nothing from the truck side reaches the car page.
+    "Q125552869": "Q1514963",  # SSC (brand artifact) -> SSC North America
+    "Q20827600": "Q215293",  # Volvo (trademark entity) -> Volvo Cars
+    "Q135700024": "Q29637",  # Škoda (brand artifact) -> Škoda Auto
 }
 
 # Classes that make a Wikidata entity a brand artifact (ADR 0022): an entity

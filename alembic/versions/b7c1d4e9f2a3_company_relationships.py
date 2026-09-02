@@ -43,11 +43,11 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("confidence_score BETWEEN 0 AND 1", name="confidence_score_range"),
         sa.CheckConstraint(
-            "company_id <> parent_company_id", name="ck_company_relationships_not_self"
+            "company_id <> parent_company_id", name="not_self"
         ),
         sa.CheckConstraint(
             "start_year IS NULL OR end_year IS NULL OR start_year <= end_year",
-            name="ck_company_relationships_era_order",
+            name="era_order",
         ),
         sa.ForeignKeyConstraint(["company_id"], ["companies.id"]),
         sa.ForeignKeyConstraint(["parent_company_id"], ["companies.id"]),
