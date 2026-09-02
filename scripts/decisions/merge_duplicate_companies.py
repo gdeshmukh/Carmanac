@@ -19,6 +19,12 @@ Per member with its own company row:
   the pair's company - attach the canonical QID to it and delete the
   member-written fact rows, so the canonical record rewrites name, summary
   and the rest on the next pass. Identity (id, slug) is preserved.
+- member holds the catalogue, canonical materialized but unreferenced (Ford:
+  the brand artifact carries 143 models and the make match while Ford Motor
+  Company holds nothing - ADR 0022 §4): keep the member's row, repoint the
+  canonical's external ids to it, delete the canonical's derived rows and
+  its company row. The canonical record asserts the facts on the next pass;
+  the member's identity, slug and models are untouched.
 
 Everything deleted is derived; raw records are untouched (ADR 0004). Re-run
 the companies pass (`python -m carmanac.reconcile.engine`) afterwards to let
@@ -93,7 +99,7 @@ def main() -> int:
             ).all()
         )
 
-        collapsed = adopted = 0
+        collapsed = adopted = absorbed = 0
         for member_qid, canonical_qid in sorted(policy.IDENTITY_MERGES.items()):
             member_company_id = qid_to_company.get(member_qid)
             if member_company_id is None:
@@ -121,11 +127,32 @@ def main() -> int:
                 adopted += 1
                 continue
 
+            canonical = session.get(Company, canonical_company_id)
             refs = _referenced(session, member_company_id)
             if refs:
-                print(f"{member_qid}: REFUSED, company '{member.slug}' referenced: {refs}")
+                canonical_refs = _referenced(session, canonical_company_id)
+                if canonical_refs:
+                    print(
+                        f"{member_qid}: REFUSED, both referenced: "
+                        f"'{member.slug}' {refs}, '{canonical.slug}' {canonical_refs}"
+                    )
+                    continue
+                print(
+                    f"{member_qid} -> {canonical_qid}: absorb '{canonical.slug}' into "
+                    f"'{member.slug}' (keeps the catalogue: {refs})"
+                )
+                if args.execute:
+                    _delete_derived(session, canonical_company_id)
+                    session.execute(
+                        update(ExternalId)
+                        .where(ExternalId.company_id == canonical_company_id)
+                        .values(company_id=member_company_id)
+                    )
+                    session.execute(delete(Company).where(Company.id == canonical_company_id))
+                    session.flush()
+                qid_to_company[canonical_qid] = member_company_id
+                absorbed += 1
                 continue
-            canonical = session.get(Company, canonical_company_id)
             print(
                 f"{member_qid} -> {canonical_qid}: collapse '{member.slug}' into '{canonical.slug}'"
             )
@@ -141,7 +168,7 @@ def main() -> int:
             qid_to_company[member_qid] = canonical_company_id
             collapsed += 1
 
-        print(f"collapsed={collapsed} adopted={adopted}")
+        print(f"collapsed={collapsed} adopted={adopted} absorbed={absorbed}")
         if not args.execute:
             print("dry run - pass --execute to apply")
             return 0

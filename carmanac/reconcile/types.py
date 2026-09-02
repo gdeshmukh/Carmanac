@@ -25,6 +25,10 @@ class Assertion:
     field_name: str
     observed_value: str
     value: object
+    # Set when the fact comes from a record other than the one being applied
+    # (a brand member naming its canonical, ADR 0022 §5); provenance points
+    # at the record that actually said it.
+    raw_record_id: int | None = None
 
 
 @dataclass(frozen=True)

@@ -32,8 +32,9 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import cached_property
 from types import ModuleType
 
 from sqlalchemy import func, select
@@ -417,7 +418,7 @@ class CompaniesPass:
                 field_name=assertion.field_name,
                 observed_value=assertion.observed_value,
                 source_id=self.source.id,
-                raw_record_id=record.id,
+                raw_record_id=assertion.raw_record_id or record.id,
                 scraped_at=record.last_seen_at,
             )
             if row is None:
@@ -529,6 +530,27 @@ class CompaniesPass:
 
     # --- the public entry points ---------------------------------------------
 
+    @cached_property
+    def badge_names(self) -> dict[str, tuple[str, int]]:
+        """Canonical QID -> (label, raw record id) of its brand-classed merge
+        member (ADR 0022 §5): a brand is named by its badge, so "Audi AG" is
+        named by the member "Audi", with provenance on the member's record.
+        Lowest member QID wins when a canonical has several."""
+        names: dict[str, tuple[str, int]] = {}
+        for record in current_records(self.session, self.source.id):
+            canonical = policy.IDENTITY_MERGES.get(record.external_id)
+            if canonical is None or canonical in names:
+                continue
+            mapped = self.mapper.map_record(record.payload)
+            if (
+                mapped is not None
+                and mapped.name
+                and mapped.classes
+                and mapped.classes <= policy.BRAND_ARTIFACT_CLASSES
+            ):
+                names[canonical] = (mapped.name, record.id)
+        return names
+
     def apply_facts(self, company: Company, mapped: MappedRecord, record: RawRecord) -> None:
         """Assert this record's facts onto `company`, then project the winners.
 
@@ -536,6 +558,18 @@ class CompaniesPass:
         invisible, and a projection nobody plausibility-checks is how AMG got a
         founding year of 1812.
         """
+        badge = self.badge_names.get(mapped.external_id)
+        if badge is not None:
+            label, record_id = badge
+            mapped = replace(
+                mapped,
+                assertions=tuple(
+                    Assertion("name", label, label, raw_record_id=record_id)
+                    if a.field_name == "name"
+                    else a
+                    for a in mapped.assertions
+                ),
+            )
         current = self._write_assertions(company, mapped, record)
         self._write_role(company, mapped, record)
         self._project(company, current)

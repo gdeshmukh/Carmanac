@@ -35,6 +35,10 @@ def main() -> int:
 
         for label, sql in (
             ("companies", "SELECT count(*) FROM companies"),
+            (
+                "company_relationships",
+                "SELECT count(*) FROM company_relationships WHERE superseded_by IS NULL",
+            ),
             ("models", "SELECT count(*) FROM models"),
             ("model_lines", "SELECT count(*) FROM model_lines"),
             ("model_line_members", "SELECT count(*) FROM model_line_members"),

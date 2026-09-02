@@ -118,6 +118,11 @@ IDENTITY_MERGES: dict[str, str] = {
     "Q63197612": "Q105334279",  # Techrules (marque stub) -> Techrules (manufacturer)
 }
 
+# Classes that make a Wikidata entity a brand artifact (ADR 0022): an entity
+# classed ONLY as these is the marque's name, not its company. Such a merge
+# member names the page (§5); the brand/company proposer reads the same set.
+BRAND_ARTIFACT_CLASSES: frozenset[str] = frozenset({"Q10429667", "Q431289", "Q167270"})
+
 # A curated merge is a human identity decision about BOTH sides: naming a
 # canonical declares it a company we hold, even where its own classes would
 # quarantine (Tesla, Inc. carries only corporate boilerplate). The engine

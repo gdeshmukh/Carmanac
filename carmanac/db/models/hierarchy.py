@@ -233,6 +233,60 @@ class ModelLineMember(Base, ProvenanceMixin):
     )
 
 
+class CompanyRelationship(Base, ProvenanceMixin):
+    """One source's assertion that `parent_company_id` was the parent of
+    `company_id` for a span of years (ADR 0022 §1).
+
+    A per-source assertion store in the `company_role_assignments` shape. An
+    open-ended live row is a current parent; "current parent" is therefore a
+    projection, never a column. `kind` is `parent_organization` only for now;
+    it exists so a second relationship kind is a value, not a migration.
+    """
+
+    __tablename__ = "company_relationships"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    parent_company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    start_year: Mapped[int | None] = mapped_column(SmallInteger)
+    end_year: Mapped[int | None] = mapped_column(SmallInteger)
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("company_relationships.id", name="fk_company_relationships_superseded_by"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        *provenance_table_args(),
+        CheckConstraint(
+            "company_id <> parent_company_id", name="ck_company_relationships_not_self"
+        ),
+        CheckConstraint(
+            "start_year IS NULL OR end_year IS NULL OR start_year <= end_year",
+            name="ck_company_relationships_era_order",
+        ),
+        # One LIVE assertion per (era, source). NULLS NOT DISTINCT so an
+        # undated claim collides with itself instead of never colliding.
+        Index(
+            "uq_company_relationships_live",
+            "company_id",
+            "parent_company_id",
+            "kind",
+            "start_year",
+            "end_year",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+
 class Generation(Base, TimestampMixin):
     """A generation - E46, G80, XV70. Company-anchored index entity, not a
     hierarchy level (ADR 0016): one E46 covers 325i/330i/M3, so a generation

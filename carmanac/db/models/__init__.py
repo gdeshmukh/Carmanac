@@ -16,6 +16,7 @@ from carmanac.db.models.derivations import VehicleDerivation
 from carmanac.db.models.hierarchy import (
     CataloguePeriod,
     Company,
+    CompanyRelationship,
     CompanyRoleAssignment,
     Configuration,
     Generation,
@@ -73,6 +74,7 @@ __all__ = [
     "BodyStyle",
     "CataloguePeriod",
     "Company",
+    "CompanyRelationship",
     "CompanyRole",
     "CompanyRoleAssignment",
     "Configuration",
