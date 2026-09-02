@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "20"
+RECONCILER_VERSION = "21"
 
 # --- identity --------------------------------------------------------------
 
@@ -394,6 +394,34 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     # whose grain cannot be told.
 }
 
+# Line rows held in place, keyed (maker company slug, line name as the pass
+# derives it under that maker). The line phase files a held row under its
+# maker exactly as before the destination rule and the relocation script
+# leaves it alone, so neither settles a question that is not theirs:
+#
+#   "scope-unruled"    - category pages and the van nameplates ruled held
+#     2026-08-25 ("full-size Ford", the Transporter family). Cars first: no
+#     scope ruling covers them yet, so they hold as-is rather than being
+#     relocated, dropped, or decided silently.
+#   "awaits-review"    - the destination vote is clean but the maker was
+#     unfamiliar at ruling time; moves on an explicit go-ahead.
+#
+# Entities ruled generation-grain do not hold here - they leave the lines
+# table entirely via WIKIDATA_GENERATION_GRAIN.
+WIKIDATA_LINE_HOLDS: dict[tuple[str, str], str] = {
+    # Clean votes under makers unfamiliar at the 2026-08-25 ruling:
+    ("groupe-psa", "Citroën DS3"): "awaits-review",
+    ("sevel", "Citroën Jumper"): "awaits-review",
+    # Vans and category pages, awaiting a cars-first scope ruling:
+    ("daimler-benz-ag", "Mercedes-Benz L series vans"): "scope-unruled",
+    ("ford-motor-company", "full-size Ford"): "scope-unruled",
+    ("mercedes-benz-group", "Mercedes-Benz 300"): "scope-unruled",
+    ("mercedes-benz-group", "Mercedes-Benz Citan"): "scope-unruled",
+    ("volkswagen-group", "Volkswagen Caddy"): "scope-unruled",
+    ("volkswagen-group", "Volkswagen LT"): "scope-unruled",
+    ("volkswagen-group", "Volkswagen Transporter"): "scope-unruled",
+}
+
 # Words that hold an entity out of the mint, matched on word boundaries over
 # the label and description together. Concept cars, prototypes and race-only
 # cars are an open scope question in the charter; until it is ruled they
@@ -492,6 +520,38 @@ NOT_A_GENERATION: dict[str, str] = {
     # Renault 5 Turbo stays an unruled homologation gray case.
     "Q2437169": "trim_lineage",  # Toyota Celica GT-Four
     "Q1626577": "powertrain_lineage",  # Honda Civic Hybrid
+}
+
+# The inverse verdict: Wikidata files these as series (other entities carry
+# P179 to them), which put them on the line track, but each is a single
+# generation ruled 2026-08-25. QID -> (anchor, display name). An anchor
+# "company-slug/model-slug" names the ruled parent model - the pass asserts
+# the generation-model link from it, the curated rung of the match ladder at
+# generation grain, because the entity's own P179 target is unmatched or
+# absent. A bare "company-slug" anchors the generation with no link: either
+# the model is not landed yet (the Polos - links attach mechanically when
+# the nameplate entity matches) or the links already exist on an adopted row
+# (the BMW pair). Display names follow the generations-wear-their-code
+# ruling; slug occupancy under the anchor company means adoption of that
+# generation, never a collision. This registry is what lets the retirement
+# script's line-row deletions stick: without it the next run would lawfully
+# re-derive each entity as a line.
+WIKIDATA_GENERATION_GRAIN: dict[str, tuple[str, str]] = {
+    "Q1135713": ("chevrolet/corvette", "C7"),
+    "Q3667297": ("chevrolet/caprice", "9C1"),  # the police-package filing
+    "Q5467907": ("ford/ranger", "T6"),
+    "Q656750": ("mercedes-benz/190", "W201"),
+    "Q56344918": ("mercedes-benz/190", "190 Cosworth"),  # code-less, keeps its nameplate
+    "Q1857128": ("mercedes-benz/cls-class", "C218"),
+    "Q1478248": ("mercedes-benz/e-class", "W212"),  # adopts the existing W212 row
+    "Q2007788": ("volkswagen/passat", "B6"),
+    "Q2506880": ("volkswagen/passat", "NMS"),
+    "Q2712614": ("volkswagen", "Polo Mk1"),
+    "Q460634": ("volkswagen", "Polo Mk2"),
+    "Q500900": ("volkswagen", "Polo Mk3"),
+    "Q84959477": ("jeep/cherokee", "XJ"),
+    "Q796446": ("bmw", "E28"),  # adopts the M5-born generation; wider era links are placement work
+    "Q1229005": ("bmw", "E39"),
 }
 
 # --- powertrain family articles (ADR 0020 amendment §2) ----------------------

@@ -178,3 +178,38 @@ skeleton work and any future admission decision read from disk instead of
 re-fetching. New `infobox:` records stop landing (the full article contains
 section 0); minted powertrain families' own pages land as `family:<key>`
 records for the ADR 0020 variant work.
+
+## Amendment (2026-08-25): the inverse verdict — series-filed generations
+
+`NOT_A_GENERATION` records "this generation row is another kind of thing";
+its inverse case surfaced on the model-lines cleanup: Wikidata carries P179
+*to* a per-generation entity (Corvette C7, Passat B6, the Cherokee's XJ),
+which put fifteen of them on the line track, minted as `model_lines` rows.
+Each is ruled a single generation.
+
+- `WIKIDATA_GENERATION_GRAIN: dict[str, tuple[str, str]]` in
+  `carmanac/reconcile/policy.py`: QID → (anchor, display name), grown
+  exclusively by ruling. An anchor `company-slug/model-slug` names the
+  ruled parent model — the pass asserts the `generation_model_links` row
+  from it, the curated rung of the match ladder at generation grain,
+  because the entity's own P179 target is unmatched or absent. A bare
+  `company-slug` anchors the generation with no link: either the model is
+  not landed yet (the Polos — the link asserts mechanically the day the
+  nameplate entity matches a model) or the links already exist on an
+  adopted row (the BMW 5 Series pair). Display names follow the
+  generations-wear-their-code ruling.
+- **The wd-models pass**: the line track never sees a registered QID; the
+  structure phase mints the generation under the ruled anchor — or
+  *adopts* the generation already standing at its slug, never a collision
+  — and attaches the external id (decision method
+  `generation_grain_registry`). The refresh keeps the ruled display, so no
+  later run renames "C7" back to its stripped label. An anchor naming a
+  company or model not landed flags (`generation_grain_unresolved`)
+  instead of guessing.
+- The §1 doctrine holds unchanged: registry + script pair.
+  `scripts/decisions/retire_generation_grain_lines.py` deletes the old
+  line rows (dry-run first, rows with live members never deleted); the
+  registry is what keeps the next run from lawfully re-minting them. The
+  member entities that referenced a retired line fall through to the
+  normal no-match rung and queue with candidates — future generation
+  evidence, visibly held.

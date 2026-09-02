@@ -116,6 +116,46 @@ _MINT_EXCLUDE = re.compile(
 )
 
 
+def line_brand_wearers(label: str, companies_by_norm: dict[str, list[int]]) -> list[int]:
+    """Companies whose exact name the label wears as a leading token prefix.
+
+    Tokens are whitespace-bound: hyphens bind, so "Mercedes-Benz C-Class"
+    wears Mercedes-Benz and never the pre-war marque "Mercedes". The full
+    label is excluded - a line named exactly a company name wears no brand.
+    Every company of a matching name counts, slugged or not: two companies
+    named "Mercury" is an ambiguity to surface, never a coin toss.
+    """
+    tokens = label.split()
+    prefixes = {normalize_name(" ".join(tokens[:k])) for k in range(1, len(tokens))}
+    prefixes.discard("")
+    return sorted(cid for norm in prefixes for cid in companies_by_norm.get(norm, []))
+
+
+def line_destination(
+    maker_id: int, wearers: list[int], model_holding: set[int]
+) -> tuple[int | None, str | None]:
+    """Which company a line files under: (company, None), or (None, flag
+    reason) when the answer would be a guess.
+
+    A line whose name states its maker stays with it, whatever the maker
+    holds - TVR's lines are TVR's before any US filing exists. A maker that
+    holds models also keeps its foreign-badged lines (Lexus under Toyota is
+    the maker's own assertion, and namesake companies - Delta, Skyline -
+    would poison any vote there). A model-less maker is the stranded case:
+    Wikidata's maker property names the holding company while the models sit
+    under the carmaker, so the name decides - the unique model-holding
+    company the name wears takes the line. More than one wearer, or a
+    model-less one, is a question for review, never a guess.
+    """
+    if maker_id in wearers or not wearers or maker_id in model_holding:
+        return maker_id, None
+    if len(wearers) > 1:
+        return None, "line_brand_ambiguous"
+    if wearers[0] not in model_holding:
+        return None, "line_brand_model_less"
+    return wearers[0], None
+
+
 def _filing_number(external_id: str) -> int:
     """`model:999` sorts below `model:1000`. Lexicographic order would not,
     and the two dual-filing models are exactly where that shows."""
@@ -145,6 +185,7 @@ class WikidataModelsStats:
     models_refreshed: int = 0
     models_matched: int = 0
     generations_created: int = 0
+    generations_adopted: int = 0
     generations_refreshed: int = 0
     generation_links_asserted: int = 0
     generation_links_adopted: int = 0
@@ -170,6 +211,7 @@ class WikidataModelsStats:
             f"matched={self.models_matched} | lines: created={self.lines_created} "
             f"matched={self.lines_matched} memberships={self.memberships_inserted} | "
             f"generations: created={self.generations_created} "
+            f"adopted={self.generations_adopted} "
             f"refreshed={self.generations_refreshed} "
             f"links={self.generation_links_asserted} "
             f"(adopted={self.generation_links_adopted}) "
@@ -282,6 +324,12 @@ class _WikidataModelsPass:
         for cid in self.companies:
             norms = {self.company_norm[cid]} | make_names.get(cid, set())
             self.company_prefixes[cid] = tuple(sorted(norms, key=len, reverse=True))
+        # Exact-name lookup for the line destination rule; every company of a
+        # name counts, so namesakes surface as ambiguity there.
+        self.companies_by_norm: dict[str, list[int]] = {}
+        for cid, norm in self.company_norm.items():
+            if norm:
+                self.companies_by_norm.setdefault(norm, []).append(cid)
         # Held-company norms, longest first, for the cross-badge guard's
         # "which brand does this label wear" question (ADR 0013 §3).
         self._brand_norms: list[tuple[str, int]] = sorted(
@@ -377,6 +425,10 @@ class _WikidataModelsPass:
             for line in session.scalars(select(ModelLine))
         }
         self.line_by_qid: dict[str, int] = {}  # this run's line resolutions
+        self.line_holds: dict[tuple[str | None, str], str] = {
+            (company_slug, normalize_name(name)): why
+            for (company_slug, name), why in policy.WIKIDATA_LINE_HOLDS.items()
+        }
 
         # Live memberships this source already asserts, for idempotent re-runs.
         self.live_memberships: set[tuple[int, int]] = {
@@ -413,6 +465,23 @@ class _WikidataModelsPass:
                 self.live_generation_links.add((generation_id, model_id))
             elif source_id is None:
                 self.anonymous_links[(generation_id, model_id)] = link_id
+
+        # Ruled generation grain, resolved to rows once: qid -> (company_id,
+        # model_id | None, display name). An anchor naming a company or model
+        # not landed stays unresolved and flags in the structure phase.
+        company_by_slug = {c.slug: cid for cid, c in self.companies.items() if c.slug}
+        self.generation_grain: dict[str, tuple[int, int | None, str]] = {}
+        for qid, (anchor, name) in policy.WIKIDATA_GENERATION_GRAIN.items():
+            company_slug, _, model_slug = anchor.partition("/")
+            company_id = company_by_slug.get(company_slug)
+            if company_id is None:
+                continue
+            model_id = None
+            if model_slug:
+                model_id = self.model_by_company_slug.get((company_id, model_slug))
+                if model_id is None:
+                    continue
+            self.generation_grain[qid] = (company_id, model_id, name)
 
     def _load_wikipedia_precedence(self) -> None:
         """Generation fields the infobox pass asserts live (ADR 0017 §2):
@@ -809,6 +878,11 @@ class _WikidataModelsPass:
             if qid in policy.WIKIDATA_DUPLICATE_NAMEPLATES:
                 continue
 
+            # Same rule one registry over: a grain-ruled entity is a
+            # generation, and rung 3 must not claim it as a model.
+            if qid in policy.WIKIDATA_GENERATION_GRAIN:
+                continue
+
             # Rung 3: exact-normalized name/alias match, never fuzzy. A unique
             # hit is only a CLAIM: generation entities carry the bare nameplate
             # label, so one model can be claimed by several entities at once.
@@ -1016,7 +1090,9 @@ class _WikidataModelsPass:
             and not self.subjects[qid].decided
             and qid not in self.model_by_qid
             and qid not in self.generation_by_qid
+            and qid not in policy.WIKIDATA_GENERATION_GRAIN
         ]
+        model_holding = set(self.models_by_name)
         for qid in line_qids:
             subject = self.subjects[qid]
             entity = subject.entity
@@ -1034,6 +1110,56 @@ class _WikidataModelsPass:
                 self._decide(subject, "4", None, outcome)
                 continue
             company_id = subject.held_companies[0]
+            detail: dict = {}
+            hold = self.line_holds.get(
+                (
+                    self.companies[company_id].slug,
+                    normalize_name(self._strip(entity.label, company_id)),
+                )
+            )
+            if hold is not None:
+                detail["held"] = hold
+            else:
+                wearers = line_brand_wearers(entity.label, self.companies_by_norm)
+                destination, flag_reason = line_destination(company_id, wearers, model_holding)
+                if flag_reason is None and destination != company_id:
+                    maker_key = (
+                        company_id,
+                        normalize_name(self._strip(entity.label, company_id)),
+                    )
+                    if maker_key in self.line_by_key:
+                        # Derivation never abandons an existing maker-side row:
+                        # a vote that turns clean later (a namesake merges, the
+                        # brand gains its first model) would otherwise mint a
+                        # duplicate at the destination and orphan this one.
+                        # Relocation is the decision script's reviewed act; the
+                        # pending move rides the flag until it runs.
+                        flag_reason = "line_awaits_relocation"
+                if flag_reason is None:
+                    company_id = destination
+                    if any(
+                        (f.detail or {}).get("reason", "").startswith("line_")
+                        for f in self.open_match_flags.get(qid, [])
+                    ):
+                        self._dismiss_flags(qid, "line_brand_resolved")
+                else:
+                    # The row keeps filing under its maker - staying put is
+                    # not a guess - while the open question rides the flag.
+                    self._flag(
+                        subject,
+                        flag_reason,
+                        {
+                            "label": entity.label,
+                            "candidates": [
+                                {
+                                    "company": self.companies[cid].name,
+                                    "slug": self.companies[cid].slug,
+                                }
+                                for cid in wearers
+                            ],
+                        },
+                    )
+                    detail["flagged"] = flag_reason
             name = self._strip(entity.label, company_id)
             slug = slugify(name)
             key = (company_id, normalize_name(name))
@@ -1048,14 +1174,18 @@ class _WikidataModelsPass:
                 self.line_by_key[key] = line.id
                 line_id = line.id
                 self.stats.lines_created += 1
-                self._decide(subject, "4", "p179_referenced", "line_created", {"line": slug})
+                self._decide(
+                    subject, "4", "p179_referenced", "line_created", {"line": slug, **detail}
+                )
             else:
                 # Natural-key reuse: Wikidata's duplicate series entities
                 # ("BMW 3 Series" x4) converge on one grouping row - lines
                 # hold no external ids, so this is the §4 identity rule, not
                 # a merge.
                 self.stats.lines_matched += 1
-                self._decide(subject, "4", "p179_referenced", "line_matched", {"line": slug})
+                self._decide(
+                    subject, "4", "p179_referenced", "line_matched", {"line": slug, **detail}
+                )
             self.line_by_qid[qid] = line_id
 
     # --- memberships (§4) ----------------------------------------------------
@@ -1108,13 +1238,19 @@ class _WikidataModelsPass:
         self.stats.generation_links_asserted += 1
 
     def _refresh_generation(self, subject: _Subject) -> None:
-        generation = self.session.get(Generation, self.generation_by_qid[subject.entity.qid])
-        display = (
-            self._strip(subject.entity.label, generation.company_id)
-            if subject.entity.label
-            and subject.entity.qid not in policy.WIKIDATA_DUPLICATE_NAMEPLATES
-            else generation.name
-        )
+        qid = subject.entity.qid
+        generation = self.session.get(Generation, self.generation_by_qid[qid])
+        grain = policy.WIKIDATA_GENERATION_GRAIN.get(qid)
+        if grain is not None:
+            # The ruled display, not the label: "Chevrolet Corvette C7"
+            # stripped would rename the row the ruling called "C7". Read
+            # from the registry itself, not the resolved anchors - an
+            # anchor that stops resolving must not rename the row either.
+            display = grain[1]
+        elif subject.entity.label and qid not in policy.WIKIDATA_DUPLICATE_NAMEPLATES:
+            display = self._strip(subject.entity.label, generation.company_id)
+        else:
+            display = generation.name
         self._generation_facts(generation, subject, display)
         for target in subject.entity.series_of:
             model_id = self.model_by_qid.get(target)
@@ -1199,6 +1335,55 @@ class _WikidataModelsPass:
             {"model": self._slug_pair(model_id), "generation": slug},
         )
 
+    def _grain_generation(self, subject: _Subject) -> None:
+        """A registry-ruled generation Wikidata files as a series. Mint it
+        under the ruled anchor - or adopt the generation already standing at
+        its slug - and attach the external id, which is what keeps the line
+        track from ever deriving this entity again."""
+        entity = subject.entity
+        resolved = self.generation_grain.get(entity.qid)
+        if resolved is None:
+            self._flag(
+                subject,
+                "generation_grain_unresolved",
+                {
+                    "label": entity.label,
+                    "anchor": policy.WIKIDATA_GENERATION_GRAIN[entity.qid][0],
+                },
+            )
+            self._decide(subject, "5", "generation_grain_registry", "flagged_unresolved_anchor")
+            return
+        company_id, model_id, display = resolved
+        slug = slugify(display)
+        occupant = self.generation_by_company_slug.get((company_id, slug))
+        if occupant is not None:
+            generation = self.session.get(Generation, occupant)
+            self.stats.generations_adopted += 1
+        else:
+            generation = Generation(company_id=company_id, slug=slug, name=display)
+            self.session.add(generation)
+            self.session.flush()
+            self.generation_by_company_slug[(company_id, slug)] = generation.id
+            self.stats.generations_created += 1
+        self.session.add(
+            ExternalId(
+                generation_id=generation.id,
+                source_id=self.source.id,
+                external_id=entity.qid,
+            )
+        )
+        self.session.flush()
+        self.generation_by_qid[entity.qid] = generation.id
+        if model_id is not None:
+            self._assert_generation_link(generation.id, model_id, subject)
+        self._generation_facts(generation, subject, display)
+        outcome = "generation_adopted" if occupant is not None else "generation_created"
+        detail = {"generation": f"{self.companies[company_id].slug}/{slug}"}
+        if model_id is not None:
+            detail["model"] = self._slug_pair(model_id)
+        self._dismiss_flags(entity.qid, f"{outcome}:{detail['generation']}")
+        self._decide(subject, "5", "generation_grain_registry", outcome, detail)
+
     def _structure_phase(self) -> None:
         for qid in sorted(self.subjects, key=lambda q: int(q[1:])):
             subject = self.subjects[qid]
@@ -1219,6 +1404,9 @@ class _WikidataModelsPass:
                 self._refresh_generation(subject)
                 continue
             if subject.decided:
+                continue
+            if qid in policy.WIKIDATA_GENERATION_GRAIN:
+                self._grain_generation(subject)
                 continue
             entity = subject.entity
 
