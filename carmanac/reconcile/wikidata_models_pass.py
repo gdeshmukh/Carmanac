@@ -131,28 +131,33 @@ def line_brand_wearers(label: str, companies_by_norm: dict[str, list[int]]) -> l
     return sorted(cid for norm in prefixes for cid in companies_by_norm.get(norm, []))
 
 
-def line_destination(
-    maker_id: int, wearers: list[int], model_holding: set[int]
+def brand_destination(
+    maker_id: int | None, wearers: list[int], model_holding: set[int]
 ) -> tuple[int | None, str | None]:
-    """Which company a line files under: (company, None), or (None, flag
-    reason) when the answer would be a guess.
+    """Which company an entity files under: (company, None), or (None, flag
+    reason) when the answer would be a guess. Callers prefix the reason with
+    their own rung ("line_", "model_").
 
-    A line whose name states its maker stays with it, whatever the maker
+    An entity whose name states its maker stays with it, whatever the maker
     holds - TVR's lines are TVR's before any US filing exists. A maker that
-    holds models also keeps its foreign-badged lines (Lexus under Toyota is
-    the maker's own assertion, and namesake companies - Delta, Skyline -
+    holds models also keeps its foreign-badged entities (Lexus under Toyota
+    is the maker's own assertion, and namesake companies - Delta, Skyline -
     would poison any vote there). A model-less maker is the stranded case:
     Wikidata's maker property names the holding company while the models sit
     under the carmaker, so the name decides - the unique model-holding
-    company the name wears takes the line. More than one wearer, or a
-    model-less one, is a question for review, never a guess.
+    company the name wears takes it. More than one wearer, or a model-less
+    one, is a question for review, never a guess.
+
+    Both rungs share this because the same entity can reach either: a
+    nameplate is a line the day something carries P179 to it. Two rules
+    would let one Wikidata edit move a car between brands.
     """
     if maker_id in wearers or not wearers or maker_id in model_holding:
         return maker_id, None
     if len(wearers) > 1:
-        return None, "line_brand_ambiguous"
+        return None, "brand_ambiguous"
     if wearers[0] not in model_holding:
-        return None, "line_brand_model_less"
+        return None, "brand_model_less"
     return wearers[0], None
 
 
@@ -195,6 +200,7 @@ class WikidataModelsStats:
     line_generations_waiting: int = 0
     market_name_flagged: int = 0
     waits_no_held_maker: int = 0
+    brand_voted: int = 0
     waits_unmatched: int = 0
     models_minted: int = 0
     mint_contested: int = 0
@@ -217,6 +223,7 @@ class WikidataModelsStats:
             f"(adopted={self.generation_links_adopted}) "
             f"line_case_waiting={self.line_generations_waiting} | "
             f"market_name_flags={self.market_name_flagged} "
+            f"brand_voted={self.brand_voted} "
             f"waits: no_held_maker={self.waits_no_held_maker} "
             f"unmatched={self.waits_unmatched} company_entity={self.company_entities} | "
             f"minted={self.models_minted} (contested={self.mint_contested}, "
@@ -234,6 +241,10 @@ class _Subject:
     record: RawRecord
     entity: ModelEntity
     held_companies: list[int] = field(default_factory=list)
+    # Where the MATCH rungs look. The maker's companies, except where the
+    # §2.2 vote redirected them to the brand the label wears (ADR 0022 §7);
+    # the mint gate deliberately keeps reading `held_companies`.
+    match_companies: list[int] = field(default_factory=list)
     decided: bool = False
 
 
@@ -379,6 +390,19 @@ class _WikidataModelsPass:
             self.qid_by_model[model_id] = qid
         # model_id -> [(qid, method, rank)]; rank 0 = label form, 1 = alias.
         self.claims: dict[int, list[tuple[str, str, int]]] = {}
+
+        # Live parent eras as (child, parent) pairs, and what each brand vote
+        # decided. Corroboration only (ADR 0022 §7): recorded on the decision
+        # so the labeled set can be measured, never consulted to gate.
+        self.parent_pairs: set[tuple[int, int]] = set(
+            session.execute(
+                text(
+                    """SELECT company_id, parent_company_id FROM company_relationships
+                       WHERE superseded_by IS NULL"""
+                )
+            ).all()
+        )
+        self.vote_detail: dict[str, dict] = {}
 
         # The mint gate (§7): registry company QIDs resolved to company ids
         # through the same map every maker resolves through, so an alias QID
@@ -741,7 +765,7 @@ class _WikidataModelsPass:
         entity = subject.entity
         hits: dict[int, tuple[str, int]] = {}
         names = [(entity.label, "label", 0)] + [(a, "alias", 1) for a in entity.aliases]
-        for company_id in subject.held_companies:
+        for company_id in subject.match_companies:
             index = self.models_by_name.get(company_id, {})
             for name, kind, rank in names:
                 if not name:
@@ -759,6 +783,50 @@ class _WikidataModelsPass:
                         if model_id not in hits or rank < hits[model_id][1]:
                             hits[model_id] = (method, rank)
         return hits
+
+    def _vote_brand(self, subject: _Subject) -> bool:
+        """Point the match rungs at the brand the label wears when no maker
+        holds models (ADR 0022 §7). False stops the entity here.
+
+        The vote is the line rungs' (`brand_destination`), so one entity
+        cannot file under two companies depending on which rung reaches it.
+        A parent era between the destination and the stated maker is written
+        into the decision as corroboration and never gates: Wikidata calls
+        Karmann the maker of the Chrysler Crossfire, no such era exists, and
+        the Crossfire is still a Chrysler.
+
+        The vote only ever ADDS a destination. An unclear one - a brand token
+        two companies wear, a brand holding no models - changes nothing: the
+        entity carries on exactly as it did before the vote existed, finding
+        nothing at rung 3 and reaching the line and structure rungs, which
+        ask that same question where it is answerable. Only an entity with no
+        held maker at all still waits here.
+        """
+        entity = subject.entity
+        makers = subject.held_companies
+        wearers = line_brand_wearers(entity.label, self.companies_by_norm) if entity.label else []
+        maker_id = makers[0] if len(makers) == 1 else None
+        destination, _reason = brand_destination(maker_id, wearers, set(self.models_by_name))
+        if destination is not None and destination in self.models_by_name:
+            subject.match_companies = [destination]
+            self.stats.brand_voted += 1
+            self.vote_detail[entity.qid] = {
+                "brand": self.companies[destination].slug or self.companies[destination].name,
+                "makers": [self.companies[m].name for m in makers],
+                "parent_link": any((destination, m) in self.parent_pairs for m in makers),
+            }
+            return True
+        if makers:
+            return True
+        self.stats.waits_no_held_maker += 1
+        self._decide(
+            subject,
+            "2",
+            None,
+            "waits_no_held_maker",
+            {"makers": list(entity.makers)} if entity.makers else None,
+        )
+        return False
 
     def _strip(self, name: str, company_id: int) -> str:
         """Prefix-strip against every recorded name the company wears
@@ -862,15 +930,13 @@ class _WikidataModelsPass:
             subject.held_companies = sorted(
                 {self.company_by_qid[m] for m in entity.makers if m in self.company_by_qid}
             )
-            if not subject.held_companies:
-                self.stats.waits_no_held_maker += 1
-                self._decide(
-                    subject,
-                    "2",
-                    None,
-                    "waits_no_held_maker",
-                    {"makers": list(entity.makers)} if entity.makers else None,
-                )
+            subject.match_companies = subject.held_companies
+            # No maker holding models to match under: Wikidata names the group
+            # (General Motors for the Corvette) while the filings sit under the
+            # badge. The badge vote decides (ADR 0022 §7).
+            if not any(
+                c in self.models_by_name for c in subject.held_companies
+            ) and not self._vote_brand(subject):
                 continue
 
             # A registered duplicate's address comes from its ruling (§7), never
@@ -955,7 +1021,11 @@ class _WikidataModelsPass:
         self._enrich_model(model_id, subject)
         self._dismiss_flags(subject.entity.qid, f"matched:{self._slug_pair(model_id)}")
         self.stats.models_matched += 1
-        self._decide(subject, "3", method, "matched", {"model": self._slug_pair(model_id)})
+        detail = {"model": self._slug_pair(model_id)}
+        vote = self.vote_detail.get(subject.entity.qid)
+        if vote is not None:
+            detail["brand_vote"] = vote
+        self._decide(subject, "3", method, "matched", detail)
 
     def _flag_market_name(
         self, subject: _Subject, model_id: int, method: str, co_claimants: list[str]
@@ -1121,7 +1191,8 @@ class _WikidataModelsPass:
                 detail["held"] = hold
             else:
                 wearers = line_brand_wearers(entity.label, self.companies_by_norm)
-                destination, flag_reason = line_destination(company_id, wearers, model_holding)
+                destination, reason = brand_destination(company_id, wearers, model_holding)
+                flag_reason = f"line_{reason}" if reason else None
                 if flag_reason is None and destination != company_id:
                     maker_key = (
                         company_id,

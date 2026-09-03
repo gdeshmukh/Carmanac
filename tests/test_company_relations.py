@@ -225,3 +225,29 @@ def test_an_era_ending_before_it_starts_is_never_asserted(db, wikidata_source, g
     assert stats.implausible_eras == 1 and stats.eras_asserted == 0
     decision = db.scalar(select(MatchDecision).where(MatchDecision.external_id == "Q1"))
     assert decision.detail["implausible"] == ["Q2"]
+
+
+def test_an_undated_claim_beside_a_dated_one_is_not_a_second_era(db, wikidata_source, graph):
+    """Both ends state the ownership, only one carries the qualifiers: the
+    undated row is the same claim with its dates dropped, not a second era."""
+    _land(
+        db,
+        [
+            _binding(
+                "Q1", "parents", "Q2", start="1931-01-01T00:00:00Z", end="2017-01-01T00:00:00Z"
+            ),
+            _binding("Q2", "subsidiaries", "Q1"),
+        ],
+    )
+    stats = run_company_relations_pass(db)
+    assert stats.eras_asserted == 1
+    (row,) = _live(db)
+    assert (row.start_year, row.end_year) == (1931, 2017)
+
+
+def test_an_undated_claim_alone_still_lands(db, wikidata_source, graph):
+    _land(db, [_binding("Q1", "parents", "Q2")])
+    stats = run_company_relations_pass(db)
+    assert stats.eras_asserted == 1
+    (row,) = _live(db)
+    assert (row.start_year, row.end_year) == (None, None)

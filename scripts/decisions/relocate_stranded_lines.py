@@ -3,7 +3,7 @@
 Wikidata's maker property points at holding companies (Mercedes-Benz Group,
 Ford Motor Company), so the line phase filed real lines under companies that
 hold zero models while vPIC filed their models under the carmakers. The pass
-now derives a stranded line's company with `line_destination` and files new
+now derives a stranded line's company with `brand_destination` and files new
 entities there directly; rows created under the old derivation have to be
 moved once, and any later vote change (`line_awaits_relocation` flags, an
 `awaits-review` hold lifting) is applied here rather than by the pass, which
@@ -32,8 +32,8 @@ from carmanac.reconcile.addressing import slugify
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.wikidata_models_pass import (
     _WikidataModelsPass,
+    brand_destination,
     line_brand_wearers,
-    line_destination,
 )
 
 
@@ -91,7 +91,8 @@ def main() -> None:
                     held.append((maker, old_name, hold))
                 continue
             wearers = line_brand_wearers(entity.label, pass_.companies_by_norm)
-            destination, flag_reason = line_destination(maker_id, wearers, model_holding)
+            destination, reason = brand_destination(maker_id, wearers, model_holding)
+            flag_reason = f"line_{reason}" if reason else None
             if flag_reason is not None:
                 if line_id is not None:
                     candidates = ", ".join(

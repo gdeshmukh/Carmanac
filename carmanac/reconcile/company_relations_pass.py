@@ -151,6 +151,22 @@ def run_company_relations_pass(session: Session) -> CompanyRelationsStats:
             )
         )
     }
+    # The same pair is often stated from both ends, one end carrying the
+    # qualifiers and the other not. An undated era beside a dated one for the
+    # same pair is that claim with its dates dropped, so it is not a second
+    # era - only a pair with no dated claim at all keeps its undated row.
+    dated_pairs = {
+        (era.company_id, era.parent_company_id)
+        for era in wanted
+        if era.start_year is not None or era.end_year is not None
+    }
+    wanted = {
+        era: record
+        for era, record in wanted.items()
+        if era.start_year is not None
+        or era.end_year is not None
+        or (era.company_id, era.parent_company_id) not in dated_pairs
+    }
     stats.eras_asserted = len(wanted)
     for era, record in wanted.items():
         if era in live:
