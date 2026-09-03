@@ -306,7 +306,7 @@ WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
 # the way VPIC_MATCHES names its makes: documentation, never matched.
 WIKIDATA_MINT_COMPANIES: dict[str, str] = {
     "Q6746": "citroen",
-    "Q29637": "skoda-auto",
+    "Q29637": "skoda",
     "Q188217": "seat",
     "Q27460": "dacia",
     "Q26823": "abarth",
@@ -347,15 +347,15 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     "Q105737028": "era:renault/express",  # Renault Express (2021-present)
     "Q2702123": "model:renault/symbol",  # Renault Symbol (1999-2021)
     "Q827056": "model:seat/leon",  # SEAT Leon (1999-present)
-    "Q391936": "model:skoda-auto/120",  # Skoda 120 (1976-1990, the Type 742 page)
-    "Q52054487": "model:skoda-auto/kamiq",  # Skoda Kamiq (2019-present, global car)
-    "Q392083": "model:skoda-auto/superb",  # Skoda Superb, the modern car's page
-    "Q392060": "era:skoda-auto/superb",  # Skoda Superb (1934-1949)
-    "Q392016": "model:skoda-auto/felicia",  # Skoda Felicia, the 1994-2001 car's page
-    "Q391899": "era:skoda-auto/felicia",  # Skoda Felicia (1959-1964 roadster)
-    "Q391996": "model:skoda-auto/favorit",  # Skoda Favorit, the 1987 hatchback's page
-    "Q391999": "era:skoda-auto/favorit",  # Skoda Favorit (1936-1941)
-    "Q163053": "model:skoda-auto/fabia",  # Skoda Fabia (1999-present)
+    "Q391936": "model:skoda/120",  # Skoda 120 (1976-1990, the Type 742 page)
+    "Q52054487": "model:skoda/kamiq",  # Skoda Kamiq (2019-present, global car)
+    "Q392083": "model:skoda/superb",  # Skoda Superb, the modern car's page
+    "Q392060": "era:skoda/superb",  # Skoda Superb (1934-1949)
+    "Q392016": "model:skoda/felicia",  # Skoda Felicia, the 1994-2001 car's page
+    "Q391899": "era:skoda/felicia",  # Skoda Felicia (1959-1964 roadster)
+    "Q391996": "model:skoda/favorit",  # Skoda Favorit, the 1987 hatchback's page
+    "Q391999": "era:skoda/favorit",  # Skoda Favorit (1936-1941)
+    "Q163053": "model:skoda/fabia",  # Skoda Fabia (1999-present)
     "Q1123579": "model:seat/toledo",  # SEAT Toledo, the nameplate's own page
     "Q5122860": "model:citroen/c3-aircross",  # Citroen C3 Aircross, the nameplate's own page
     "Q933825": "model:dacia/dokker",  # Dacia Dokker, the real 2012 van
@@ -368,10 +368,10 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     "Q3932908": "model:renault/type-x",  # Renault Type X
     # The Rapid ruling: one nameplate, three era pages; the name-only entity
     # (its page is a directory stub) carries the model:
-    "Q346196": "model:skoda-auto/rapid",  # the name itself
-    "Q392029": "era:skoda-auto/rapid",  # Skoda Rapid (1935-1947)
-    "Q392038": "era:skoda-auto/rapid",  # Skoda Garde/Rapid (1981-1990 coupe)
-    "Q180270": "era:skoda-auto/rapid",  # Skoda Rapid (2012 liftback)
+    "Q346196": "model:skoda/rapid",  # the name itself
+    "Q392029": "era:skoda/rapid",  # Skoda Rapid (1935-1947)
+    "Q392038": "era:skoda/rapid",  # Skoda Garde/Rapid (1981-1990 coupe)
+    "Q180270": "era:skoda/rapid",  # Skoda Rapid (2012 liftback)
     # Ruled now, dates arrive later (no page of their own yet):
     "Q20724366": "era:citroen/c3",  # Citroen C3 III
     "Q123113826": "era:citroen/c3",  # Citroen C3 IV
@@ -408,17 +408,17 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     "Q3476819": "era:seat/toledo",  # Toledo II
     "Q3476820": "era:seat/toledo",  # Toledo III
     "Q18412995": "era:seat/toledo",  # Toledo IV
-    "Q137771826": "era:skoda-auto/120",  # the second Skoda 120 entry
-    "Q391966": "era:skoda-auto/fabia",  # Fabia I
-    "Q391971": "era:skoda-auto/fabia",  # Fabia II
-    "Q18410434": "era:skoda-auto/fabia",  # Fabia III
-    "Q392024": "era:skoda-auto/pick-up",  # Skoda Pick-up (one of the pair)
-    "Q90701201": "era:skoda-auto/pick-up",  # Skoda Pick-up (the other)
-    "Q392063": "era:skoda-auto/superb",  # Superb I
-    "Q392067": "era:skoda-auto/superb",  # Superb II
-    "Q19758190": "era:skoda-auto/superb",  # Superb III
-    "Q1609671": "era:skoda-auto/octavia",  # Octavia III
-    "Q75030046": "era:skoda-auto/octavia",  # Octavia IV
+    "Q137771826": "era:skoda/120",  # the second Skoda 120 entry
+    "Q391966": "era:skoda/fabia",  # Fabia I
+    "Q391971": "era:skoda/fabia",  # Fabia II
+    "Q18410434": "era:skoda/fabia",  # Fabia III
+    "Q392024": "era:skoda/pick-up",  # Skoda Pick-up (one of the pair)
+    "Q90701201": "era:skoda/pick-up",  # Skoda Pick-up (the other)
+    "Q392063": "era:skoda/superb",  # Superb I
+    "Q392067": "era:skoda/superb",  # Superb II
+    "Q19758190": "era:skoda/superb",  # Superb III
+    "Q1609671": "era:skoda/octavia",  # Octavia III
+    "Q75030046": "era:skoda/octavia",  # Octavia IV
     # Held with open flags, no entry: the SEAT 124 Sport duplicate pair (its
     # English link lands on the Fiat 124 Sport Coupe, a different car), the
     # three same-time market duplicates (Kamiq China, Rapid China/India), the
@@ -673,11 +673,11 @@ ENGINE_FAMILY_ARTICLES: dict[str, str | None] = {
     "toyota tr": "toyota",
     "toyota zr": "toyota",
     "viper": "dodge",
-    "volvo b8444s": "volvo-cars",
-    "volvo d5": "volvo-cars",
-    "volvo engine architecture": "volvo-cars",
-    "volvo modular": "volvo-cars",
-    "volvo si6": "volvo-cars",
+    "volvo b8444s": "volvo",
+    "volvo d5": "volvo",
+    "volvo engine architecture": "volvo",
+    "volvo modular": "volvo",
+    "volvo si6": "volvo",
     "cummins b series": None,  # supplier; no companies row
     "douvrin": None,  # PSA-Renault joint venture
     "prv": None,  # Peugeot-Renault-Volvo joint venture
@@ -686,7 +686,7 @@ ENGINE_FAMILY_ARTICLES: dict[str, str | None] = {
 
 TRANSMISSION_FAMILY_ARTICLES: dict[str, str | None] = {
     "ford mtx-75": "ford",
-    "multitronic": "audi-ag",  # Audi's CVT line; the title alone names no maker
+    "multitronic": "audi",  # Audi's CVT line; the title alone names no maker
     "toyota a": "toyota",
     "toyota s": "toyota",
     "zf 8hp": None,  # supplier; no companies row

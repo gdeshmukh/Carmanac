@@ -148,6 +148,12 @@ company (its identity, slug and models are untouched), attaches the company's
 id to it, and lets the company record assert the facts on the next pass. This
 is the Tesla path of ADR 0007 §5 with a materialized canonical.
 
+Lines and generations filed under the legal entity are the enterprise's and
+move with its identity — Ford Motor Company's five line rows are Ford's. A
+name or slug already taken on the surviving side is a collision the script
+refuses on rather than resolving, because two rows at one natural key is the
+duplicate identity the merge exists to remove.
+
 ### 5. A brand is named by its badge
 
 Where a company has a brand-classed merge member, its `name` fact is taken

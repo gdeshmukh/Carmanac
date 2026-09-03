@@ -42,12 +42,15 @@ from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
     Company,
+    CompanyRelationship,
     CompanyRoleAssignment,
     Engine,
     ExternalId,
     FieldProvenance,
+    Generation,
     MediaAttachment,
     Model,
+    ModelLine,
     ReconciliationFlag,
     Source,
     Transmission,
@@ -55,6 +58,7 @@ from carmanac.db.models import (
 )
 from carmanac.db.session import SessionLocal
 from carmanac.reconcile import policy
+from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata
 
 # Columns that would make a member company real catalogue data rather than a
@@ -79,9 +83,38 @@ def _referenced(session: Session, company_id: int) -> list[str]:
     return hits
 
 
+def _catalogue_collisions(session: Session, from_id: int, into_id: int) -> list[str]:
+    """Lines and generations under `from_id` whose natural key is already
+    taken under `into_id` - the absorb path cannot move those."""
+    line_names = {
+        normalize_name(name)
+        for name in session.scalars(select(ModelLine.name).where(ModelLine.company_id == into_id))
+    }
+    slugs = set(session.scalars(select(Generation.slug).where(Generation.company_id == into_id)))
+    hits = [
+        f"line {name!r}"
+        for name in session.scalars(select(ModelLine.name).where(ModelLine.company_id == from_id))
+        if normalize_name(name) in line_names
+    ]
+    hits += [
+        f"generation {slug!r}"
+        for slug in session.scalars(select(Generation.slug).where(Generation.company_id == from_id))
+        if slug in slugs
+    ]
+    return hits
+
+
 def _delete_derived(session: Session, company_id: int) -> None:
     for model in (FieldProvenance, CompanyRoleAssignment, ReconciliationFlag):
         session.execute(delete(model).where(model.company_id == company_id))
+    # Parent eras are re-derived by the relations pass against the surviving
+    # row; a row's own eras and the eras naming it as parent both go.
+    session.execute(
+        delete(CompanyRelationship).where(
+            (CompanyRelationship.company_id == company_id)
+            | (CompanyRelationship.parent_company_id == company_id)
+        )
+    )
 
 
 def main() -> int:
@@ -131,10 +164,11 @@ def main() -> int:
             refs = _referenced(session, member_company_id)
             if refs:
                 canonical_refs = _referenced(session, canonical_company_id)
-                if canonical_refs:
+                collisions = _catalogue_collisions(session, canonical_company_id, member_company_id)
+                if canonical_refs or collisions:
                     print(
                         f"{member_qid}: REFUSED, both referenced: "
-                        f"'{member.slug}' {refs}, '{canonical.slug}' {canonical_refs}"
+                        f"'{member.slug}' {refs}, '{canonical.slug}' {canonical_refs + collisions}"
                     )
                     continue
                 print(
@@ -143,11 +177,14 @@ def main() -> int:
                 )
                 if args.execute:
                     _delete_derived(session, canonical_company_id)
-                    session.execute(
-                        update(ExternalId)
-                        .where(ExternalId.company_id == canonical_company_id)
-                        .values(company_id=member_company_id)
-                    )
+                    # Lines and generations anchored on the legal entity are
+                    # the enterprise's; they move with its identity.
+                    for table in (ExternalId, ModelLine, Generation):
+                        session.execute(
+                            update(table)
+                            .where(table.company_id == canonical_company_id)
+                            .values(company_id=member_company_id)
+                        )
                     session.execute(delete(Company).where(Company.id == canonical_company_id))
                     session.flush()
                 qid_to_company[canonical_qid] = member_company_id
