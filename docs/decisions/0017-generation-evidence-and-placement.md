@@ -337,3 +337,17 @@ Run live 2026-08-20: 406 lead-era generations minted and dated; placement
 moved 2,682 → 4,662 configurations. Physical specs from the same articles
 land per the ADR 0020 amendment of the same date (the defaults tables) —
 identity and time stay the only generation-grain facts.
+
+## Amendment (2026-09-03): a generation's own article is its one asserting record
+
+A section-born generation (§4) that later gains its own Wikidata entity —
+the E28 adopted under the 2026-08-25 grain ruling — has two articles
+describing it once that entity's page is fetched: the nameplate's section
+(the BMW M5 article dates the E28 by the M5's years, 1984–1988) and the
+generation's own page (1981–1988). Two records asserting one row's fields
+from one source supersede each other on every run. The dedicated page is
+about the generation itself where the section is the nameplate's take on
+it, so it is the row's one asserting record: the section keeps the link and
+defers on facts (span, codes, specs). The rule is derived per run from
+which articles are landed, so a page that arrives later takes over exactly
+once and the pass converges again.

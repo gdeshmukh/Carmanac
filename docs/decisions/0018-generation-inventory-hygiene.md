@@ -213,3 +213,28 @@ Each is ruled a single generation.
   member entities that referenced a retired line fall through to the
   normal no-match rung and queue with candidates — future generation
   evidence, visibly held.
+
+## Amendment (2026-09-03): the verdict the structure states itself
+
+Wikidata files a trim as a series member with the same class as the
+generations beside it — the Corvette's Z06, ZR1 and C5-R stand next to C1
+through C8 as "car model", members of the Corvette. Nothing in class or
+level separates them, but the members' own names do: a generation states
+its code last ("Corvette C5"), a trim states the generation's code and
+then its own name ("Corvette C5 Z06", "C6 ZR1", "C5-R"). The models pass
+now indexes, per series, the codes members state as their own — a
+parenthetical, or a code-shaped final token, never the nameplate's own name
+however code-shaped ("911", "Q3", "S6") — and an entity carrying a
+sibling's code with more after it is held as that sibling's variant: no
+link, no refresh, no row, decided from the sweep before any row is touched,
+so processing order cannot change the verdict and a retired link stays
+retired. An entity's own codes never count against it ("Ranger (T6, first
+generation)" is the T6).
+
+Censused over the whole sweep before adoption: seven entities held, no
+generation among them. The verdict is the registry's `not_a_generation`
+derived where the structure states it; the demotion script (§2) takes the
+pass's verdicts beside the registry's entries under the same dry-run gate,
+and rows minted before the rule keep standing as §2 rules for the species.
+Trims that state no code at all ("911 GT3", "911 Turbo") show no structural
+signal and stay per-entity rulings here.
