@@ -1066,3 +1066,59 @@ def test_era_grammar_reads_the_code_led_convention():
         "== USA (1969–1972) ==\n{{Infobox automobile\n| production = 1969–1972\n}}\n"
         "== UK (1973–1980) ==\n{{Infobox automobile\n| production = 1973–1980\n}}\n",
     ), "an all-caps market name is not a chassis code"
+
+
+@pytest.mark.integration
+def test_a_generation_with_its_own_article_is_dated_by_it_alone(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,
+):
+    """A section-born generation that later gains its own entity has two
+    articles: the nameplate's section and the entity's page. The page is
+    the one asserting record; the section keeps the link and defers on
+    facts, so the two never contend for one slot run after run."""
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "== First generation (E85; 2002) ==\n"
+        "{{Infobox automobile\n| production = 2002–2008\n}}\n"
+        "== Second generation (E89; 2009) ==\n"
+        "{{Infobox automobile\n| production = 2009–2016\n}}\n",
+    )
+    run_wikipedia_pass(db)
+    e85 = db.scalar(
+        select(Generation)
+        .join(ExternalId, ExternalId.generation_id == Generation.id)
+        .where(ExternalId.external_id == "section:Q7#1")
+    )
+    assert (e85.start_year, e85.end_year) == (2002, 2008)
+
+    db.add(ExternalId(generation_id=e85.id, source_id=wikidata_source.id, external_id="Q85"))
+    db.commit()
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q85",
+        "BMW Z4 (E85)",
+        "{{Infobox automobile\n| production = 2003–2008\n}}\n",
+    )
+    stats = run_wikipedia_pass(db)
+    assert stats.sections_deferred == 1
+    db.refresh(e85)
+    assert (e85.start_year, e85.end_year) == (2003, 2008)
+    assert db.scalars(
+        select(GenerationModelLink).where(
+            GenerationModelLink.generation_id == e85.id,
+            GenerationModelLink.model_id == routed.id,
+            GenerationModelLink.superseded_by.is_(None),
+        )
+    ).one()
+
+    again = run_wikipedia_pass(db)
+    assert again.assertions_inserted == 0 and again.assertions_superseded == 0
+    assert again.sections_deferred == 1

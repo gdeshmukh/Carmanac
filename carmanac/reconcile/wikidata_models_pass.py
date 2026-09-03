@@ -91,6 +91,8 @@ from carmanac.reconcile.engine import (
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata_models
 from carmanac.reconcile.sources.wikidata_models import (
+    _CODE_DIGITS,
+    _CODE_STRICT,
     ModelEntity,
     extract_chassis_codes,
     strip_prefix,
@@ -114,6 +116,22 @@ _MINT_EXCLUDE = re.compile(
     r"\b(?:" + "|".join(re.escape(w) for w in policy.WIKIDATA_MINT_EXCLUDE) + r")\b",
     re.IGNORECASE,
 )
+
+
+_TOKEN = re.compile(r"[A-Z0-9]+")
+
+
+def own_codes(label: str | None, aliases: tuple[str, ...]) -> set[str]:
+    """The chassis codes an entity states as its own, upper-cased: every
+    parenthetical code, plus the label's final token when that is
+    code-shaped - the position a generation states its code in."""
+    codes, _ = extract_chassis_codes(label, aliases, None)
+    found = {c.upper() for c in codes}
+    if label:
+        tokens = _TOKEN.findall(label.upper())
+        if tokens and (_CODE_STRICT.match(tokens[-1]) or _CODE_DIGITS.match(tokens[-1])):
+            found.add(tokens[-1])
+    return found
 
 
 def line_brand_wearers(label: str, companies_by_norm: dict[str, list[int]]) -> list[int]:
@@ -198,6 +216,7 @@ class WikidataModelsStats:
     lines_matched: int = 0
     memberships_inserted: int = 0
     line_generations_waiting: int = 0
+    variants_held: int = 0
     market_name_flagged: int = 0
     waits_no_held_maker: int = 0
     brand_voted: int = 0
@@ -223,7 +242,7 @@ class WikidataModelsStats:
             f"(adopted={self.generation_links_adopted}) "
             f"line_case_waiting={self.line_generations_waiting} | "
             f"market_name_flags={self.market_name_flagged} "
-            f"brand_voted={self.brand_voted} "
+            f"brand_voted={self.brand_voted} variants_held={self.variants_held} "
             f"waits: no_held_maker={self.waits_no_held_maker} "
             f"unmatched={self.waits_unmatched} company_entity={self.company_entities} | "
             f"minted={self.models_minted} (contested={self.mint_contested}, "
@@ -572,6 +591,25 @@ class _WikidataModelsPass:
         self.p179_referenced: set[str] = {
             target for s in self.subjects.values() for target in s.entity.series_of
         }
+
+        # The chassis code each series member states as its OWN - a
+        # parenthetical, or its final token when that is code-shaped
+        # ("Corvette C5", "Golf Mk4", "911 993") - indexed per series from
+        # the sweep itself, so a member stating a sibling's code is seen as
+        # its variant however the run is ordered. A nameplate's own name is
+        # never a code, however code-shaped ("911", "Q3", "S6"): the series
+        # entity's label tokens are excluded from its members' codes.
+        self.sibling_codes: dict[str, set[str]] = {}
+        nameplate_tokens: dict[str, set[str]] = {
+            qid: set(_TOKEN.findall((s.entity.label or "").upper()))
+            for qid, s in self.subjects.items()
+        }
+        for subject in self.subjects.values():
+            for target in subject.entity.series_of:
+                self.sibling_codes.setdefault(target, set()).update(
+                    own_codes(subject.entity.label, subject.entity.aliases)
+                    - nameplate_tokens.get(target, set())
+                )
 
     # --- bookkeeping ---------------------------------------------------------
 
@@ -1336,6 +1374,28 @@ class _WikidataModelsPass:
             "generation_refreshed",
         )
 
+    def _variant_of_sibling(self, subject: _Subject) -> str | None:
+        """The sibling code this entity is a variant OF, or None.
+
+        A generation states its code last: "Corvette C5". A trim, a body or
+        a race car states the generation's code and then its own name:
+        "Corvette C5 Z06", "Corvette C6 ZR1", "Corvette C5-R". So an entity
+        whose label carries a sibling's code with more after it is part of
+        that sibling, and a generations row would put it beside the car it
+        belongs to. Decided from the sweep alone, so the verdict is the same
+        on every run and an existing row's link, once retired, stays so.
+        """
+        entity = subject.entity
+        if not entity.label:
+            return None
+        tokens = _TOKEN.findall(entity.label.upper())
+        own = own_codes(entity.label, entity.aliases)
+        for target in entity.series_of:
+            for code in sorted(self.sibling_codes.get(target, ()) - own):
+                if code in tokens[:-1]:
+                    return code
+        return None
+
     def _create_generation(self, model_id: int, subject: _Subject) -> None:
         entity = subject.entity
         model = self.models[model_id]
@@ -1469,6 +1529,23 @@ class _WikidataModelsPass:
                     "not_a_generation_registry",
                     "held_not_a_generation",
                     {"verdict": policy.NOT_A_GENERATION[qid]},
+                )
+                continue
+            if (
+                not subject.decided
+                and (variant_of := self._variant_of_sibling(subject)) is not None
+            ):
+                # A trim or body of a sibling generation (ADR 0022's Corvette
+                # finding): no link, no refresh, no creation - the gate that
+                # keeps a retired link retired, like the registry's above. An
+                # existing row stays, as ADR 0018 §2 rules for the species.
+                self.stats.variants_held += 1
+                self._decide(
+                    subject,
+                    "5",
+                    "variant_of_sibling",
+                    "held_variant_of_sibling",
+                    {"label": subject.entity.label, "of": variant_of},
                 )
                 continue
             if qid in self.generation_by_qid and not subject.decided:

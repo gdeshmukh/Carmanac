@@ -1675,3 +1675,74 @@ def test_generation_grain_display_survives_a_broken_anchor(
     assert second.generations_refreshed >= 1
     generation = db.scalars(select(Generation)).one()
     assert (generation.company_id, generation.name) == (mb.id, "W205")
+
+
+def _corvette_fixture(db, wikidata_source, vpic_source):  # noqa: F811
+    """The Corvette shape: the nameplate entity, a generation stating its own
+    code, and a trim stating that generation's code and none of its own."""
+    _matched_make(db, wikidata_source, vpic_source, "Q29570", "Chevrolet", 467)
+    _land_model(db, vpic_source, 9, "Corvette", 467, "CHEVROLET")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_sweep(db, wikidata_source, "Q10", "Chevrolet Corvette", makers=["Q29570"])
+    _land_sweep(
+        db, wikidata_source, "Q11", "Chevrolet Corvette C5", makers=["Q29570"], series_of=["Q10"]
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q12",
+        "Chevrolet Corvette C5 Z06",
+        makers=["Q29570"],
+        series_of=["Q10"],
+    )
+
+
+def test_a_trim_wearing_a_siblings_code_is_held_not_minted(db, wikidata_source, vpic_source):  # noqa: F811
+    """ADR 0022's Corvette finding: the Z06 states the C5's code and none of
+    its own, so it is a variant of the C5 - held, never a generation row -
+    while the C5 itself, wearing its own code, mints. Stable on re-run."""
+    _corvette_fixture(db, wikidata_source, vpic_source)
+    stats = run_wikidata_models_pass(db)
+
+    assert (stats.generations_created, stats.variants_held) == (1, 1)
+    generation = db.scalars(select(Generation)).one()
+    assert generation.name == "Corvette C5"
+    decision = _decision(db, "Q12")
+    assert decision.outcome == "held_variant_of_sibling"
+    assert decision.detail["of"] == "C5"
+
+    again = run_wikidata_models_pass(db)
+    assert (again.generations_created, again.variants_held) == (0, 1)
+    assert db.scalar(select(func.count(Generation.id))) == 1
+
+
+def test_a_retired_variant_link_never_comes_back(db, wikidata_source, vpic_source):  # noqa: F811
+    """A row minted before the rule keeps standing (ADR 0018 §2), but once
+    the demotion retires its link the pass never re-asserts it - the gate
+    sits before the refresh."""
+    _corvette_fixture(db, wikidata_source, vpic_source)
+    model = db.scalars(select(Model).where(Model.slug == "corvette")).one()
+    stale = Generation(company_id=model.company_id, slug="corvette-c5-z06", name="Corvette C5 Z06")
+    db.add(stale)
+    db.flush()
+    db.add(ExternalId(generation_id=stale.id, source_id=wikidata_source.id, external_id="Q12"))
+    link = GenerationModelLink(
+        generation_id=stale.id, model_id=model.id, source_id=wikidata_source.id
+    )
+    db.add(link)
+    db.flush()
+    link.superseded_by = link.id  # what the demotion script does
+    db.commit()
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.variants_held == 1
+    live = db.scalars(
+        select(GenerationModelLink).where(
+            GenerationModelLink.generation_id == stale.id,
+            GenerationModelLink.superseded_by.is_(None),
+        )
+    ).all()
+    assert live == []
+    assert db.get(Generation, stale.id) is not None
