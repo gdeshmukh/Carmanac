@@ -263,9 +263,7 @@ class CompanyRelationship(Base, ProvenanceMixin):
 
     __table_args__ = (
         *provenance_table_args(),
-        CheckConstraint(
-            "company_id <> parent_company_id", name="not_self"
-        ),
+        CheckConstraint("company_id <> parent_company_id", name="not_self"),
         CheckConstraint(
             "start_year IS NULL OR end_year IS NULL OR start_year <= end_year",
             name="era_order",
