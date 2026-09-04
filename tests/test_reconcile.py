@@ -491,3 +491,42 @@ def test_slug_collision_flags_but_the_company_still_exists(db, wikidata_source, 
     run_companies_pass(db, wikidata)
     recompute_addresses(db)
     assert set(db.scalars(select(Company.slug))) == {"eagle", "eagle-talon"}
+
+
+def test_brand_member_names_its_canonical(db, wikidata_source):
+    """ADR 0022 §5: Audi AG is named by its brand-classed member "Audi"; the
+    name's provenance points at the member's record, every other fact stays
+    the canonical's, and a re-run is a no-op."""
+    canonical = _land(
+        db,
+        wikidata_source,
+        "Q23317",
+        label="Audi AG",
+        classes=("Q786820",),
+        inceptions=("1909-07-16T00:00:00Z",),
+    )
+    member = _land(db, wikidata_source, "Q124983953", label="Audi", classes=("Q10429667",))
+    run_companies_pass(db, wikidata)
+
+    company = db.scalars(select(Company)).one()
+    assert company.name == "Audi"
+    assert company.founded_year == 1909
+    name_fact = db.scalars(
+        select(FieldProvenance).where(
+            FieldProvenance.company_id == company.id,
+            FieldProvenance.field_name == "name",
+            FieldProvenance.superseded_by.is_(None),
+        )
+    ).one()
+    assert name_fact.raw_record_id == member.id
+    founded_fact = db.scalars(
+        select(FieldProvenance).where(
+            FieldProvenance.company_id == company.id,
+            FieldProvenance.field_name == "founded_year",
+        )
+    ).one()
+    assert founded_fact.raw_record_id == canonical.id
+
+    stats = run_companies_pass(db, wikidata)
+    assert stats.assertions_superseded == 0
+    assert db.scalars(select(Company)).one().name == "Audi"

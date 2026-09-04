@@ -125,6 +125,9 @@ P=.venv/bin/python
 # companies, from Wikidata (~7,200 entities, seconds)
 $P -m carmanac.ingest.wikidata.land   && $P -m carmanac.reconcile.engine
 
+# parent eras between those companies (keyed by the ids just attached)
+$P -m carmanac.ingest.wikidata.relations && $P -m carmanac.reconcile.company_relations_pass
+
 # cross-source identity: vPIC makes matched to those companies
 $P -m carmanac.ingest.vpic.land       && $P -m carmanac.reconcile.matching
 

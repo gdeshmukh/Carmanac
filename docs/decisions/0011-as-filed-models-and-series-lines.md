@@ -3,7 +3,8 @@
 - Status: Accepted (2026-07-30, PR #22 — including the §1 C-Class
   carve-out, confirmed after the VIN-decode probe, and the §3 amendment
   deleting the fabricated demo raw records); amended 2026-08-25 (§2: where
-  a line files, and which series-filed entities are not lines at all)
+  a line files, and which series-filed entities are not lines at all);
+  amended 2026-09-03 (§2: the vote reaches the model rungs)
 - Date: 2026-07-30
 - Depends on: ADR 0007 (reconciler contract), ADR 0010 (the models pass)
 
@@ -103,6 +104,21 @@ and resolve in the generations table — adopted or minted there, never
 relocated — with the line rows retired. The machinery is ADR 0018's
 (the inverse of its `NOT_A_GENERATION` verdict; see its 2026-08-25
 amendment).
+
+**Where a model-shaped entity files (amended 2026-09-03, the mechanics of
+ADR 0022 §7).** The same vote reaches the match rungs. When no company the
+maker property resolves to holds models, the name rungs look under the
+unique model-holding company whose exact name leads the entity's own name,
+with the same whitespace-bound tokens — "Chevrolet Corvette" under General
+Motors matches Chevrolet's filed Corvette. The vote only ever adds a
+destination: an unclear one (a brand token two companies wear, a brand
+holding no models) leaves the entity exactly where it was, so the line rung
+and the mint gate see what they always saw. Whether a parent era links the
+brand to the stated maker is written into the match decision as
+corroboration and never gates it. A nameplate entity that also minted a line
+row this way is settled at the match rungs, so the line rung stops deriving
+the row; `scripts/decisions/retire_redundant_lines.py` deletes the rows
+already standing, never one still holding members.
 
 ### 3. The demo seed retires, artifacts included
 

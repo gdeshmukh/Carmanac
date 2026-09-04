@@ -130,6 +130,9 @@ Core tables (Phase 1 target):
 - `companies` — manufacturers, coachbuilders, restomodders, tuners. Top-level
   entity, has its own page. Roles via `company_roles` +
   `company_role_assignments`.
+- `company_relationships` — dated parent eras between companies, one row
+  per source per era (ADR 0022). "Current parent" is the open-ended live
+  row, a projection; groups are companies with parent rows and no models.
 - `models` — nameplates under a company. FK → `companies`.
 - `model_lines`, `model_line_members` — "3 Series" as an aggregation over
   as-filed models, not a level in the spine (ADR 0011 §2, ADR 0012 §4).

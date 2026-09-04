@@ -19,6 +19,12 @@ Per member with its own company row:
   the pair's company - attach the canonical QID to it and delete the
   member-written fact rows, so the canonical record rewrites name, summary
   and the rest on the next pass. Identity (id, slug) is preserved.
+- member holds the catalogue, canonical materialized but unreferenced (Ford:
+  the brand artifact carries 143 models and the make match while Ford Motor
+  Company holds nothing - ADR 0022 §4): keep the member's row, repoint the
+  canonical's external ids to it, delete the canonical's derived rows and
+  its company row. The canonical record asserts the facts on the next pass;
+  the member's identity, slug and models are untouched.
 
 Everything deleted is derived; raw records are untouched (ADR 0004). Re-run
 the companies pass (`python -m carmanac.reconcile.engine`) afterwards to let
@@ -36,12 +42,15 @@ from sqlalchemy.orm import Session
 
 from carmanac.db.models import (
     Company,
+    CompanyRelationship,
     CompanyRoleAssignment,
     Engine,
     ExternalId,
     FieldProvenance,
+    Generation,
     MediaAttachment,
     Model,
+    ModelLine,
     ReconciliationFlag,
     Source,
     Transmission,
@@ -49,6 +58,7 @@ from carmanac.db.models import (
 )
 from carmanac.db.session import SessionLocal
 from carmanac.reconcile import policy
+from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.sources import wikidata
 
 # Columns that would make a member company real catalogue data rather than a
@@ -73,9 +83,38 @@ def _referenced(session: Session, company_id: int) -> list[str]:
     return hits
 
 
+def _catalogue_collisions(session: Session, from_id: int, into_id: int) -> list[str]:
+    """Lines and generations under `from_id` whose natural key is already
+    taken under `into_id` - the absorb path cannot move those."""
+    line_names = {
+        normalize_name(name)
+        for name in session.scalars(select(ModelLine.name).where(ModelLine.company_id == into_id))
+    }
+    slugs = set(session.scalars(select(Generation.slug).where(Generation.company_id == into_id)))
+    hits = [
+        f"line {name!r}"
+        for name in session.scalars(select(ModelLine.name).where(ModelLine.company_id == from_id))
+        if normalize_name(name) in line_names
+    ]
+    hits += [
+        f"generation {slug!r}"
+        for slug in session.scalars(select(Generation.slug).where(Generation.company_id == from_id))
+        if slug in slugs
+    ]
+    return hits
+
+
 def _delete_derived(session: Session, company_id: int) -> None:
     for model in (FieldProvenance, CompanyRoleAssignment, ReconciliationFlag):
         session.execute(delete(model).where(model.company_id == company_id))
+    # Parent eras are re-derived by the relations pass against the surviving
+    # row; a row's own eras and the eras naming it as parent both go.
+    session.execute(
+        delete(CompanyRelationship).where(
+            (CompanyRelationship.company_id == company_id)
+            | (CompanyRelationship.parent_company_id == company_id)
+        )
+    )
 
 
 def main() -> int:
@@ -93,7 +132,7 @@ def main() -> int:
             ).all()
         )
 
-        collapsed = adopted = 0
+        collapsed = adopted = absorbed = 0
         for member_qid, canonical_qid in sorted(policy.IDENTITY_MERGES.items()):
             member_company_id = qid_to_company.get(member_qid)
             if member_company_id is None:
@@ -121,11 +160,36 @@ def main() -> int:
                 adopted += 1
                 continue
 
+            canonical = session.get(Company, canonical_company_id)
             refs = _referenced(session, member_company_id)
             if refs:
-                print(f"{member_qid}: REFUSED, company '{member.slug}' referenced: {refs}")
+                canonical_refs = _referenced(session, canonical_company_id)
+                collisions = _catalogue_collisions(session, canonical_company_id, member_company_id)
+                if canonical_refs or collisions:
+                    print(
+                        f"{member_qid}: REFUSED, both referenced: "
+                        f"'{member.slug}' {refs}, '{canonical.slug}' {canonical_refs + collisions}"
+                    )
+                    continue
+                print(
+                    f"{member_qid} -> {canonical_qid}: absorb '{canonical.slug}' into "
+                    f"'{member.slug}' (keeps the catalogue: {refs})"
+                )
+                if args.execute:
+                    _delete_derived(session, canonical_company_id)
+                    # Lines and generations anchored on the legal entity are
+                    # the enterprise's; they move with its identity.
+                    for table in (ExternalId, ModelLine, Generation):
+                        session.execute(
+                            update(table)
+                            .where(table.company_id == canonical_company_id)
+                            .values(company_id=member_company_id)
+                        )
+                    session.execute(delete(Company).where(Company.id == canonical_company_id))
+                    session.flush()
+                qid_to_company[canonical_qid] = member_company_id
+                absorbed += 1
                 continue
-            canonical = session.get(Company, canonical_company_id)
             print(
                 f"{member_qid} -> {canonical_qid}: collapse '{member.slug}' into '{canonical.slug}'"
             )
@@ -141,7 +205,7 @@ def main() -> int:
             qid_to_company[member_qid] = canonical_company_id
             collapsed += 1
 
-        print(f"collapsed={collapsed} adopted={adopted}")
+        print(f"collapsed={collapsed} adopted={adopted} absorbed={absorbed}")
         if not args.execute:
             print("dry run - pass --execute to apply")
             return 0

@@ -289,12 +289,17 @@ def test_idempotent_rerun_and_stable_decisions(db, wikidata_source, vpic_source)
 # --- the line destination rule (ADR 0011 §2, amended) ------------------------
 
 
-def _stranded_line_fixture(db, wikidata_source, vpic_source):  # noqa: F811
+def _stranded_line_fixture(db, wikidata_source, vpic_source, filed="C300"):  # noqa: F811
     """The stranded shape: Wikidata's maker is a model-less holding company
     while vPIC filed the models under the carmaker - Mercedes-Benz Group
-    holding the C-Class series entity, Mercedes-Benz holding the models."""
+    holding the C-Class series entity, Mercedes-Benz holding the models.
+
+    `filed` is what vPIC filed. The default is a leaf under the series, so
+    the series is a genuine line; passing "C-Class" makes the series entity
+    the as-filed nameplate itself, where the model rung claims it first.
+    """
     mb = _matched_make(db, wikidata_source, vpic_source, "Q36008", "Mercedes-Benz", 449)
-    _land_model(db, vpic_source, 7, "C-Class", 449, "MERCEDES-BENZ")
+    _land_model(db, vpic_source, 7, filed, 449, "MERCEDES-BENZ")
     from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
 
     run_vpic_models_pass(db)
@@ -334,6 +339,34 @@ def test_stranded_line_files_under_the_carmaker(db, wikidata_source, vpic_source
     stats = run_wikidata_models_pass(db)
     assert stats.lines_created == 0 and stats.lines_matched == 1
     assert db.scalars(select(ModelLine)).one().company_id == mb.id
+
+
+def test_series_entity_that_is_the_filed_model_claims_it(db, wikidata_source, vpic_source):  # noqa: F811
+    """ADR 0022 §7: where the series entity IS the as-filed nameplate, the
+    model rung claims it under the brand its name wears and no line row is
+    minted - the Corvette shape, where "Chevrolet Corvette" is both what
+    Wikidata files a series and what vPIC files a model. Its member becomes
+    a generation of that model, which is what the line row could never hold."""
+    _stranded_line_fixture(db, wikidata_source, vpic_source, filed="C-Class")
+    stats = run_wikidata_models_pass(db)
+
+    assert (stats.models_matched, stats.lines_created) == (1, 0)
+    assert db.scalars(select(ModelLine)).all() == []
+    model = db.scalars(select(Model).where(Model.slug == "c-class")).one()
+    assert (
+        db.scalar(select(ExternalId.model_id).where(ExternalId.external_id == "Q1000")) == model.id
+    )
+    assert stats.generations_created == 1
+    decision = _decision(db, "Q1000")
+    assert decision.detail["brand_vote"] == {
+        "brand": "mercedes-benz",
+        "makers": ["Mercedes-Benz Group"],
+        "parent_link": False,
+    }
+
+    again = run_wikidata_models_pass(db)
+    assert (again.models_matched, again.lines_created) == (0, 0)
+    assert again.models_refreshed == 1
 
 
 def test_held_line_stays_under_its_maker(db, wikidata_source, vpic_source):  # noqa: F811
@@ -1475,9 +1508,7 @@ def test_generation_grain_entity_mints_not_a_line(
     the ruled model, carrying the external id - and the re-run refreshes it
     without renaming it back to its label."""
     mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
-    monkeypatch.setitem(
-        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
-    )
+    monkeypatch.setitem(policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c300", "W205"))
 
     first = run_wikidata_models_pass(db)
     assert (first.lines_created, first.generations_created) == (0, 1)
@@ -1487,7 +1518,7 @@ def test_generation_grain_entity_mints_not_a_line(
     assert (generation.company_id, generation.slug, generation.name) == (mb.id, "w205", "W205")
     anchor = db.scalars(select(ExternalId).where(ExternalId.external_id == "Q1000")).one()
     assert anchor.generation_id == generation.id
-    model = db.scalars(select(Model).where(Model.slug == "c-class")).one()
+    model = db.scalars(select(Model).where(Model.slug == "c300")).one()
     link = db.scalars(
         select(GenerationModelLink).where(GenerationModelLink.superseded_by.is_(None))
     ).one()
@@ -1512,9 +1543,7 @@ def test_generation_grain_adopts_the_standing_row(
     standing = Generation(company_id=mb.id, slug="w205", name="W205")
     db.add(standing)
     db.commit()
-    monkeypatch.setitem(
-        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
-    )
+    monkeypatch.setitem(policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c300", "W205"))
 
     stats = run_wikidata_models_pass(db)
     assert (stats.generations_created, stats.generations_adopted) == (0, 1)
@@ -1522,7 +1551,7 @@ def test_generation_grain_adopts_the_standing_row(
     generation = db.scalars(select(Generation)).one()
     anchor = db.scalars(select(ExternalId).where(ExternalId.external_id == "Q1000")).one()
     assert anchor.generation_id == generation.id == standing.id
-    model = db.scalars(select(Model).where(Model.slug == "c-class")).one()
+    model = db.scalars(select(Model).where(Model.slug == "c300")).one()
     assert {
         (link.generation_id, link.model_id)
         for link in db.scalars(
@@ -1556,7 +1585,7 @@ def test_generation_grain_links_when_the_nameplate_lands(
         == []
     )
 
-    model = db.scalars(select(Model).where(Model.slug == "c-class")).one()
+    model = db.scalars(select(Model).where(Model.slug == "c300")).one()
     db.add(ExternalId(model_id=model.id, source_id=wikidata_source.id, external_id="Q1000"))
     db.commit()
     second = run_wikidata_models_pass(db)
@@ -1582,11 +1611,13 @@ def test_retired_generation_grain_line_stays_retired(
     mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
     first = run_wikidata_models_pass(db)
     assert first.lines_created == 1
+    # The retirement script refuses a row still holding members, so the state
+    # it leaves behind is a line with none.
+    for member in db.scalars(select(ModelLineMember)):
+        db.delete(member)
     db.delete(db.scalars(select(ModelLine)).one())
     db.commit()
-    monkeypatch.setitem(
-        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
-    )
+    monkeypatch.setitem(policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c300", "W205"))
 
     second = run_wikidata_models_pass(db)
     assert (second.lines_created, second.generations_created) == (0, 1)
@@ -1633,9 +1664,7 @@ def test_generation_grain_display_survives_a_broken_anchor(
     model later disappears, the refresh keeps the ruled name rather than
     renaming the row back to its stripped label."""
     mb = _stranded_line_fixture(db, wikidata_source, vpic_source)
-    monkeypatch.setitem(
-        policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c-class", "W205")
-    )
+    monkeypatch.setitem(policy.WIKIDATA_GENERATION_GRAIN, "Q1000", ("mercedes-benz/c300", "W205"))
     first = run_wikidata_models_pass(db)
     assert first.generations_created == 1
 
@@ -1646,3 +1675,75 @@ def test_generation_grain_display_survives_a_broken_anchor(
     assert second.generations_refreshed >= 1
     generation = db.scalars(select(Generation)).one()
     assert (generation.company_id, generation.name) == (mb.id, "W205")
+
+
+def _corvette_fixture(db, wikidata_source, vpic_source):  # noqa: F811
+    """The Corvette shape: the nameplate entity, a generation stating its own
+    code last, and a trim stating that generation's code with more after."""
+    _matched_make(db, wikidata_source, vpic_source, "Q29570", "Chevrolet", 467)
+    _land_model(db, vpic_source, 9, "Corvette", 467, "CHEVROLET")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_sweep(db, wikidata_source, "Q10", "Chevrolet Corvette", makers=["Q29570"])
+    _land_sweep(
+        db, wikidata_source, "Q11", "Chevrolet Corvette C5", makers=["Q29570"], series_of=["Q10"]
+    )
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q12",
+        "Chevrolet Corvette C5 Z06",
+        makers=["Q29570"],
+        series_of=["Q10"],
+    )
+
+
+def test_a_trim_wearing_a_siblings_code_is_held_not_minted(db, wikidata_source, vpic_source):  # noqa: F811
+    """ADR 0018's 2026-09-03 amendment: the Z06 states the C5's code with
+    more after it, so it is a variant of the C5 - held, never a generation
+    row - while the C5 itself, stating its code last, mints. Stable on
+    re-run."""
+    _corvette_fixture(db, wikidata_source, vpic_source)
+    stats = run_wikidata_models_pass(db)
+
+    assert (stats.generations_created, stats.variants_held) == (1, 1)
+    generation = db.scalars(select(Generation)).one()
+    assert generation.name == "Corvette C5"
+    decision = _decision(db, "Q12")
+    assert decision.outcome == "held_variant_of_sibling"
+    assert decision.detail["of"] == "C5"
+
+    again = run_wikidata_models_pass(db)
+    assert (again.generations_created, again.variants_held) == (0, 1)
+    assert db.scalar(select(func.count(Generation.id))) == 1
+
+
+def test_a_retired_variant_link_never_comes_back(db, wikidata_source, vpic_source):  # noqa: F811
+    """A row minted before the rule keeps standing (ADR 0018 §2), but once
+    the demotion retires its link the pass never re-asserts it - the gate
+    sits before the refresh."""
+    _corvette_fixture(db, wikidata_source, vpic_source)
+    model = db.scalars(select(Model).where(Model.slug == "corvette")).one()
+    stale = Generation(company_id=model.company_id, slug="corvette-c5-z06", name="Corvette C5 Z06")
+    db.add(stale)
+    db.flush()
+    db.add(ExternalId(generation_id=stale.id, source_id=wikidata_source.id, external_id="Q12"))
+    link = GenerationModelLink(
+        generation_id=stale.id, model_id=model.id, source_id=wikidata_source.id
+    )
+    db.add(link)
+    db.flush()
+    link.superseded_by = link.id  # what the demotion script does
+    db.commit()
+
+    stats = run_wikidata_models_pass(db)
+    assert stats.variants_held == 1
+    live = db.scalars(
+        select(GenerationModelLink).where(
+            GenerationModelLink.generation_id == stale.id,
+            GenerationModelLink.superseded_by.is_(None),
+        )
+    ).all()
+    assert live == []
+    assert db.get(Generation, stale.id) is not None

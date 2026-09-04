@@ -22,7 +22,7 @@ from __future__ import annotations
 # Bump when a policy/mapper/engine change alters what the reconciler would
 # produce. `reconciled_records.reconciler_version` records which version
 # processed each record, making staleness queryable.
-RECONCILER_VERSION = "21"
+RECONCILER_VERSION = "22"
 
 # --- identity --------------------------------------------------------------
 
@@ -116,7 +116,39 @@ IDENTITY_MERGES: dict[str, str] = {
     # materialized here, so the normal path applies: the member row (sparse)
     # collapses into the canonical (substantive).
     "Q63197612": "Q105334279",  # Techrules (marque stub) -> Techrules (manufacturer)
+    # --- ADR 0022 §4: the brand artifact names the company it belongs to.
+    # The artifact row holds the catalogue (models, make match, slug) and
+    # survives; the company's id attaches to it and the company record
+    # asserts the facts. The badge names the page (§5).
+    "Q20827633": "Q44294",  # Ford (brand artifact) -> Ford Motor Company
+    "Q125054811": "Q55931",  # Hyundai (brand artifact) -> Hyundai Motor Company
+    "Q125552548": "Q569235",  # Saturn (brand artifact) -> Saturn Corporation
+    "Q125097536": "Q35935",  # Lotus (brand artifact) -> Lotus Cars
+    "Q131552505": "Q1351854",  # McLaren (brand artifact) -> McLaren Automotive
+    "Q63049904": "Q27074",  # Aston Martin (brand artifact) -> Aston Martin Lagonda
+    "Q125553067": "Q181642",  # Suzuki (brand artifact) -> Suzuki Motor Corporation
+    "Q21170490": "Q30055",  # Jaguar (brand artifact) -> Jaguar Cars
+    "Q125141709": "Q234803",  # Rolls-Royce (brand artifact) -> Rolls-Royce Motor Cars
+    "Q124966356": "Q48957",  # Saab (brand artifact) -> Saab Automobile
+    "Q125552500": "Q7338847",  # Rivian (brand artifact) -> Rivian Automotive
+    "Q132560748": "Q749239",  # Pagani (brand artifact) -> Pagani Automobili
+    "Q125130248": "Q1241608",  # Delorean (brand artifact) -> DeLorean Motor Company
+    # Mitsubishi's artifact is "owned by" the keiretsu, which is not a company
+    # we hold; Mitsubishi Motors is the maker Wikidata states on the marque's
+    # models, and its name is led by the badge.
+    "Q63118791": "Q36033",  # Mitsubishi (brand artifact) -> Mitsubishi Motors
+    # Model-less artifacts beside the company that holds the cars. The Volvo
+    # trademark entity is co-owned with Volvo Group (trucks); it attaches as a
+    # member only, so nothing from the truck side reaches the car page.
+    "Q125552869": "Q1514963",  # SSC (brand artifact) -> SSC North America
+    "Q20827600": "Q215293",  # Volvo (trademark entity) -> Volvo Cars
+    "Q135700024": "Q29637",  # Škoda (brand artifact) -> Škoda Auto
 }
+
+# Classes that make a Wikidata entity a brand artifact (ADR 0022): an entity
+# classed ONLY as these is the marque's name, not its company. Such a merge
+# member names the page (§5); the brand/company proposer reads the same set.
+BRAND_ARTIFACT_CLASSES: frozenset[str] = frozenset({"Q10429667", "Q431289", "Q167270"})
 
 # A curated merge is a human identity decision about BOTH sides: naming a
 # canonical declares it a company we hold, even where its own classes would
@@ -274,7 +306,7 @@ WIKIDATA_MODEL_NEGATIVES: frozenset[tuple[str, str]] = frozenset()
 # the way VPIC_MATCHES names its makes: documentation, never matched.
 WIKIDATA_MINT_COMPANIES: dict[str, str] = {
     "Q6746": "citroen",
-    "Q29637": "skoda-auto",
+    "Q29637": "skoda",
     "Q188217": "seat",
     "Q27460": "dacia",
     "Q26823": "abarth",
@@ -315,15 +347,15 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     "Q105737028": "era:renault/express",  # Renault Express (2021-present)
     "Q2702123": "model:renault/symbol",  # Renault Symbol (1999-2021)
     "Q827056": "model:seat/leon",  # SEAT Leon (1999-present)
-    "Q391936": "model:skoda-auto/120",  # Skoda 120 (1976-1990, the Type 742 page)
-    "Q52054487": "model:skoda-auto/kamiq",  # Skoda Kamiq (2019-present, global car)
-    "Q392083": "model:skoda-auto/superb",  # Skoda Superb, the modern car's page
-    "Q392060": "era:skoda-auto/superb",  # Skoda Superb (1934-1949)
-    "Q392016": "model:skoda-auto/felicia",  # Skoda Felicia, the 1994-2001 car's page
-    "Q391899": "era:skoda-auto/felicia",  # Skoda Felicia (1959-1964 roadster)
-    "Q391996": "model:skoda-auto/favorit",  # Skoda Favorit, the 1987 hatchback's page
-    "Q391999": "era:skoda-auto/favorit",  # Skoda Favorit (1936-1941)
-    "Q163053": "model:skoda-auto/fabia",  # Skoda Fabia (1999-present)
+    "Q391936": "model:skoda/120",  # Skoda 120 (1976-1990, the Type 742 page)
+    "Q52054487": "model:skoda/kamiq",  # Skoda Kamiq (2019-present, global car)
+    "Q392083": "model:skoda/superb",  # Skoda Superb, the modern car's page
+    "Q392060": "era:skoda/superb",  # Skoda Superb (1934-1949)
+    "Q392016": "model:skoda/felicia",  # Skoda Felicia, the 1994-2001 car's page
+    "Q391899": "era:skoda/felicia",  # Skoda Felicia (1959-1964 roadster)
+    "Q391996": "model:skoda/favorit",  # Skoda Favorit, the 1987 hatchback's page
+    "Q391999": "era:skoda/favorit",  # Skoda Favorit (1936-1941)
+    "Q163053": "model:skoda/fabia",  # Skoda Fabia (1999-present)
     "Q1123579": "model:seat/toledo",  # SEAT Toledo, the nameplate's own page
     "Q5122860": "model:citroen/c3-aircross",  # Citroen C3 Aircross, the nameplate's own page
     "Q933825": "model:dacia/dokker",  # Dacia Dokker, the real 2012 van
@@ -336,10 +368,10 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     "Q3932908": "model:renault/type-x",  # Renault Type X
     # The Rapid ruling: one nameplate, three era pages; the name-only entity
     # (its page is a directory stub) carries the model:
-    "Q346196": "model:skoda-auto/rapid",  # the name itself
-    "Q392029": "era:skoda-auto/rapid",  # Skoda Rapid (1935-1947)
-    "Q392038": "era:skoda-auto/rapid",  # Skoda Garde/Rapid (1981-1990 coupe)
-    "Q180270": "era:skoda-auto/rapid",  # Skoda Rapid (2012 liftback)
+    "Q346196": "model:skoda/rapid",  # the name itself
+    "Q392029": "era:skoda/rapid",  # Skoda Rapid (1935-1947)
+    "Q392038": "era:skoda/rapid",  # Skoda Garde/Rapid (1981-1990 coupe)
+    "Q180270": "era:skoda/rapid",  # Skoda Rapid (2012 liftback)
     # Ruled now, dates arrive later (no page of their own yet):
     "Q20724366": "era:citroen/c3",  # Citroen C3 III
     "Q123113826": "era:citroen/c3",  # Citroen C3 IV
@@ -376,17 +408,17 @@ WIKIDATA_DUPLICATE_NAMEPLATES: dict[str, str] = {
     "Q3476819": "era:seat/toledo",  # Toledo II
     "Q3476820": "era:seat/toledo",  # Toledo III
     "Q18412995": "era:seat/toledo",  # Toledo IV
-    "Q137771826": "era:skoda-auto/120",  # the second Skoda 120 entry
-    "Q391966": "era:skoda-auto/fabia",  # Fabia I
-    "Q391971": "era:skoda-auto/fabia",  # Fabia II
-    "Q18410434": "era:skoda-auto/fabia",  # Fabia III
-    "Q392024": "era:skoda-auto/pick-up",  # Skoda Pick-up (one of the pair)
-    "Q90701201": "era:skoda-auto/pick-up",  # Skoda Pick-up (the other)
-    "Q392063": "era:skoda-auto/superb",  # Superb I
-    "Q392067": "era:skoda-auto/superb",  # Superb II
-    "Q19758190": "era:skoda-auto/superb",  # Superb III
-    "Q1609671": "era:skoda-auto/octavia",  # Octavia III
-    "Q75030046": "era:skoda-auto/octavia",  # Octavia IV
+    "Q137771826": "era:skoda/120",  # the second Skoda 120 entry
+    "Q391966": "era:skoda/fabia",  # Fabia I
+    "Q391971": "era:skoda/fabia",  # Fabia II
+    "Q18410434": "era:skoda/fabia",  # Fabia III
+    "Q392024": "era:skoda/pick-up",  # Skoda Pick-up (one of the pair)
+    "Q90701201": "era:skoda/pick-up",  # Skoda Pick-up (the other)
+    "Q392063": "era:skoda/superb",  # Superb I
+    "Q392067": "era:skoda/superb",  # Superb II
+    "Q19758190": "era:skoda/superb",  # Superb III
+    "Q1609671": "era:skoda/octavia",  # Octavia III
+    "Q75030046": "era:skoda/octavia",  # Octavia IV
     # Held with open flags, no entry: the SEAT 124 Sport duplicate pair (its
     # English link lands on the Fiat 124 Sport Coupe, a different car), the
     # three same-time market duplicates (Kamiq China, Rapid China/India), the
@@ -641,11 +673,11 @@ ENGINE_FAMILY_ARTICLES: dict[str, str | None] = {
     "toyota tr": "toyota",
     "toyota zr": "toyota",
     "viper": "dodge",
-    "volvo b8444s": "volvo-cars",
-    "volvo d5": "volvo-cars",
-    "volvo engine architecture": "volvo-cars",
-    "volvo modular": "volvo-cars",
-    "volvo si6": "volvo-cars",
+    "volvo b8444s": "volvo",
+    "volvo d5": "volvo",
+    "volvo engine architecture": "volvo",
+    "volvo modular": "volvo",
+    "volvo si6": "volvo",
     "cummins b series": None,  # supplier; no companies row
     "douvrin": None,  # PSA-Renault joint venture
     "prv": None,  # Peugeot-Renault-Volvo joint venture
@@ -654,7 +686,7 @@ ENGINE_FAMILY_ARTICLES: dict[str, str | None] = {
 
 TRANSMISSION_FAMILY_ARTICLES: dict[str, str | None] = {
     "ford mtx-75": "ford",
-    "multitronic": "audi-ag",  # Audi's CVT line; the title alone names no maker
+    "multitronic": "audi",  # Audi's CVT line; the title alone names no maker
     "toyota a": "toyota",
     "toyota s": "toyota",
     "zf 8hp": None,  # supplier; no companies row

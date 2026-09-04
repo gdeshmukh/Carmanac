@@ -29,8 +29,8 @@ from carmanac.reconcile.addressing import slugify
 from carmanac.reconcile.matching import normalize_name
 from carmanac.reconcile.wikidata_models_pass import (
     _WikidataModelsPass,
+    brand_destination,
     line_brand_wearers,
-    line_destination,
 )
 
 
@@ -72,7 +72,7 @@ def main() -> None:
             # or relocated it under the brand before the grain ruling).
             keys = {(makers[0], normalize_name(pass_._strip(entity.label, makers[0])))}
             wearers = line_brand_wearers(entity.label, pass_.companies_by_norm)
-            destination, _vote_flag = line_destination(makers[0], wearers, model_holding)
+            destination, _reason = brand_destination(makers[0], wearers, model_holding)
             if destination is not None and destination != makers[0]:
                 keys.add((destination, normalize_name(pass_._strip(entity.label, destination))))
             found = {pass_.line_by_key[k]: k for k in keys if k in pass_.line_by_key}

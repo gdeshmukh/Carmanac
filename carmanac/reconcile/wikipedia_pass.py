@@ -150,6 +150,7 @@ class WikipediaStats:
     no_sections: int = 0
     redirected: int = 0
     unrouted: int = 0
+    sections_deferred: int = 0
     flagged_articles: int = 0
     engines_minted: int = 0
     transmissions_minted: int = 0
@@ -170,7 +171,8 @@ class WikipediaStats:
             f"refreshed={self.generations_refreshed} "
             f"links={self.links_asserted} reconciled={self.sections_reconciled} "
             f"no_sections={self.no_sections} redirected={self.redirected} "
-            f"unrouted={self.unrouted} flagged={self.flagged_articles} | "
+            f"unrouted={self.unrouted} deferred={self.sections_deferred} "
+            f"flagged={self.flagged_articles} | "
             f"powertrain: minted={self.engines_minted}+{self.transmissions_minted} "
             f"variants={self.variants_minted} "
             f"links={self.powertrain_links} (retired={self.powertrain_retired}) "
@@ -339,6 +341,18 @@ class _WikipediaPass:
                     ExternalId.external_id.like("section:%"),
                 )
             )
+        }
+        # A section-born generation that later grew its own entity has two
+        # articles describing it: the nameplate's section and the entity's
+        # own page. One row, one asserting record - the dedicated page,
+        # which is about the generation itself where the section is about
+        # the nameplate's take on it (the M5 article dates the E28 by the
+        # M5's years). The section keeps the link and defers on facts.
+        articles = {r.external_id for r in self.current if r.external_id.startswith("article:")}
+        self.own_article: set[int] = {
+            generation_id
+            for qid, generation_id in self.generation_by_qid.items()
+            if f"article:{qid}" in articles
         }
 
     def _load_section_mains(self) -> None:
@@ -588,6 +602,9 @@ class _WikipediaPass:
         provenance. The two assert_field_facts calls split COVERAGE
         disjointly per run, so a field the target stops supplying falls back
         into the article record's coverage and tombstones normally."""
+        if generation.id in self.own_article:
+            self.stats.sections_deferred += 1
+            return
         facts: dict[str, tuple[str, object]] = {"name": (display, display)}
         main_facts: dict[str, tuple[str, object]] = {}
         if section.codes:

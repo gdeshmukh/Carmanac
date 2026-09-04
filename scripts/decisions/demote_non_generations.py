@@ -3,7 +3,11 @@
 Wikidata's P179 minted trim/body lineages as generations; the ruled entries
 live in `policy.NOT_A_GENERATION` (the registry is what keeps this from
 resurrecting - the wd-models pass re-asserts links from P179 every run).
-This script is the applied half of the decision:
+The pass also derives the same verdict itself where the structure shows it
+- an entity stating a sibling's chassis code with more after it (the Z06
+under the C5) - and those verdicts stand beside the registry's here, with
+the pass's own gate keeping their links retired. This script is the
+applied half of the decision:
 
 - The dry run (default) prints, per registry entry AND per unruled member
   of the censused species (a proposal with the same evidence, no verdict):
@@ -32,6 +36,7 @@ from carmanac.db.models import (
     ExternalId,
     Generation,
     GenerationModelLink,
+    MatchDecision,
     Model,
     ReconciliationFlag,
     Source,
@@ -53,8 +58,19 @@ PROPOSED_SPECIES: dict[str, str] = {
 def census(session: Session) -> list[dict]:
     """Evidence per species QID, registry entries first."""
     wikidata_id = session.scalar(select(Source.id).where(Source.name == "Wikidata"))
+    derived = {
+        qid: f"variant of {detail['of']}"
+        for qid, detail in session.execute(
+            select(MatchDecision.external_id, MatchDecision.detail).where(
+                MatchDecision.source_id == wikidata_id,
+                MatchDecision.pass_name == "wikidata_models",
+                MatchDecision.outcome == "held_variant_of_sibling",
+            )
+        )
+    }
+    verdicts = {**derived, **policy.NOT_A_GENERATION}
     entries = []
-    for qid in [*policy.NOT_A_GENERATION, *PROPOSED_SPECIES]:
+    for qid in [*verdicts, *PROPOSED_SPECIES]:
         generation = session.scalars(
             select(Generation)
             .join(ExternalId, ExternalId.generation_id == Generation.id)
@@ -89,7 +105,7 @@ def census(session: Session) -> list[dict]:
                 "qid": qid,
                 "generation": generation,
                 "company": session.get(Company, generation.company_id).slug,
-                "verdict": policy.NOT_A_GENERATION.get(qid),
+                "verdict": verdicts.get(qid),
                 "note": PROPOSED_SPECIES.get(qid),
                 "links": links,
                 "placements": placements,
