@@ -1679,7 +1679,7 @@ def test_generation_grain_display_survives_a_broken_anchor(
 
 def _corvette_fixture(db, wikidata_source, vpic_source):  # noqa: F811
     """The Corvette shape: the nameplate entity, a generation stating its own
-    code, and a trim stating that generation's code and none of its own."""
+    code last, and a trim stating that generation's code with more after."""
     _matched_make(db, wikidata_source, vpic_source, "Q29570", "Chevrolet", 467)
     _land_model(db, vpic_source, 9, "Corvette", 467, "CHEVROLET")
     from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
@@ -1700,9 +1700,10 @@ def _corvette_fixture(db, wikidata_source, vpic_source):  # noqa: F811
 
 
 def test_a_trim_wearing_a_siblings_code_is_held_not_minted(db, wikidata_source, vpic_source):  # noqa: F811
-    """ADR 0022's Corvette finding: the Z06 states the C5's code and none of
-    its own, so it is a variant of the C5 - held, never a generation row -
-    while the C5 itself, wearing its own code, mints. Stable on re-run."""
+    """ADR 0018's 2026-09-03 amendment: the Z06 states the C5's code with
+    more after it, so it is a variant of the C5 - held, never a generation
+    row - while the C5 itself, stating its code last, mints. Stable on
+    re-run."""
     _corvette_fixture(db, wikidata_source, vpic_source)
     stats = run_wikidata_models_pass(db)
 

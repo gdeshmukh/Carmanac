@@ -4,7 +4,7 @@ Wikidata's P179 minted trim/body lineages as generations; the ruled entries
 live in `policy.NOT_A_GENERATION` (the registry is what keeps this from
 resurrecting - the wd-models pass re-asserts links from P179 every run).
 The pass also derives the same verdict itself where the structure shows it
-- an entity wearing a sibling's chassis code and none of its own (the Z06
+- an entity stating a sibling's chassis code with more after it (the Z06
 under the C5) - and those verdicts stand beside the registry's here, with
 the pass's own gate keeping their links retired. This script is the
 applied half of the decision:

@@ -1535,8 +1535,8 @@ class _WikidataModelsPass:
                 not subject.decided
                 and (variant_of := self._variant_of_sibling(subject)) is not None
             ):
-                # A trim or body of a sibling generation (ADR 0022's Corvette
-                # finding): no link, no refresh, no creation - the gate that
+                # A trim or body of a sibling generation (ADR 0018, 2026-09-03
+                # amendment): no link, no refresh, no creation - the gate that
                 # keeps a retired link retired, like the registry's above. An
                 # existing row stays, as ADR 0018 §2 rules for the species.
                 self.stats.variants_held += 1

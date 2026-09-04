@@ -187,8 +187,8 @@ Crossfire is a Chrysler. The mechanics are ADR 0011 §2's amendment.
 - The companies fetch gains a second sweep keyed by the company ids we hold,
   landed under its own marker, so the makes sweep's content hashes are
   untouched. A small pass projects it into §1's table.
-- The merge script gains §4's third path. The brand/company proposer is a
-  decisions script with a dry run; its rulings land in the identity registry.
+- §4's merges and proposals stay behind the standing dry-run gate, and each
+  ruling lands in the identity registry, never in a list of its own.
 - The front door already lists companies that hold cars; §6 changes nothing
   there. Company pages gain "part of" when the read surface is next touched.
 - Owed elsewhere: the residue name rulings (§5); whether a group gets a thin

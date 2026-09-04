@@ -42,9 +42,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.CheckConstraint("confidence_score BETWEEN 0 AND 1", name="confidence_score_range"),
-        sa.CheckConstraint(
-            "company_id <> parent_company_id", name="not_self"
-        ),
+        sa.CheckConstraint("company_id <> parent_company_id", name="not_self"),
         sa.CheckConstraint(
             "start_year IS NULL OR end_year IS NULL OR start_year <= end_year",
             name="era_order",
