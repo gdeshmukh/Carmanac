@@ -174,13 +174,14 @@ having parent rows and no models, and a company can be both.
 
 ### 7. The model sweep reads the graph as evidence, never as a gate
 
-When a model-shaped entity's maker holds no models, the entity files by the
-same vote a line does (ADR 0011 §2): under the unique model-holding company
-whose name leads the entity's own name, and then matches by name there. Whether
-§1 records that company as a child of the stated maker is written into the
-decision as corroboration. It never blocks: the maker of the Chrysler
-Crossfire is Karmann, the contract builder, no parent edge exists, and the
-Crossfire is a Chrysler. The mechanics are ADR 0011 §2's amendment.
+When no company we hold as a model-shaped entity's maker holds models, the
+entity files by the same vote a line does (ADR 0011 §2): under the unique
+model-holding company whose name leads the entity's own name, and then
+matches by name there. Whether §1 records that company as a child of the
+stated maker is written into the decision as corroboration. It never blocks:
+the maker of the Chrysler Crossfire is Karmann, the contract builder, no
+parent edge exists, and the Crossfire is a Chrysler. The mechanics are ADR
+0011 §2's amendment.
 
 ## Consequences
 

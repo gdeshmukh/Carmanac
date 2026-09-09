@@ -24,9 +24,11 @@ BATCH_SIZE = 300
 
 # Statement-level so qualifiers ride along: P749 parent organization, P355
 # subsidiary (the same edge stated from the parent), P127 owned by. Rank is
-# landed, not filtered - the pass drops deprecated statements.
+# landed, not filtered - the pass drops deprecated statements. Claims are
+# keyed per statement, never per target: a parent stated twice with two
+# eras (Maserati under Fiat, then Fiat again) is two claims.
 RELATIONS_QUERY = """
-SELECT ?item ?edge ?target ?targetLabel ?rank ?start ?end WHERE {{
+SELECT ?item ?statement ?edge ?target ?targetLabel ?rank ?start ?end WHERE {{
   VALUES ?item {{ {values} }}
   VALUES (?p ?ps ?edge) {{
     (p:P749 ps:P749 "parents")
@@ -69,7 +71,7 @@ def target_qids(session: Session) -> list[str]:
 
 
 def _payloads(qids: list[str], bindings: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    claims: dict[str, dict[str, dict[tuple[str, str], dict[str, Any]]]] = {
+    claims: dict[str, dict[str, dict[str, dict[str, Any]]]] = {
         qid: {"parents": {}, "subsidiaries": {}, "owners": {}} for qid in qids
     }
     for binding in bindings:
@@ -81,7 +83,7 @@ def _payloads(qids: list[str], bindings: list[dict[str, Any]]) -> dict[str, dict
         target_qid = _qid(target)
         rank = binding["rank"]["value"].rsplit("#", 1)[-1].removesuffix("Rank").lower()
         claim = claims[qid][edge].setdefault(
-            (target_qid, rank),
+            binding["statement"]["value"],
             {
                 "qid": target_qid,
                 "label": binding.get("targetLabel", {}).get("value") or target_qid,
@@ -107,7 +109,9 @@ def _payloads(qids: list[str], bindings: list[dict[str, Any]]) -> dict[str, dict
                 }
                 for claim in by_key.values()
             ]
-            rows.sort(key=lambda row: (int(row["qid"][1:]), row["rank"]))
+            rows.sort(
+                key=lambda row: (int(row["qid"][1:]), row["rank"], row["starts"], row["ends"])
+            )
             payload[edge] = rows
         payloads[qid] = payload
     return payloads
