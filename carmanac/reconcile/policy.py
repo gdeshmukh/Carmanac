@@ -446,7 +446,7 @@ WIKIDATA_LINE_HOLDS: dict[tuple[str, str], str] = {
     ("sevel", "Citroën Jumper"): "awaits-review",
     # Vans and category pages, awaiting a cars-first scope ruling:
     ("daimler-benz-ag", "Mercedes-Benz L series vans"): "scope-unruled",
-    ("ford-motor-company", "full-size Ford"): "scope-unruled",
+    ("ford", "full-size Ford"): "scope-unruled",
     ("mercedes-benz-group", "Mercedes-Benz 300"): "scope-unruled",
     ("mercedes-benz-group", "Mercedes-Benz Citan"): "scope-unruled",
     ("volkswagen-group", "Volkswagen Caddy"): "scope-unruled",
@@ -653,7 +653,7 @@ ENGINE_FAMILY_ARTICLES: dict[str, str | None] = {
     "mercedes-benz m159": "mercedes-benz",
     "mercedes-benz m176/m177/m178": "mercedes-benz",
     "mercedes-benz m274": "mercedes-benz",
-    "mitsubishi 4g9": "mitsubishi-motors",
+    "mitsubishi 4g9": "mitsubishi",
     "nissan vr": "nissan",
     "porsche v8 engines": "porsche",  # umbrella article, one family entity
     "psa ew/dw": "groupe-psa",

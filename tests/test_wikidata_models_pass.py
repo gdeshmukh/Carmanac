@@ -357,16 +357,15 @@ def test_series_entity_that_is_the_filed_model_claims_it(db, wikidata_source, vp
         db.scalar(select(ExternalId.model_id).where(ExternalId.external_id == "Q1000")) == model.id
     )
     assert stats.generations_created == 1
-    decision = _decision(db, "Q1000")
-    assert decision.detail["brand_vote"] == {
-        "brand": "mercedes-benz",
-        "makers": ["Mercedes-Benz Group"],
-        "parent_link": False,
-    }
+    vote = {"brand": "mercedes-benz", "makers": ["Mercedes-Benz Group"], "parent_link": False}
+    assert _decision(db, "Q1000").detail["brand_vote"] == vote
 
     again = run_wikidata_models_pass(db)
     assert (again.models_matched, again.lines_created) == (0, 0)
     assert again.models_refreshed == 1
+    # The refresh replaces the matching decision; the corroboration stays.
+    assert _decision(db, "Q1000").outcome == "model_refreshed"
+    assert _decision(db, "Q1000").detail["brand_vote"] == vote
 
 
 def test_held_line_stays_under_its_maker(db, wikidata_source, vpic_source):  # noqa: F811

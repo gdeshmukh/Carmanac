@@ -44,6 +44,10 @@ def _binding(
 ) -> dict[str, Any]:
     row = {
         "item": {"type": "uri", "value": f"{_ENTITY}{qid}"},
+        "statement": {
+            "type": "uri",
+            "value": f"{_ENTITY}statement/{qid}-{edge}-{target}-{start}-{end}",
+        },
         "edge": {"type": "literal", "value": edge},
         "target": {"type": "uri", "value": f"{_ENTITY}{target}"},
         "targetLabel": {"type": "literal", "value": label or target},
@@ -243,6 +247,25 @@ def test_an_undated_claim_beside_a_dated_one_is_not_a_second_era(db, wikidata_so
     assert stats.eras_asserted == 1
     (row,) = _live(db)
     assert (row.start_year, row.end_year) == (1931, 2017)
+
+
+def test_the_same_parent_stated_twice_is_two_eras(db, wikidata_source, graph):
+    """Maserati under Fiat 1993-1997 and again 2005-2014: two statements on
+    one target are two eras, never one span swallowing the years between."""
+    _land(
+        db,
+        [
+            _binding(
+                "Q1", "parents", "Q2", start="1993-01-01T00:00:00Z", end="1997-01-01T00:00:00Z"
+            ),
+            _binding(
+                "Q1", "parents", "Q2", start="2005-01-01T00:00:00Z", end="2014-01-01T00:00:00Z"
+            ),
+        ],
+    )
+    stats = run_company_relations_pass(db)
+    assert stats.eras_asserted == 2
+    assert sorted((r.start_year, r.end_year) for r in _live(db)) == [(1993, 1997), (2005, 2014)]
 
 
 def test_an_undated_claim_alone_still_lands(db, wikidata_source, graph):
