@@ -313,6 +313,46 @@ def test_existing_inventory_reconciles_or_mints_distinct(
 
 
 @pytest.mark.integration
+def test_claimed_competitors_free_the_rest_to_mint(db, wikidata_source, wikipedia_source, spine):
+    """One Wikidata-born generation beside a three-section article: the
+    section wearing its name claims it, and with every competitor claimed
+    the other sections are distinct by elimination. A competitor no section
+    claims still holds the whole article."""
+    spine["e46"].name = "330i (second generation)"
+    db.add(ExternalId(model_id=spine["model"].id, source_id=wikidata_source.id, external_id="Q9"))
+    article = (
+        "== First generation (1990) ==\n{{Infobox automobile\n| production = 1990–1997\n}}\n"
+        "== Second generation (1998) ==\n{{Infobox automobile\n| production = 1998–2005\n}}\n"
+        "== Third generation (2006) ==\n{{Infobox automobile\n| production = 2006–2011\n}}\n"
+    )
+    _land_article(db, wikipedia_source, "Q9", "BMW 330i", article)
+    db.commit()
+    stats = run_wikipedia_pass(db)
+    assert (stats.sections_reconciled, stats.generations_created, stats.flagged_articles) == (
+        0,
+        0,
+        1,
+    )
+    assert db.scalars(select(ReconciliationFlag)).one().detail["existing_generations"] == [
+        "e46",
+        "e90",
+    ]
+
+    # Retire the E90's link: the second generation is then the only competitor.
+    db.execute(
+        text("DELETE FROM generation_model_links WHERE generation_id = :g"), {"g": spine["e90"].id}
+    )
+    db.commit()
+    stats = run_wikipedia_pass(db)
+    assert (stats.sections_reconciled, stats.generations_created, stats.flagged_articles) == (
+        1,
+        2,
+        0,
+    )
+    assert db.scalar(select(ReconciliationFlag).where(ReconciliationFlag.status == "open")) is None
+
+
+@pytest.mark.integration
 def test_unreconcilable_sections_flag_instead_of_duplicating(
     db,
     wikidata_source,
@@ -1122,3 +1162,80 @@ def test_a_generation_with_its_own_article_is_dated_by_it_alone(
     again = run_wikipedia_pass(db)
     assert again.assertions_inserted == 0 and again.assertions_superseded == 0
     assert again.sections_deferred == 1
+
+
+@pytest.mark.integration
+def test_code_led_sections_mint_dated_generations_that_place(
+    db,
+    wikidata_source,
+    wikipedia_source,
+    spine,
+    routed,
+):
+    """The M5 shape end to end: a nameplate article whose code-led sections
+    each carry their own production span mints dated, linked generations,
+    and the model's model-year configurations place by unique dated overlap.
+    A boundary year with a period but no car (the M5's 1988) is not a
+    placement question at all, and both passes re-run to a no-op."""
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "{{Infobox automobile\n| name = BMW Z4\n}}\nlead prose\n"
+        "== E85/E86 Z4 (2002–2008) {{anchor|E85}} ==\n"
+        "{{Infobox automobile\n| production = 2002–2008\n}}\n"
+        "== E89 Z4 (2009–2016) ==\n{{Infobox automobile\n| production = 2009–2016\n}}\n"
+        "== G29 Z4 (2018–present) ==\n{{Infobox automobile\n| production = 2018–present\n}}\n"
+        "== Motorsport ==\nprose\n",
+    )
+    stats = run_wikipedia_pass(db)
+    assert stats.generations_created == 3 and stats.flagged_articles == 0
+    generations = {
+        g.slug: g
+        for g in db.scalars(
+            select(Generation)
+            .join(GenerationModelLink, GenerationModelLink.generation_id == Generation.id)
+            .where(GenerationModelLink.model_id == routed.id)
+        )
+    }
+    assert {slug: (g.start_year, g.end_year) for slug, g in generations.items()} == {
+        "e85-e86": (2002, 2008),
+        "e89": (2009, 2016),
+        "g29": (2018, None),
+    }
+
+    market = db.execute(text("SELECT id FROM market_regions ORDER BY id LIMIT 1")).scalar()
+    configs: dict[int, Configuration] = {}
+    for year in (2008, 2009, 2010, 2017, 2019):
+        period = CataloguePeriod(
+            model_id=routed.id, period_kind_id=spine["kind"].id, start_year=year, end_year=year
+        )
+        db.add(period)
+        db.flush()
+        if year != 2009:  # a model year with no filing: a period and no car
+            configs[year] = Configuration(
+                catalogue_period_id=period.id, market_region_id=market, slug="sdrive"
+            )
+            db.add(configs[year])
+    db.commit()
+    run_generation_placement_pass(db)
+    placed = {}
+    for year, config in configs.items():
+        db.refresh(config)
+        placed[year] = config.generation_id
+    assert placed == {
+        2008: generations["e85-e86"].id,
+        2010: generations["e89"].id,
+        2017: generations["e89"].id,  # end + 1 slack: the model year outran production
+        2019: generations["g29"].id,
+    }
+    assert db.scalar(select(ReconciliationFlag).where(ReconciliationFlag.status == "open")) is None
+
+    again = run_wikipedia_pass(db)
+    assert again.generations_created == 0 and again.assertions_inserted == 0
+    assert again.assertions_superseded == 0
+    run_generation_placement_pass(db)
+    for year, config in configs.items():
+        db.refresh(config)
+        assert config.generation_id == placed[year]
