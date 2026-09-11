@@ -120,6 +120,38 @@ def _ordinal(token: str) -> int | None:
     return _ORDINAL_INDEX.get(token.lower())
 
 
+def _is_code(token: str) -> bool:
+    """A code token by position (the `(CODES; YEAR)` convention): letters, or
+    alphanumerics carrying a digit. Year-shaped tokens are never codes."""
+    return bool(
+        not _YEAR.fullmatch(token)
+        and (
+            _CODE_ALPHA.match(token)
+            or (_CODE_MIXED.match(token) and any(c.isdigit() for c in token))
+        )
+    )
+
+
+def parse_generation_parenthetical(paren: str) -> tuple[tuple[str, ...], str] | None:
+    """What a label or title parenthetical states about a generation: its
+    chassis codes, or the ordinal word a code-less one is named by. None when
+    it states neither - a year, a market, prose - naming an era no section
+    can be identified by."""
+    words = paren.casefold().split()
+    if len(words) == 2 and words[1] == "generation":
+        ordinal = _ordinal(words[0])
+        if ordinal is None or ordinal > len(ORDINAL_WORDS):
+            return None
+        return (), ORDINAL_WORDS[ordinal - 1]
+    head = paren.split(";")[0].strip()
+    if _ERA_WHOLE_LABEL.match(head):
+        return None
+    tokens = [t.strip() for t in re.split(r"[/,]", head) if t.strip()]
+    if tokens and all(_is_code(t) for t in tokens):
+        return tuple(tokens), ""
+    return None
+
+
 def _codes_and_years(
     dash: str | None, paren: str | None
 ) -> tuple[tuple[str, ...], tuple[int, ...]]:
@@ -135,12 +167,7 @@ def _codes_and_years(
         code_part = group.split(";")[0]
         for token in re.split(r"[/,]", code_part):
             token = _TYP_PREFIX.sub("", token.strip())
-            if not token or _YEAR.fullmatch(token):
-                continue
-            valid = _CODE_ALPHA.match(token) or (
-                _CODE_MIXED.match(token) and any(ch.isdigit() for ch in token)
-            )
-            if valid and token not in codes:
+            if token and _is_code(token) and token not in codes:
                 codes.append(token)
     return tuple(codes), tuple(years)
 
