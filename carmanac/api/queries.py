@@ -115,16 +115,38 @@ def model_page(session: Session, company_slug: str, model_slug: str) -> dict[str
     # yet, and those years must still render (an empty year is honest).
     years = _rows(
         session,
-        """SELECT pk.code AS kind, cp.start_year, cp.end_year, count(c.id) AS cars
+        """SELECT pk.code AS kind, cp.start_year, cp.end_year,
+                  count(c.id) AS cars,
+                  count(c.generation_id) AS placed,
+                  array_remove(array_agg(DISTINCT g.slug), NULL) AS generations
            FROM catalogue_periods cp
            JOIN period_kinds pk ON pk.id = cp.period_kind_id
            LEFT JOIN configurations c ON c.catalogue_period_id = cp.id
+           LEFT JOIN generations g ON g.id = c.generation_id
            WHERE cp.model_id = :mid
            GROUP BY cp.id, pk.code
            ORDER BY cp.start_year""",
         mid=model["model_id"],
     )
-    return {"model": model, "years": years}
+    generations = _rows(
+        session,
+        """SELECT DISTINCT g.slug, g.name, g.start_year, g.end_year
+           FROM generation_model_links l
+           JOIN generations g ON g.id = l.generation_id
+           WHERE l.model_id = :mid AND l.superseded_by IS NULL
+           ORDER BY g.start_year NULLS LAST, g.name""",
+        mid=model["model_id"],
+    )
+    return {
+        "model": model,
+        "generations": [
+            {**g, "years": [y for y in years if g["slug"] in y["generations"]]} for g in generations
+        ],
+        # A year is listed again below the generations when it holds cars none
+        # of them claim, and listed only there when it holds no cars at all -
+        # a model year with no filing is not a missing generation.
+        "years": [y for y in years if y["cars"] > y["placed"] or not y["cars"]],
+    }
 
 
 def year_page(

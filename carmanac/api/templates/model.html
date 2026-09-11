@@ -1,24 +1,50 @@
 {% extends "base.html" %}
 {% block title %}{{ model.model_name }} — Carmanac{% endblock %}
+
+{% macro year_cell(y) %}
+{% if y.kind == "model_year" %}
+<a href="/{{ model.company_slug }}/{{ model.model_slug }}/{{ y.start_year }}">{{ y.start_year }}</a>
+{% else %}{{ y.start_year | dash }}–{{ y.end_year | dash }} <span class="sub">({{ y.kind }})</span>
+{% endif %}
+{% endmacro %}
+
 {% block content %}
 <h1>{{ model.model_name }}</h1>
 <p class="sub">{{ model.configurations }} configurations &middot; {{ model.placed }} placed
   {% if model.first_year %}&middot; {{ model.first_year }}–{{ model.last_year }}{% endif %}</p>
 
-<h2>Years</h2>
+<h2>Generations</h2>
+{% if generations %}
+<p class="sub">Spans are worldwide production. The years under each are US model
+  years, as filed with vPIC and the EPA.</p>
+{% for g in generations %}
+<h3>
+  {% if g.slug %}<a href="/{{ model.company_slug }}/generations/{{ g.slug }}">{{ g.name or g.slug }}</a>
+  {% else %}{{ g.name or "(unnamed)" }}{% endif %}
+  <span class="sub">{% if g.start_year %}{{ g.start_year }}–{{ g.end_year or "present" }}
+    {% else %}span not on record{% endif %}</span>
+</h3>
+{% if g.years %}
+<p>{% for y in g.years %}{{ year_cell(y) }}{% if not loop.last %}&middot;{% endif %}{% endfor %}</p>
+{% else %}
+<p class="null">No model year places here yet.</p>
+{% endif %}
+{% endfor %}
+{% else %}
+<p class="null">No generations on record for this model yet.</p>
+{% endif %}
+
 {% if years %}
+<h2>Years without a placed car</h2>
 <table>
   <tr><th>Year</th><th>Cars</th></tr>
   {% for y in years %}
   <tr>
-    <td>{% if y.kind == "model_year" %}
-        <a href="/{{ model.company_slug }}/{{ model.model_slug }}/{{ y.start_year }}">{{ y.start_year }}</a>
-        {% else %}{{ y.start_year | dash }}–{{ y.end_year | dash }} <span class="sub">({{ y.kind }})</span>{% endif %}</td>
-    <td>{{ y.cars }}</td>
+    <td>{{ year_cell(y) }}</td>
+    <td>{% if y.cars %}{{ y.cars - y.placed }} of {{ y.cars }} unplaced
+        {% else %}<span class="null">no filing</span>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
-{% else %}
-<p class="null">No catalogue periods on record for this model yet.</p>
 {% endif %}
 {% endblock %}
