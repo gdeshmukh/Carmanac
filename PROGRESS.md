@@ -22,7 +22,7 @@ Phase 1: **the first cars have identity, and their years + variants are landing.
 
 ## In Flight
 
-**Branch `feat/parents-and-orphans` — complete, PR pending (2026-09-03).** ADR 0022 accepted: parent eras are a dated fact table (`company_relationships`, 358 live rows, Opel and Land Rover reading as era chains); 17 brand-artifact merges applied (Ford, Hyundai, Mitsubishi, Saturn, Lotus, McLaren, Aston Martin, Suzuki, Jaguar, Rolls-Royce, Saab, Rivian, Pagani, Delorean; the Volvo, Škoda and SSC stubs), companies 7,201 → 7,184, and a brand is named by its badge (Audi AG → Audi, Volvo Cars → Volvo, Škoda Auto → Škoda). The badge vote reached the model rungs (ADR 0011 §2 amended): **244 models gained Wikidata ids**, id-less models **1,286 → 890**, 52 redundant line rows retired (`model_lines` 230 → 178), 459 articles fetched, generations **1,018 → 1,702** (1,286 dated), placements 4,444 → 7,521. Two mechanisms the Corvette forced: a trim wearing a sibling's code is held, never a generation (ADR 0018 amended; five links retired, the Corvette holds C1–C8), and a generation's own article is its one asserting record (ADR 0017 amended). Every pass re-runs to an exact no-op; reconciler v22; 300 tests. Open on the branch: the identical-label clusters (51 models, Mustang among them — a follows/followed-by tie-break resolves 6, proposed, awaiting the ruling), the code-less trims of the 911 (ADR 0018 species, per-entity). The adversarial review ran inline on 2026-09-09: four defects, all fixed in the pass and the landing (session log).
+**Branch `feat/label-clusters-and-codes` — mid-flight (2026-09-11).** The M3 as the placement case study: the identical-label cluster tie-break and the generation form, both censused before adoption (ADR 0013 amended, ADR 0017 amended). 11 of the 51 clusters resolve, the M3 attaches, its article lands, its sections mint E30 through G80/G81, and **all 64 of its configurations place**. Generations 1,702 → 1,748, placed configurations 7,521 → 7,903, clusters 51 → 39, near-miss flags 1,535 → 1,455. The M5 is the regression fixture and does not move at any checkpoint; its shape is now a test. The model page leads with generations and states its axes. Every pass re-runs to an exact no-op; reconciler v23; 307 tests. **Awaiting a ruling before building:** the LLM article read (design below, session log), and two grammar findings it turned up — an ordinal heading written with a colon, and a closed year range in an era heading.
 
 **The JLR brand-artifact merges are APPLIED** (2026-07-31, `ceec0f2` + `a914a1d`): Range Rover, Discovery, and Defender ruled Land Rover model lines, not brands — the filings agree (vPIC files all three under Make=LAND ROVER; EPA's 396 rows say make=Land Rover). Three `IDENTITY_MERGES` entries → Q35907, collapsed live (companies 7,204 → 7,201; standing rule: the merge script's dry-run list gets reviewed before every `--execute`), all passes converged, 131 tests green. The merge exposed and fixed two guard defects (see session log); the queue's one false cross-badge alarm is dissolved — **9 cross-badge flags remain, all real rebadges**. Ruled held as-is: Century (real 2025 Toyota spin-off), Scion (an additional-information plan exists), Ioniq (real short-lived division; empty catalogue is honest). Noted for the parked namesake/duplicate work: a second live "Audi" artifact (`audi-q136087723`, wins label-brand attribution for "Audi A4 B8" over Audi AG, saved by the same-family prefix rule) and the Jaguar Cars / Jaguar pair. **ADR 0014 ACCEPTED and IMPLEMENTED (branch `feat/adr-0014-year-pass-epa`, 2026-07-31; single PR carries the whole arc per the new one-branch rule)** — the year pass and the EPA attach, under the fundamentals-review doctrine: **the hierarchy is a goal per car**. The deliberation's AMG GT finding moved generation placement to the configuration (one 2019 model year holds C190 coupes beside X290 4-doors), so periods are pure time under models and `configurations.generation_id` is nullable, evidence-gated, NULL everywhere in v1. Live: **18,751 catalogue periods** (all 1,735 models have their year spine) and **23,523 configurations** from 42,920/49,995 EPA rows attached (exact 13,887 / baseModel 25,150 / word-boundary trim-parse 3,883), 13,565 1:1 `vehicle:` external ids, 121,496 configuration field assertions with provenance. Residue honest and queued: 495 unbridged-make rows + 6,580 no-model-match rows behind 802 distinct-string flags with candidates; `EPA_MAKE_MATCHES` registry starts empty, grown by resolving them. Both passes settle to exact no-ops; all six passes converge; 140 tests green; reconciler v11. (PR #28 merged 2026-07-31; ADR 0015 followed as PR #29, merged 2026-08-03 — reconciler v12.) Flag queues (wd-model + the new EPA queues): the next batch is deliberately deferred (2026-07-31). Parked: the namesake/ambiguous duplicate groups (cross-source checks first — his ruling), the Mazda chinesische-Automarke duplicate, TVR's plant duplicate (needs a deny decision), barely-cars (much later).
 
@@ -102,6 +102,38 @@ End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
 
+### 2026-09-11 (the M3 places: the bare title, the stated code, and where the grammar runs out)
+
+- **Two mechanisms, both censused first.** Three entities wore the label "BMW M3", so nobody
+  attached and the model had no Wikidata id, no reachable article, no generations, and 64
+  waiting configurations. The **bare sitelink title** names the nameplate when every other
+  claimant is chained to an entity of the same name — 11 of the 51 clusters resolve (M3,
+  Mustang, Thunderbird, Accord, Impala, Liberty, Vantage, 300, XK, GTO, Corniche); 40 stay
+  flagged, 26 of them holding a claimant with neither succession nor bare title. The
+  **generation form** (`<model> (<code|ordinal>)` under the model's own company) adopts the
+  linked generation stating the same — 99 of the 1,535 near-miss labels name a held model
+  exactly, and a year or a market in the parenthetical is excluded by census, not by hand.
+- **The M5 was the fixture, not the subject.** Snapshotted before the first change and diffed
+  after every pass run: empty every time. Its shape is now a CI test — code-led sections mint
+  dated generations, the model years place by unique dated overlap, and a year with a period
+  and no filing is not a placement question.
+- **Sections gained the third key.** A code-less generation named by its ordinal matched neither
+  the Main target nor a code, so the Mustang's and Accord's articles flagged whole; the display
+  name is the same key adoption uses, read from the article's side. Once every competitor is
+  claimed, the rest mint by elimination. The Accord still queues: its Wikidata members are a
+  1976 car, a Euro R trim and an Aero Deck body, each owed a ruling.
+- **No fetch widening was needed.** Adoption is what reaches a dedicated page: 50 section-born
+  generations now carry a Wikidata id and 30 of those have their own article landed, identity
+  still inherited from the sitelink. The M3's own generation entities carry no sitelinks and its
+  sections carry no Main pointers, so there is nothing further to land for it.
+- **Where the grammar runs out, censused over the 58 articles that describe several eras and
+  bucket none.** 49 carry no generation-shaped heading at any level (Jaguar XK, Lamborghini
+  Diablo); 4 nest their generations one level deeper (Jeep Wrangler, Land Cruiser, Camry); 3
+  write the ordinal with a colon (`First generation: 1966–1967` — the Charger's eight); 2 hit a
+  stopword that is right in general and wrong here (the Civic Type R's six code-named
+  generations all say "based on"). 42 models, 1,543 configurations, 193 placed. The colon form
+  is a rule; the nesting is not; the Diablo is one car the pass refuses to mint at all.
+
 ### 2026-09-09 (adversarial review of the branch, inline: four defects, none in the rows)
 
 - **The vote's corroboration did not survive a run.** It was written on the matching decision only, and the next run's refresh decision replaced it - live, no decision carried it at all. The detail is now derived from the live graph on every run, matched or refreshed: 244 decisions carry it, 150 with a parent era, the Corvette reading Chevrolet under General Motors with the link true. 44 of the 244 have no held maker at all (Jaguar Land Rover's Jaguars, the Lotus Elan, the Maybach 57) and the badge is right in each; the docstrings and ADR 0022 §7 now say a held maker is not required, which is what the code did.
@@ -110,6 +142,8 @@ the completed F1-F9 fix queue and the 2026-07 review findings.
 - **The rung-1 method backfill read an empty list.** It recomputed the held makers but the name rungs now read the match list, so it could never find a hit; the maker resolution happens once at the top of the match loop. Every pass still re-runs to an exact no-op; 301 tests.
 
 ### 2026-09-03 (the branch lands: merges applied, the vote live, the Corvette's eight, two convergence defects fixed)
+
+- **Merged as PR #46 and #47** (reconciler v22, 300 tests): every pass converging, the residue of 890 id-less models the two honest shapes below.
 
 - **Phase A live.** The relations sweep lands 7,238 records (idempotent re-land); the pass asserts 358 parent eras (450 claims wait on parents we don't hold — Scania, GAC, SAIC, AB Volvo — 1 implausible era skipped, 29 undated duplicates of dated eras retired after the rule landed); the 17 merges executed through the merge script's new absorb path (a member holding the catalogue keeps its row; the legal entity's lines and generations move with it; a natural-key collision refuses); the engine's badge rule renamed 19 companies and the address recompute moved five addresses (audi, skoda, volvo, ssc, consulier) with the slug-keyed registry values following. Jaguar took nothing of Land Rover's (checked before executing).
 - **Phase B live.** The vote attaches 244 models (150 with a corroborating parent era, 94 without — Chrysler Crossfire under Karmann, Saab 9-2X under Subaru, the badge right in every one); 144 waiting generation entities minted at once; 52 redundant line rows retired; 459 articles fetched; the era grammar dated the rest. The residue of 890 id-less models is two honest shapes: BMW's per-badge filings (124 — no Wikidata entity per badge; they reach generations through the 3 Series line) and Ford's medium/heavy truck chassis codes (105).
