@@ -38,6 +38,7 @@ from carmanac.reconcile import policy
 from carmanac.reconcile.engine import run_companies_pass
 from carmanac.reconcile.sources import wikidata
 from carmanac.reconcile.wikidata_models_pass import run_wikidata_models_pass
+from carmanac.reconcile.wikipedia_pass import run_wikipedia_pass
 from tests.test_reconcile import _land as _land_wd
 from tests.test_vpic_models_pass import _land_model, _matched_make, vpic_source  # noqa: F401
 from tests.test_wikidata_models_landing import _ENTITY
@@ -58,8 +59,10 @@ def _land_sweep(
     series_of: list[str] | None = None,
     parts_of: list[str] | None = None,
     follows: list[str] | None = None,
+    followed_by: list[str] | None = None,
     inceptions: list[str] | None = None,
     discontinueds: list[str] | None = None,
+    article: str | None = None,
 ) -> RawRecord:
     """One models-sweep record, shaped exactly as the fetcher lands it:
     binding cells, GROUP_CONCAT'd multi-values, the stamped marker."""
@@ -80,12 +83,13 @@ def _land_sweep(
         "seriesOf": uris(series_of),
         "partsOf": uris(parts_of),
         "followsIds": uris(follows),
-        "followedByIds": cell(""),
+        "followedByIds": uris(followed_by),
         "inceptions": cell("|".join(sorted(inceptions or []))),
         "dissolutions": cell(""),
         "prodStarts": cell(""),
         "prodEnds": cell(""),
         "discontinueds": cell("|".join(sorted(discontinueds or []))),
+        "article": cell(f"https://en.wikipedia.org/wiki/{article}") if article else cell(""),
         "sweep": "models",
     }
     rec = RawRecord(
@@ -1036,6 +1040,245 @@ def test_claimant_with_p179_to_claimant_defers_to_generation(
     assert (link.generation_id, link.model_id) == (generation.id, model.id)
     assert generation.chassis_codes == ["W205"], "code extracted from the alias parenthetical"
     assert _decision(db, "Q200").outcome == "generation_created"
+
+
+def test_bare_title_claimant_attaches_when_the_rest_are_eras(db, wikidata_source, vpic_source):  # noqa: F811
+    """The BMW M3 shape found live: the nameplate entity (sitelink at the bare
+    title, no chain) beside generation entities wearing the bare label whose
+    chain edges join them to other same-named entities. The nameplate attaches
+    by the bare title; the eras wait - no row, no link, no flag; a coded
+    sibling is a generation candidate, not a near-miss; a re-run holds every
+    decision."""
+    _matched_make(db, wikidata_source, vpic_source, "Q26678", "BMW", 452)
+    _land_model(db, vpic_source, 3, "M3", 452, "BMW")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q10",
+        "BMW M3",
+        description="car model",
+        makers=["Q26678"],
+        article="BMW_M3",
+    )
+    _land_sweep(db, wikidata_source, "Q11", "BMW M3 (E30)", makers=["Q26678"], followed_by=["Q12"])
+    # No maker stated, as live: the label's brand carries it to the rungs.
+    _land_sweep(db, wikidata_source, "Q12", "BMW M3", follows=["Q11"], followed_by=["Q13"])
+    _land_sweep(db, wikidata_source, "Q13", "BMW M3", makers=["Q26678"], follows=["Q12"])
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 1 and stats.chain_generations_waiting == 2
+    assert stats.flags_opened == 0 and stats.generation_candidates_waiting == 1
+    model = db.scalars(select(Model)).one()
+    assert (
+        db.scalars(
+            select(ExternalId.external_id).where(
+                ExternalId.model_id == model.id, ExternalId.external_id.like("Q%")
+            )
+        ).one()
+        == "Q10"
+    )
+    matched = _decision(db, "Q10")
+    assert (matched.method, matched.detail["eras"]) == ("bare_sitelink_title", ["Q12", "Q13"])
+    for qid in ("Q12", "Q13"):
+        era = _decision(db, qid)
+        assert (era.outcome, era.detail["nameplate"]) == ("chain_generation_waits", "Q10")
+    assert _decision(db, "Q11").outcome == "generation_candidate_waits"
+    assert db.scalars(select(Generation)).all() == []
+    assert db.scalars(select(GenerationModelLink)).all() == []
+
+    rerun = run_wikidata_models_pass(db)
+    assert rerun.models_refreshed == 1 and rerun.chain_generations_waiting == 2
+    assert rerun.flags_opened == 0 and rerun.assertions_superseded == 0
+    assert _decision(db, "Q12").outcome == "chain_generation_waits", (
+        "a returning era is not a second QID for the model"
+    )
+
+    # The nameplate's article mints the eras' generations; the era whose
+    # sitelink names one adopts it, the one with no sitelink keeps waiting.
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q14",
+        "BMW M3",
+        makers=["Q26678"],
+        follows=["Q13"],
+        article="BMW_M3_(F80)",
+    )
+    _land_article(
+        db,
+        _wikipedia_source(db),
+        "Q10",
+        "BMW M3",
+        "== E46 generation (2000–2006) ==\n{{Infobox automobile\n| production = 2000–2006\n}}\n"
+        "== F80 generation (2014–2018) ==\n{{Infobox automobile\n| production = 2014–2018\n}}\n",
+    )
+    assert run_wikipedia_pass(db).generations_created == 2
+    third = run_wikidata_models_pass(db)
+    assert third.generations_adopted == 1 and third.chain_generations_waiting == 2
+    f80 = db.scalars(select(Generation).where(Generation.slug == "f80")).one()
+    assert db.scalar(select(ExternalId.generation_id).where(ExternalId.external_id == "Q14")) == (
+        f80.id
+    )
+    assert _decision(db, "Q14").detail["name"] == "M3 (F80)"
+
+
+def test_bare_title_tiebreak_needs_every_other_claimant_explained(
+    db,
+    wikidata_source,
+    vpic_source,  # noqa: F811
+):
+    """Two clusters the tie-break leaves alone: a bare-titled nameplate beside
+    a claimant with no succession (the Rapide beside the Rapid E), and a
+    cluster with no bare title at all (the Pacifica's crossover, minivan and
+    concept pages). Each stays one `shared_model_match` question."""
+    _matched_make(db, wikidata_source, vpic_source, "Q26678", "BMW", 452)
+    _land_model(db, vpic_source, 5, "X5", 452, "BMW")
+    _land_model(db, vpic_source, 6, "X7", 452, "BMW")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_sweep(db, wikidata_source, "Q20", "BMW X5", makers=["Q26678"], article="BMW_X5")
+    _land_sweep(db, wikidata_source, "Q21", "BMW X5", makers=["Q26678"])
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q30",
+        "BMW X7",
+        makers=["Q26678"],
+        article="BMW_X7_(G07)",
+        follows=["Q31"],
+    )
+    _land_sweep(db, wikidata_source, "Q31", "BMW X7", makers=["Q26678"], article="BMW_X7_(concept)")
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.models_matched == 0 and stats.flags_opened == 2
+    flags = db.scalars(
+        select(ReconciliationFlag).where(ReconciliationFlag.kind == "match_review")
+    ).all()
+    assert {f.detail["model"] for f in flags} == {"bmw/x5", "bmw/x7"}
+    assert all(f.detail["reason"] == "shared_model_match" for f in flags)
+    assert (
+        db.scalar(
+            select(ExternalId).where(
+                ExternalId.model_id.isnot(None), ExternalId.external_id.like("Q%")
+            )
+        )
+        is None
+    )
+
+
+def test_coded_entity_adopts_the_generation_stating_its_code(db, wikidata_source, vpic_source):  # noqa: F811
+    """`<model> (<code>)` under the model's own company is a generation of that
+    model (ADR 0013 §2, amended). It adopts the linked generation that states
+    the same code - the section-born row gains the Wikidata id and a link from
+    this record - and waits, unflagged, when no such generation exists or the
+    code's row already carries an id. A trim wearing no parenthetical, or a
+    year in one, is not the form and keeps its near-miss flag."""
+    _matched_make(db, wikidata_source, vpic_source, "Q26678", "BMW", 452)
+    _land_model(db, vpic_source, 3, "M3", 452, "BMW")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_sweep(db, wikidata_source, "Q1", "BMW M3", makers=["Q26678"], article="BMW_M3")
+    run_wikidata_models_pass(db)
+    wikipedia = _wikipedia_source(db)
+    _land_article(
+        db,
+        wikipedia,
+        "Q1",
+        "BMW M3",
+        "== E46 generation (2000–2006) ==\n{{Infobox automobile\n| production = 2000–2006\n}}\n"
+        "== G80/G81 generation (2020–present) ==\n"
+        "{{Infobox automobile\n| production = 2020–present\n}}\n",
+    )
+    assert run_wikipedia_pass(db).generations_created == 2
+    model = db.scalars(select(Model)).one()
+    e46 = db.scalars(select(Generation).where(Generation.slug == "e46")).one()
+    db.add(ExternalId(generation_id=e46.id, source_id=wikidata_source.id, external_id="Q99"))
+    db.commit()
+
+    _land_sweep(db, wikidata_source, "Q40", "BMW M3 (G80)", makers=["Q26678"])
+    _land_sweep(db, wikidata_source, "Q41", "BMW M3 (E46/2S)", makers=["Q26678"])
+    _land_sweep(db, wikidata_source, "Q42", "BMW M3 (E36)", makers=["Q26678"])
+    _land_sweep(db, wikidata_source, "Q43", "BMW M3 CSL", makers=["Q26678"])
+    _land_sweep(db, wikidata_source, "Q44", "BMW M3 (2014)", makers=["Q26678"])
+    _land_sweep(db, wikidata_source, "Q45", "BMW M3 (1st generation)", makers=["Q26678"])
+    stats = run_wikidata_models_pass(db)
+
+    assert stats.generations_adopted == 1 and stats.generation_candidates_waiting == 3
+    assert stats.generations_created == 0 and stats.flags_opened == 2
+    g80 = db.scalars(select(Generation).where(Generation.slug == "g80-g81")).one()
+    assert (
+        db.scalars(select(ExternalId.generation_id).where(ExternalId.external_id == "Q40")).one()
+        == g80.id
+    )
+    adopted = _decision(db, "Q40")
+    assert (adopted.method, adopted.outcome) == ("generation_form", "generation_adopted")
+    assert adopted.detail == {"model": "bmw/m3", "codes": ["g80"], "generation": "g80-g81"}
+    link = db.scalars(
+        select(GenerationModelLink).where(
+            GenerationModelLink.generation_id == g80.id,
+            GenerationModelLink.source_id == wikidata_source.id,
+        )
+    ).one()
+    assert (link.model_id, link.raw_record_id is not None) == (model.id, True)
+    db.refresh(g80)
+    assert g80.chassis_codes == ["G80", "G81"], "the section's facts stand; the id is adopted"
+    assert _decision(db, "Q41").outcome == "generation_candidate_waits", "E46 already has its id"
+    assert _decision(db, "Q42").outcome == "generation_candidate_waits"
+    assert _decision(db, "Q43").outcome == "flagged_candidates"
+    assert _decision(db, "Q44").outcome == "flagged_candidates", "a year names no section"
+    assert _decision(db, "Q45").outcome == "generation_candidate_waits", "the ordinal form"
+
+    rerun = run_wikidata_models_pass(db)
+    assert rerun.generations_adopted == 0 and rerun.generations_refreshed == 1
+    assert rerun.generation_candidates_waiting == 3 and rerun.flags_opened == 0
+    assert rerun.assertions_inserted == 0 and rerun.assertions_superseded == 0
+
+
+def test_bare_label_series_member_is_named_by_its_page(db, wikidata_source, vpic_source):  # noqa: F811
+    """Wikidata labels a generation entity with the bare nameplate and files
+    it as a series member of the nameplate (the Mustang's fifth generation).
+    A generation is never named like a model, so the row takes its name from
+    the entity's own page title, and the article's sections reconcile to it
+    by that name."""
+    _matched_make(db, wikidata_source, vpic_source, "Q26678", "BMW", 452)
+    _land_model(db, vpic_source, 3, "M3", 452, "BMW")
+    from carmanac.reconcile.vpic_models_pass import run_vpic_models_pass
+
+    run_vpic_models_pass(db)
+    _land_sweep(db, wikidata_source, "Q10", "BMW M3", makers=["Q26678"], article="BMW_M3")
+    _land_sweep(
+        db,
+        wikidata_source,
+        "Q15",
+        "BMW M3",
+        makers=["Q26678"],
+        series_of=["Q10"],
+        article="BMW_M3_(second_generation)",
+    )
+    stats = run_wikidata_models_pass(db)
+    assert stats.models_matched == 1 and stats.generations_created == 1
+    generation = db.scalars(select(Generation)).one()
+    assert (generation.name, generation.slug) == ("M3 (second generation)", "m3-second-generation")
+
+    _land_article(
+        db,
+        _wikipedia_source(db),
+        "Q10",
+        "BMW M3",
+        "== First generation (1986) ==\n{{Infobox automobile\n| production = 1986–1991\n}}\n"
+        "== Second generation (1992) ==\n{{Infobox automobile\n| production = 1992–1999\n}}\n"
+        "== Third generation (2000) ==\n{{Infobox automobile\n| production = 2000–2006\n}}\n",
+    )
+    wiki = run_wikipedia_pass(db)
+    assert (wiki.sections_reconciled, wiki.generations_created, wiki.flagged_articles) == (1, 2, 0)
+    assert run_wikidata_models_pass(db).generations_refreshed == 1
+    db.refresh(generation)
+    assert generation.name == "M3 (second generation)"
 
 
 # --- the sweep partition ------------------------------------------------------
