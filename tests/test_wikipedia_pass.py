@@ -85,6 +85,19 @@ def test_heading_grammar_parses_the_convention():
     h = parse_heading("First generation (C190/R190) {{anchor|C190|R190}}")
     assert (h.ordinal, h.codes) == (1, ("C190", "R190"))
 
+    h = parse_heading("Sixth generation: 2006–2010 (LX)")
+    assert (h.ordinal, h.codes, h.heading_span.start, h.heading_span.end) == (
+        6,
+        ("LX",),
+        2006,
+        2010,
+    )
+    h = parse_heading("Eighth generation: 2024–present (LB)")
+    assert (h.heading_span.start, h.heading_span.end) == (2024, None), "a stated open end"
+    assert parse_heading("First generation (XW10; 1997)").heading_span is None, (
+        "a lone start year states no range"
+    )
+
 
 def test_heading_grammar_rejects_non_generations():
     assert parse_heading("Second generation models") is None, "sub-parts are not generations"
@@ -310,6 +323,41 @@ def test_existing_inventory_reconciles_or_mints_distinct(
     assert db.get(Generation, spine["e46"].id).start_year is None, (
         "reconciled sections assert no facts - the generation's own article is the source"
     )
+
+
+@pytest.mark.integration
+def test_a_stated_heading_range_dates_a_section_without_an_infobox(
+    db, wikidata_source, wikipedia_source, spine, routed
+):
+    """The Charger's shape: colon lead-ins, no section infobox, both years in
+    the heading. The range dates the generation; a section whose infobox
+    states production keeps that; a lone heading year dates nothing."""
+    _land_article(
+        db,
+        wikipedia_source,
+        "Q7",
+        "BMW Z4",
+        "== First generation: 1966–1967 ==\nprose\n"
+        "== Second generation: 1968–1970 ==\n{{Infobox automobile\n| production = 1968–1971\n}}\n"
+        "== Third generation (2024) ==\nprose\n",
+    )
+    stats = run_wikipedia_pass(db)
+    assert stats.generations_created == 3 and stats.flagged_articles == 0
+    spans = {
+        g.slug: (g.start_year, g.end_year)
+        for g in db.scalars(
+            select(Generation)
+            .join(GenerationModelLink, GenerationModelLink.generation_id == Generation.id)
+            .where(GenerationModelLink.model_id == routed.id)
+        )
+    }
+    assert spans == {
+        "z4-first-generation": (1966, 1967),
+        "z4-second-generation": (1968, 1971),
+        "z4-third-generation": (None, None),
+    }
+    again = run_wikipedia_pass(db)
+    assert again.assertions_inserted == 0 and again.assertions_superseded == 0
 
 
 @pytest.mark.integration

@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from carmanac.reconcile.sources.wikipedia_infobox import (
     _COMMENT,
     _REF,
+    Span,
     infobox_field,
     parse_span,
     same_subject,
@@ -46,15 +47,15 @@ ORDINAL_WORDS: list[str] = (  # noqa: SIM905 - positional: index+1 is the ordina
 _ORDINAL_INDEX = {word: i + 1 for i, word in enumerate(ORDINAL_WORDS)}
 _ORDINAL_NUM = re.compile(r"^(\d{1,2})(?:st|nd|rd|th)$", re.IGNORECASE)
 
-# `<ordinal> generation` plus nothing, a dash code, or one parenthetical.
-# Anything else ("... models", "... facelift") is a sub-part, not a
-# generation.
+# `<ordinal> generation` plus nothing, a dash or colon lead-in, or one
+# parenthetical. Anything else ("... models", "... facelift") is a sub-part,
+# not a generation.
 _GEN_HEADING = re.compile(
     r"^(?P<ord>[A-Za-z]+(?:-[A-Za-z]+)?|\d{1,2}(?:st|nd|rd|th))\s+generation"
     r"(?P<rest>.*)$",
     re.IGNORECASE,
 )
-_REST = re.compile(r"^\s*(?:[–—-]\s*(?P<dash>[^()]{1,40}?))?\s*(?:\((?P<paren>[^()]*)\))?\s*$")
+_REST = re.compile(r"^\s*(?:[–—:-]\s*(?P<dash>[^()]{1,40}?))?\s*(?:\((?P<paren>[^()]*)\))?\s*$")
 
 _YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
 
@@ -92,6 +93,10 @@ class GenerationSection:
     main_targets: tuple[str, ...]
     has_infobox: bool
     body: str  # raw section wikitext, for infobox fields at decision time
+    # A range the heading states outright, both ends - "1966–1967",
+    # "2024–present" - is the section's own claim, unlike a lone start year
+    # with an invented end. It dates the generation when nothing else does.
+    heading_span: Span | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +191,7 @@ def parse_heading(raw: str) -> GenerationSection | None:
     if not rest:
         return None
     codes, years = _codes_and_years(rest.group("dash"), rest.group("paren"))
+    stated = _ERA_HEADING_YEARS.search(m.group("rest"))
     return GenerationSection(
         ordinal=ordinal,
         heading=cleaned,
@@ -194,6 +200,7 @@ def parse_heading(raw: str) -> GenerationSection | None:
         main_targets=(),
         has_infobox=False,
         body="",
+        heading_span=parse_span(stated.group(0))[0] if stated else None,
     )
 
 
@@ -468,6 +475,7 @@ def parse_article(title: str, wikitext: str) -> ParsedArticle:
                 main_targets=mains,
                 has_infobox=bool(_INFOBOX_START.search(body)),
                 body=body,
+                heading_span=parsed.heading_span,
             )
         )
     return ParsedArticle(title=title, sections=tuple(sections), top_wikitext=top)

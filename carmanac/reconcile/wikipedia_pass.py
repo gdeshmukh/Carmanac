@@ -640,6 +640,11 @@ class _WikipediaPass:
                 codes, _ambiguous = extract_chassis_codes(target_title, (), None)
                 if codes:
                     main_facts["chassis_codes"] = ("|".join(codes), codes)
+        if raw is None and "start_year" not in main_facts and section.heading_span is not None:
+            stated = section.heading_span
+            observed = f"{stated.start}–{stated.end or 'present'}"
+            facts["start_year"] = (observed, stated.start)
+            facts["end_year"] = (observed, stated.end)
 
         for fact_record, fact_map, coverage in (
             (record, facts, tuple(f for f in COVERAGE if f not in main_facts)),

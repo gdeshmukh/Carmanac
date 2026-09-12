@@ -386,3 +386,16 @@ Once adopted, an entity with a sitelink is a generation-attached QID: its
 own page is fetched on the next run and becomes the row's one asserting
 record (the 2026-09-03 amendment). The fetch scope does not widen by
 policy; adoption is what reaches these pages, identity inherited as ever.
+
+Two heading forms the §4 grammar refused, censused over the 1,088 landed
+nameplate articles (41 reached; ruled 2026-09-11). A colon lead-in,
+`First generation: 1966–1967`, is the dash form spelled differently; the
+Charger's eight generations wore it and read as none. And a range the
+heading states outright, both ends or an explicit "present", is the
+section's own claim: §4 refused heading years because a lone start year
+would need an invented end, and a stated range invents nothing. Such a
+range dates the generation only when the section's infobox and its Main
+target state no production span, and only in the ordinal grammar, whose
+heading has said the word "generation" - an era heading like the Diablo's
+`Original (1990–1998)` still dates nothing this way. A lone heading year
+still never becomes a span.
