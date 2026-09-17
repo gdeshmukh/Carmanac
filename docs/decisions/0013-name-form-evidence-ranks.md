@@ -112,3 +112,67 @@ year pass is unbuilt — deliberately before it):
 - The market-name pairs the flags accumulate are the feedstock for two parked
   questions: model-level curated merges (ADR 0011 §5) and rebadge derivation
   facts (ADR 0005).
+
+## Amendment (2026-09-11): the bare-title tie-break, and the generation form
+
+Two label claimants on one model were a guess only while nothing told
+them apart. Censused over the 51 open clusters, two facts the source
+itself states do, and neither is a name match.
+
+- **The bare title.** An entity's English sitelink names its article, and
+  Wikipedia gives the plain title to the primary topic of a name ("BMW
+  M3") while every other page of that name wears a parenthetical ("BMW M3
+  (E30)", "Chevrolet Impala (fifth generation)"). Among a model's label
+  claimants, the one whose sitelink title equals its label is the
+  nameplate, provided it is the only one.
+- **The same-name succession.** A chain edge (follows or followed by,
+  stated by either side) to another entity whose label, minus a trailing
+  parenthetical, is the claimant's own label makes the claimant an era of
+  that name. A nameplate is chained to other names (the Impala follows the
+  Bel Air); its generations are chained to each other. An edge through a
+  different name explains nothing: the European Escort and the American
+  one share the Focus as successor and stay two questions.
+
+The cluster resolves when exactly one claimant carries the bare title and
+every other claimant is an era. The nameplate attaches, method
+`bare_sitelink_title`; the eras wait - no row, no link, no flag, decision
+`chain_generation_waits` naming the nameplate and the succession. An era's
+only identity key is its own page title, and it adopts the linked
+generation wearing that name or code once one exists (ADR 0017 §4, amended
+the same day). Anything else keeps the cluster flag: a second bare title
+(Saab 9-3 beside Saab 93), an unexplained claimant (the Rapid E beside the
+Rapide), no bare title at all (the Pacifica's crossover, minivan and
+concept pages). A returning label claimant on a model that already has its
+id is an era by the same test, or the second-id question it was; a bare
+title returning there is always that question. The cluster flag lives on
+the first claimant's record; a copy left on another record by an earlier
+run is dismissed, so one cluster is one open question.
+
+Live at adoption: 11 of the 51 resolve (the M3, Mustang, Thunderbird,
+Accord, Impala, Liberty, Vantage, 300, XK, GTO, Corniche); 40 stay
+flagged - 26 hold a claimant with neither succession nor bare title, 11
+have no bare-titled claimant, 2 have two, and one is the Volt's duplicate
+flag, dismissed. Those are the concurrent-market and duplicate-nameplate
+shapes the duplicates registry (ADR 0012 §7) rules on, and the Fiat 500
+and Beetle pairs among them keep waiting for that ruling rather than
+taking the original car's page as the nameplate mechanically.
+
+**The generation form.** A label reading `<model> (<parenthetical>)`, exact
+under the model's own company after prefix stripping, is a generation of
+that model when the parenthetical states what a section heading states:
+chassis codes (the heading grammar's token rules, so a market or body word
+is not a code) or `<ordinal> generation`. It is a name form below label
+and alias, and it never claims the model. Its parenthetical is its
+adoption key. A parenthetical of years, a market or prose ("Chevrolet
+Trailblazer (2012)", "Toyota Camry (XV40, Asia)") is not the form: no
+section can identify it, and it stays a near-miss with candidates. Under a
+mint-registry company the form yields to ADR 0012 §7: an era sibling
+there is the duplicates ruling's question. Censused over the 1,535 open
+near-miss flags: 119 labels carry a parenthetical, 99 name a held model
+exactly, 36 by code and 14 by ordinal.
+
+A series member whose label is the bare nameplate ("Ford Mustang", filed
+as part of the Mustang) is a generation wearing the model's own name, and
+a generation is never named like a model (ruled 2026-08-21): its row takes
+its name from its sitelink title, "Mustang (fifth generation)", the page
+that carries the parenthetical the label lacks.

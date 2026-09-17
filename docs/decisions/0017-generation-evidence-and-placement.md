@@ -351,3 +351,51 @@ it, so it is the row's one asserting record: the section keeps the link and
 defers on facts (span, codes, specs). The rule is derived per run from
 which articles are landed, so a page that arrives later takes over exactly
 once and the pass converges again.
+
+## Amendment (2026-09-11): adoption by what the entity states
+
+§4 said the adoption pass is built when the case first arises. It arose as
+the M3's coded entities: "BMW M3 (E30)", "BMW M3 (G80)" carry no series
+link, no chain and no article, and sat as near-miss flags while the M3
+article's sections minted the E30 and the G80 beside them. The key is what
+the entity states about itself (ADR 0013 §2, the generation form): its
+chassis codes, or the name a code-less section is given ("Thunderbird
+(eighth generation)"); for an era explained out of a label cluster, its
+own page title. Among the generations linked to the model from any source
+and holding no Wikidata id, exactly one whose chassis codes meet the
+entity's, or whose name is the entity's stated name, gains the entity's
+id and a link from its record, method `generation_form`. The section
+keeps asserting the row's facts; Wikidata contributes its summary and,
+where the section is silent, its dates (§2's precedence). Two matches flag
+`ambiguous_generation_adoption`; a generation already identified is never
+given a second id - Wikidata's duplicate is a ruling, not an attachment;
+none is a wait, unflagged, logged with the keys. The `{{Main}}`-target
+correspondence recorded since ADR 0018 is the same key read from the
+article's side and stays recorded; it is not consulted separately.
+
+Section reconciliation (§4) reads the same keys the other way: a section
+claims an existing linked generation by its `{{Main}}` target, by its
+display name, or by a unique code intersection. And once every competitor
+is some section's, the remaining sections are distinct by elimination and
+mint - nothing is left for them to duplicate. A competitor no section
+claims still holds the whole article: the Accord's Wikidata members (a
+1976 car by year, a Euro R trim, an Aero Deck body) keep its eleven
+sections in the review queue until each is ruled.
+
+Once adopted, an entity with a sitelink is a generation-attached QID: its
+own page is fetched on the next run and becomes the row's one asserting
+record (the 2026-09-03 amendment). The fetch scope does not widen by
+policy; adoption is what reaches these pages, identity inherited as ever.
+
+Two heading forms the §4 grammar refused, censused over the 1,088 landed
+nameplate articles (41 reached; ruled 2026-09-11). A colon lead-in,
+`First generation: 1966–1967`, is the dash form spelled differently; the
+Charger's eight generations wore it and read as none. And a range the
+heading states outright, both ends or an explicit "present", is the
+section's own claim: §4 refused heading years because a lone start year
+would need an invented end, and a stated range invents nothing. Such a
+range dates the generation only when the section's infobox and its Main
+target state no production span, and only in the ordinal grammar, whose
+heading has said the word "generation" - an era heading like the Diablo's
+`Original (1990–1998)` still dates nothing this way. A lone heading year
+still never becomes a span.

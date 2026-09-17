@@ -22,15 +22,20 @@ Phase 1: **the first cars have identity, and their years + variants are landing.
 
 ## In Flight
 
-**Branch `feat/parents-and-orphans` — complete, PR pending (2026-09-03).** ADR 0022 accepted: parent eras are a dated fact table (`company_relationships`, 358 live rows, Opel and Land Rover reading as era chains); 17 brand-artifact merges applied (Ford, Hyundai, Mitsubishi, Saturn, Lotus, McLaren, Aston Martin, Suzuki, Jaguar, Rolls-Royce, Saab, Rivian, Pagani, Delorean; the Volvo, Škoda and SSC stubs), companies 7,201 → 7,184, and a brand is named by its badge (Audi AG → Audi, Volvo Cars → Volvo, Škoda Auto → Škoda). The badge vote reached the model rungs (ADR 0011 §2 amended): **244 models gained Wikidata ids**, id-less models **1,286 → 890**, 52 redundant line rows retired (`model_lines` 230 → 178), 459 articles fetched, generations **1,018 → 1,702** (1,286 dated), placements 4,444 → 7,521. Two mechanisms the Corvette forced: a trim wearing a sibling's code is held, never a generation (ADR 0018 amended; five links retired, the Corvette holds C1–C8), and a generation's own article is its one asserting record (ADR 0017 amended). Every pass re-runs to an exact no-op; reconciler v22; 300 tests. Open on the branch: the identical-label clusters (51 models, Mustang among them — a follows/followed-by tie-break resolves 6, proposed, awaiting the ruling), the code-less trims of the 911 (ADR 0018 species, per-entity). The adversarial review ran inline on 2026-09-09: four defects, all fixed in the pass and the landing (session log).
+**Branch `feat/label-clusters-and-codes` — mid-flight (2026-09-11).** The M3 as the placement case study: the identical-label cluster tie-break and the generation form, both censused before adoption (ADR 0013 amended, ADR 0017 amended). 11 of the 51 clusters resolve, the M3 attaches, its article lands, its sections mint E30 through G80/G81, and **all 64 of its configurations place**. Generations 1,702 → 1,761, placed configurations 7,521 → 8,024, clusters 51 → 39, near-miss flags 1,535 → 1,455. The M5 is the regression fixture and does not move at any checkpoint; its shape is now a test. The model page leads with generations and states its axes. Every pass re-runs to an exact no-op; reconciler v23; 308 tests. Ruled 2026-09-11: the LLM article read is tabled; the colon lead-in and a heading's stated range are accepted and built (ADR 0017 amended, tests green). The heading rules ran live 2026-09-17 against the snapshot taken before them: no existing placement withdrawn or moved, no existing span changed, 61 generations dated, 121 configurations placed. Pushed as PR #48. **Until it merges, the live database is ahead of `main`:** the passes tombstone a fact its article no longer supports, so running `main`'s passes on this database would withdraw the 61 spans and the 121 placements (the branch's next run restores them). At merge time: run every pass from `main`, diff placements and generations against the 2026-09-17 baseline in the scratch directory (no-op expected), then refresh the Drive snapshot, which was taken before the heading rules ran.
 
 **The JLR brand-artifact merges are APPLIED** (2026-07-31, `ceec0f2` + `a914a1d`): Range Rover, Discovery, and Defender ruled Land Rover model lines, not brands — the filings agree (vPIC files all three under Make=LAND ROVER; EPA's 396 rows say make=Land Rover). Three `IDENTITY_MERGES` entries → Q35907, collapsed live (companies 7,204 → 7,201; standing rule: the merge script's dry-run list gets reviewed before every `--execute`), all passes converged, 131 tests green. The merge exposed and fixed two guard defects (see session log); the queue's one false cross-badge alarm is dissolved — **9 cross-badge flags remain, all real rebadges**. Ruled held as-is: Century (real 2025 Toyota spin-off), Scion (an additional-information plan exists), Ioniq (real short-lived division; empty catalogue is honest). Noted for the parked namesake/duplicate work: a second live "Audi" artifact (`audi-q136087723`, wins label-brand attribution for "Audi A4 B8" over Audi AG, saved by the same-family prefix rule) and the Jaguar Cars / Jaguar pair. **ADR 0014 ACCEPTED and IMPLEMENTED (branch `feat/adr-0014-year-pass-epa`, 2026-07-31; single PR carries the whole arc per the new one-branch rule)** — the year pass and the EPA attach, under the fundamentals-review doctrine: **the hierarchy is a goal per car**. The deliberation's AMG GT finding moved generation placement to the configuration (one 2019 model year holds C190 coupes beside X290 4-doors), so periods are pure time under models and `configurations.generation_id` is nullable, evidence-gated, NULL everywhere in v1. Live: **18,751 catalogue periods** (all 1,735 models have their year spine) and **23,523 configurations** from 42,920/49,995 EPA rows attached (exact 13,887 / baseModel 25,150 / word-boundary trim-parse 3,883), 13,565 1:1 `vehicle:` external ids, 121,496 configuration field assertions with provenance. Residue honest and queued: 495 unbridged-make rows + 6,580 no-model-match rows behind 802 distinct-string flags with candidates; `EPA_MAKE_MATCHES` registry starts empty, grown by resolving them. Both passes settle to exact no-ops; all six passes converge; 140 tests green; reconciler v11. (PR #28 merged 2026-07-31; ADR 0015 followed as PR #29, merged 2026-08-03 — reconciler v12.) Flag queues (wd-model + the new EPA queues): the next batch is deliberately deferred (2026-07-31). Parked: the namesake/ambiguous duplicate groups (cross-source checks first — his ruling), the Mazda chinesische-Automarke duplicate, TVR's plant duplicate (needs a deny decision), barely-cars (much later).
 
 ## Next (immediate)
 
+**Next branch (ruled 2026-09-17): the LLM read as a source** — the script, the raw record, the
+verifying pass, the review flag and the correction registry, with the line-article fetch widening;
+design in the 2026-09-17 session log. First questions: the 911's generations and the trims of its
+parallel 930, and the 3 Series badge membership once the E46 and its siblings land.
+
 1. **The queues ADR 0017 §4 opened** (implemented 2026-08-07, branch `feat/section-generations`): the `section_generation_review` articles (sections that neither reconcile to existing generations nor prove distinct — each resolution teaches the reconciliation ladder; **the 911 is now the marquee case**: 993/996 unlinked and 930 undated hold all 370 of its configurations honestly), 24 redirected nameplate articles (sitelink subjects moved), the section `implausible_value` production parses (incl. Prius XW10/XW20 per-sub-code lists and `celica-coupe-t200`, whose dating unlocks the whole Celica run). The `waits_undated_competitor` pool resolves mechanically as spans land. Alongside: the line-membership turn (453 line-case entities now representable), the Wikidata-adoption pass for when a section-born generation later grows its own entity (correspondence recorded per fetched Main target in the decision log since ADR 0018).
 2. ~~**The EPA refresh attach**~~ — **DONE** (2026-08-13, see session log): +215 rows attached (43,135/50,242), +214 configurations (all addressed, five MY2027 periods), 11 column supersessions, +30 placements; every pass re-ran to an exact no-op. The E350 casefold wart did **not** recur — the refresh's new E350 rows are real 2027 cars. Residue into the queues: 15 new `no_model_match` strings (+32 rows, vehicle match_review now 817).
-3. The flag queues, when the batch opens: wd-model (17 label-duplicate clusters via the curated model registry; 52 market/rebadge, 9 real cross-badges → negative pairs + future `vehicle_derivations` facts; 536 near-miss) + the EPA queues (~10 `unbridged_make` strings → `EPA_MAKE_MATCHES` entries; 802 `no_model_match` strings with candidates) + the `generation_overlap` residue (post-veto and post-demotion: boundary years — the 2006 MX-5 between NB and NC, the 911's 964/997/991/992 span overlaps — and rows with no body signal). Agent-assisted pre-screening of these queues (LLM proposes with evidence, human confirms, decisions land in registries as usual) is the requested direction (ruled 2026-08-07) — fold into the agent-review open question's ADR; the deterministic passes stay LLM-free.
+3. The flag queues, when the batch opens: wd-model (17 label-duplicate clusters via the curated model registry; 52 market/rebadge, 9 real cross-badges → negative pairs + future `vehicle_derivations` facts; 536 near-miss) + the EPA queues (~10 `unbridged_make` strings → `EPA_MAKE_MATCHES` entries; 802 `no_model_match` strings with candidates) + the `generation_overlap` residue (post-veto and post-demotion: boundary years — the 2006 MX-5 between NB and NC, the 911's 964/997/991/992 span overlaps — and rows with no body signal). The LLM read (ruled 2026-09-17, above) is the pre-screen for these queues too: it lands with evidence and a review flag, corrections land in registries as usual, and the deterministic passes stay LLM-free.
 5. ~~**The address system**~~ — **DONE** (ADR 0019, PR #37, merged 2026-08-11). Addresses are projections: the address recompute (`python -m carmanac.reconcile.addressing`) re-derives them last in the fill sequence and converges to a no-op. Applied live. What the branch leaves owed, each recorded in the ADR: `/bmw/x5/2002/fwd` and `xDrive`-as-a-drivetrain both want vPIC's Body Class and option data (a source question, not a grammar one); the E350 casefold duplicate wants trim-case folding in the configuration natural key (entity resolution, and it recurs on every EPA landing); non-model-year period segments have no grammar because no such period exists yet; `models`/`model_lines` are not re-derived by the projection, and the vPIC models pass is now the one place a naming clash still withholds a row. Serving — 301s, disambiguation pages, freezing addresses at publication — belongs to the read surface.
 6. **Thin read surface (F2) — in flight**: the three read views merged (PR #39; `v_configuration_full` + the coverage shapes), and the FastAPI read layer + the first entity pages ride branch `feat/entity-pages` (2026-08-13 — the ADR 0019 route map clickable end to end; server-rendered HTML is flagged scaffolding, the charter frontend stack unchanged). PR #42 adds the deliberately narrow homepage slice: companies only, ordered by configuration count, with the current sourced company logo normalized into one transparent display box and no model inventory or broad visual redesign. Still owed: a **reviewer surface** — a queue browser rendering `reconciliation_flags` with candidates and car context. v1 reviewer surface is read-and-propose (verdict export → registry entries stay code-reviewed, per the resolutions-are-registries doctrine); direct-write review needs its own decision.
 7. The matcher-evaluation methodology ADR (owed from the cleanup arc — before any precision number is quoted against the Tier-2/3 gate; now also owed the veto-overturn label shape from §4), the `confidence_score` write-or-drop decision. The "barely cars" pass — delayed until much later (ruled 2026-07-30), with the parked no-match pool.
@@ -102,6 +107,93 @@ End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
 
+### 2026-09-17 (the 911 census, and the LLM read as a source)
+
+- **The 911, 370 configurations and none placed, is the next case study.** Five causes stack, and
+  the first four are grammar: the nameplate article nests its generations one level below two
+  engine-cooling headings the era grammar never descends into; its codes are digits only, which
+  the era grammar's code pattern refuses; its sections carry no infobox and point at generation
+  pages instead (the 993 says 1994–1998, the 996 1997–2004, the classic 1964–1989, all landed);
+  and the 930's page states two production ranges, one per engine, so it is undated and the
+  undated-competitor guard holds every configuration. The fifth is a judgment: the 930 Turbo ran
+  beside the SC and the Carrera 3.2 through 1989, and only the trim name says which car is
+  which. Censused: 145 open multi-range spans; 126 models and 5,644 configurations sit at zero
+  placement behind an undated generation.
+- **The 3 Series is an identity gap, not a generation gap.** 91 BMW badge models (328i, 330i and
+  the rest, 1,254 configurations) hold no Wikidata id, no line membership and no generation; the
+  3-series line exists with no members, and only the E30 page and the M3 page are landed. The
+  fact that the 328i sold on the E46 lives in the generation page's model table, which fetch
+  scope never reaches because the nameplate has no model row.
+- **Ruled 2026-09-17: no rule shaped by one company's naming, and the LLM read is the general
+  mechanism.** A rule is generic or it is not written. The read is a source: one script hands a
+  model behind an OpenRouter key (the model is being chosen) one landed page, the generations
+  already held for the models it routes to, and the candidate configuration leaves with their
+  ids, and takes back the generations on the page, the cars in each, and the exact or closest
+  leaf per car, every item with a verbatim quote. The script drops any item whose quote is not
+  on the page, whose codes and years are not inside the quote, or whose leaf was not offered;
+  what survives lands as a raw record keyed by the page's content hash and a prompt version,
+  and a reconcile pass mints and places from it as it does from sections, provenance naming the
+  page and the quote. Every landed placement raises a review flag; a correction becomes a
+  registry entry that outranks the read. This moves the 2026-08-07 ruling from
+  confirm-before-landing to review-after; the ADR amendment rides the implementing branch.
+  Landing every held line's article and its generation pages, sitelink-inherited, is the fetch
+  widening the read needs. The corpus is about 12 million tokens: 959 nameplate articles and
+  206 generation pages.
+- **Housekeeping.** The Drive snapshot was refreshed (2026-09-17, 32 MB, at the current migration
+  head; pulling and restoring it takes under a minute). rclone's shared Google Drive client id
+  retires during 2026 and needs replacing.
+
+### 2026-09-11 (the M3 places: the bare title, the stated code, and where the grammar runs out)
+
+- **Two mechanisms, both censused first.** Three entities wore the label "BMW M3", so nobody
+  attached and the model had no Wikidata id, no reachable article, no generations, and 64
+  waiting configurations. The **bare sitelink title** names the nameplate when every other
+  claimant is chained to an entity of the same name — 11 of the 51 clusters resolve (M3,
+  Mustang, Thunderbird, Accord, Impala, Liberty, Vantage, 300, XK, GTO, Corniche); 40 stay
+  flagged, 26 of them holding a claimant with neither succession nor bare title. The
+  **generation form** (`<model> (<code|ordinal>)` under the model's own company) adopts the
+  linked generation stating the same — 99 of the 1,535 near-miss labels name a held model
+  exactly, and a year or a market in the parenthetical is excluded by census, not by hand.
+- **The M5 was the fixture, not the subject.** Snapshotted before the first change and diffed
+  after every pass run: empty every time. Its shape is now a CI test — code-led sections mint
+  dated generations, the model years place by unique dated overlap, and a year with a period
+  and no filing is not a placement question.
+- **Sections gained the third key.** A code-less generation named by its ordinal matched neither
+  the Main target nor a code, so the Mustang's and Accord's articles flagged whole; the display
+  name is the same key adoption uses, read from the article's side. Once every competitor is
+  claimed, the rest mint by elimination. The Accord still queues: its Wikidata members are a
+  1976 car, a Euro R trim and an Aero Deck body, each owed a ruling.
+- **No fetch widening was needed.** Adoption is what reaches a dedicated page: 50 section-born
+  generations now carry a Wikidata id and 30 of those have their own article landed, identity
+  still inherited from the sitelink. The M3's own generation entities carry no sitelinks and its
+  sections carry no Main pointers, so there is nothing further to land for it.
+- **Where the grammar runs out, censused over the 58 articles that describe several eras and
+  bucket none.** 49 carry no generation-shaped heading at any level (Jaguar XK, Lamborghini
+  Diablo); 4 nest their generations one level deeper (Jeep Wrangler, Land Cruiser, Camry); 3
+  write the ordinal with a colon (`First generation: 1966–1967` — the Charger's eight); 2 hit a
+  stopword that is right in general and wrong here (the Civic Type R's six code-named
+  generations all say "based on"). 42 models, 1,543 configurations, 193 placed. The colon form
+  is a rule; the nesting is not; the Diablo is one car the pass refuses to mint at all.
+
+- **Ruled, built, and run live 2026-09-17.** The colon lead-in joins the ordinal grammar, and a
+  heading that states both ends of its range (or "–present") dates the section when neither
+  its infobox nor its Main target does; an era heading and a lone year still date nothing.
+  The census reaches 41 articles, 20 of them models holding placements today (the Charger,
+  the Corvette, the Thunderbird, the MX-5); four keep one undated section (the Boxster, the
+  Cayman, the Parisienne, the Bonneville) and the Outback and the Sequoia will flag as
+  non-contiguous. Live, diffed against the snapshot taken before the change: none of the 7,903
+  placements withdrawn or moved, none of the 1,761 generations changed a span it already
+  held, and no row minted; 61 undated generations across 20 nameplates gained their stated
+  range (the Riviera's seven, the Bonneville's eight, the LeSabre's six) and 121
+  configurations placed (Dakota 59, Challenger 44, Skylark 12, Courier 6). Six overlap flags
+  are honest: the Caravelle's first and second ranges overlap 1985–1988 as the article
+  states them, the Courier's at 1985. The Charger's eight headings now read, and the article
+  stays flagged whole: Wikidata holds one B-body generation over 1966–1978 where the article
+  states four, a grain question for the queue, not a grammar one. Every pass re-runs to a
+  no-op; 308 tests. The LLM article read was tabled here: the design was a proposal record per article revision, a
+  person's confirmation as a registry entry naming that revision, and the pass minting from
+  confirmations the way it mints from sections.
+
 ### 2026-09-09 (adversarial review of the branch, inline: four defects, none in the rows)
 
 - **The vote's corroboration did not survive a run.** It was written on the matching decision only, and the next run's refresh decision replaced it - live, no decision carried it at all. The detail is now derived from the live graph on every run, matched or refreshed: 244 decisions carry it, 150 with a parent era, the Corvette reading Chevrolet under General Motors with the link true. 44 of the 244 have no held maker at all (Jaguar Land Rover's Jaguars, the Lotus Elan, the Maybach 57) and the badge is right in each; the docstrings and ADR 0022 §7 now say a held maker is not required, which is what the code did.
@@ -110,6 +202,8 @@ the completed F1-F9 fix queue and the 2026-07 review findings.
 - **The rung-1 method backfill read an empty list.** It recomputed the held makers but the name rungs now read the match list, so it could never find a hit; the maker resolution happens once at the top of the match loop. Every pass still re-runs to an exact no-op; 301 tests.
 
 ### 2026-09-03 (the branch lands: merges applied, the vote live, the Corvette's eight, two convergence defects fixed)
+
+- **Merged as PR #46 and #47** (reconciler v22, 300 tests): every pass converging, the residue of 890 id-less models the two honest shapes below.
 
 - **Phase A live.** The relations sweep lands 7,238 records (idempotent re-land); the pass asserts 358 parent eras (450 claims wait on parents we don't hold — Scania, GAC, SAIC, AB Volvo — 1 implausible era skipped, 29 undated duplicates of dated eras retired after the rule landed); the 17 merges executed through the merge script's new absorb path (a member holding the catalogue keeps its row; the legal entity's lines and generations move with it; a natural-key collision refuses); the engine's badge rule renamed 19 companies and the address recompute moved five addresses (audi, skoda, volvo, ssc, consulier) with the slug-keyed registry values following. Jaguar took nothing of Land Rover's (checked before executing).
 - **Phase B live.** The vote attaches 244 models (150 with a corroborating parent era, 94 without — Chrysler Crossfire under Karmann, Saab 9-2X under Subaru, the badge right in every one); 144 waiting generation entities minted at once; 52 redundant line rows retired; 459 articles fetched; the era grammar dated the rest. The residue of 890 id-less models is two honest shapes: BMW's per-badge filings (124 — no Wikidata entity per badge; they reach generations through the 3 Series line) and Ford's medium/heavy truck chassis codes (105).

@@ -38,7 +38,11 @@ available and rejected:
   level-ambiguous: Ford Model T *follows* Model S (two nameplates) while BMW
   E21 *follows* the 02 Series (a chain crossing nameplate boundaries), and
   both look identical to a generation chained to its sibling. Only P179
-  membership in a matched model creates a generation.
+  membership in a matched model creates a generation. A chain does settle
+  one question (ADR 0013 §2, amended): among identical-label claimants of
+  one model, an entity chained to another entity of the same name is an era
+  of that name, so the one claimant whose sitelink is the bare title stands
+  alone as the nameplate. The eras wait; they mint nothing.
 - **Labels outrank aliases** (ADR 0013). A label says what an entity IS;
   aliases say what it is ALSO called, and Wikidata files rebadges there.
 
@@ -77,6 +81,7 @@ from carmanac.db.models import (
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikidata.models import SWEEP_MARKER
 from carmanac.ingest.wikipedia import SOURCE_NAME as WIKIPEDIA_SOURCE_NAME
+from carmanac.ingest.wikipedia.fetch import article_title
 from carmanac.reconcile import policy
 from carmanac.reconcile.addressing import nonconforming_slug, slugify
 from carmanac.reconcile.bookkeeping import (
@@ -98,7 +103,10 @@ from carmanac.reconcile.sources.wikidata_models import (
     strip_prefix,
 )
 from carmanac.reconcile.sources.wikipedia_infobox import parse_infobox, same_subject
-from carmanac.reconcile.sources.wikipedia_sections import parse_article
+from carmanac.reconcile.sources.wikipedia_sections import (
+    parse_article,
+    parse_generation_parenthetical,
+)
 
 log = logging.getLogger(__name__)
 
@@ -217,6 +225,8 @@ class WikidataModelsStats:
     lines_matched: int = 0
     memberships_inserted: int = 0
     line_generations_waiting: int = 0
+    chain_generations_waiting: int = 0
+    generation_candidates_waiting: int = 0
     variants_held: int = 0
     market_name_flagged: int = 0
     waits_no_held_maker: int = 0
@@ -241,7 +251,9 @@ class WikidataModelsStats:
             f"refreshed={self.generations_refreshed} "
             f"links={self.generation_links_asserted} "
             f"(adopted={self.generation_links_adopted}) "
-            f"line_case_waiting={self.line_generations_waiting} | "
+            f"line_case_waiting={self.line_generations_waiting} "
+            f"chain_waiting={self.chain_generations_waiting} "
+            f"candidates_waiting={self.generation_candidates_waiting} | "
             f"market_name_flags={self.market_name_flagged} "
             f"brand_voted={self.brand_voted} variants_held={self.variants_held} "
             f"waits: no_held_maker={self.waits_no_held_maker} "
@@ -266,6 +278,12 @@ class _Subject:
     # the mint gate deliberately keeps reading `held_companies`.
     match_companies: list[int] = field(default_factory=list)
     decided: bool = False
+    # The generation form (ADR 0013 §2, amended): the label is a held model's
+    # name plus a parenthetical, so the entity is a generation of that model
+    # and adopts the linked generation that states the same code or name.
+    generation_of: int | None = None
+    stated_codes: frozenset[str] = frozenset()
+    stated_name: str = ""
 
 
 class _WikidataModelsPass:
@@ -491,9 +509,12 @@ class _WikidataModelsPass:
         }
 
         # Generation slugs per company (ADR 0016 anchoring), for collision
-        # detection before INSERT.
+        # detection before INSERT; the rows themselves for adoption by code.
+        self.generation_rows: dict[int, Generation] = {
+            g.id: g for g in session.scalars(select(Generation))
+        }
         self.generation_by_company_slug: dict[tuple[int, str], int] = {
-            (g.company_id, g.slug): g.id for g in session.scalars(select(Generation))
+            (g.company_id, g.slug): g.id for g in self.generation_rows.values()
         }
 
         # Live generation-model links: this source's own (for idempotent
@@ -502,6 +523,7 @@ class _WikidataModelsPass:
         # beside it forever).
         self.live_generation_links: set[tuple[int, int]] = set()
         self.anonymous_links: dict[tuple[int, int], int] = {}
+        self.links_by_model: dict[int, set[int]] = {}  # every source's live links
         for link_id, generation_id, model_id, source_id in session.execute(
             select(
                 GenerationModelLink.id,
@@ -510,6 +532,7 @@ class _WikidataModelsPass:
                 GenerationModelLink.source_id,
             ).where(GenerationModelLink.superseded_by.is_(None))
         ):
+            self.links_by_model.setdefault(model_id, set()).add(generation_id)
             if source_id == self.source.id:
                 self.live_generation_links.add((generation_id, model_id))
             elif source_id is None:
@@ -591,6 +614,13 @@ class _WikidataModelsPass:
             entity = wikidata_models.map_record(record.payload)
             if entity is not None:
                 self.subjects[entity.qid] = _Subject(record=record, entity=entity)
+
+        # Chain neighbours, symmetric: either side may state the edge.
+        self.chain_neighbours: dict[str, set[str]] = {}
+        for qid, subject in self.subjects.items():
+            for target in subject.entity.follows + subject.entity.followed_by:
+                self.chain_neighbours.setdefault(qid, set()).add(target)
+                self.chain_neighbours.setdefault(target, set()).add(qid)
 
         # Every QID some swept entity claims P179 membership in: the line
         # evidence (§2.4).
@@ -828,6 +858,55 @@ class _WikidataModelsPass:
                             hits[model_id] = (method, rank)
         return hits
 
+    def _same_name_succession(self, qid: str) -> list[str]:
+        """Chain neighbours whose label, minus a trailing parenthetical, is
+        this entity's own: the succession a nameplate's eras form ("BMW M3"
+        followed by "BMW M3 (E30)"'s successor). A nameplate follows other
+        names (Impala follows Bel Air), so this never explains one away."""
+        own = _TRAILING_PAREN.sub("", self.subjects[qid].entity.label or "").casefold()
+        return sorted(
+            n
+            for n in self.chain_neighbours.get(qid, ())
+            if n in self.subjects
+            and _TRAILING_PAREN.sub("", self.subjects[n].entity.label or "").casefold() == own
+        )
+
+    @staticmethod
+    def _bare_title(entity: ModelEntity) -> bool:
+        """The sitelink is the bare title - Wikipedia's primary-topic page for
+        the name, where every era page wears a parenthetical."""
+        return bool(entity.article and entity.label) and (
+            article_title(entity.article).replace("_", " ").casefold() == entity.label.casefold()
+        )
+
+    def _generation_form(self, subject: _Subject) -> None:
+        """A label reading `<model> (<parenthetical>)`, exact under the
+        model's own company after prefix stripping, names a generation of
+        that model - never fuzzy, never a model claim - when the
+        parenthetical states what a section heading states. That statement
+        is the adoption key; a year or a market names an era no section can
+        be identified by, and stays a near-miss."""
+        entity = subject.entity
+        m = _TRAILING_PAREN.search(entity.label or "")
+        if not m or m.start() == 0:
+            return
+        stated = parse_generation_parenthetical(m.group(0).strip()[1:-1])
+        if stated is None:
+            return
+        head = entity.label[: m.start()]
+        hits: set[int] = set()
+        for company_id in subject.match_companies:
+            stripped = self._strip(head, company_id)
+            hits.update(self.models_by_name.get(company_id, {}).get(normalize_name(stripped), []))
+        if len(hits) != 1:
+            return
+        codes, ordinal = stated
+        subject.generation_of = hits.pop()
+        subject.stated_codes = frozenset(c.casefold() for c in codes)
+        if ordinal:
+            nameplate = self._strip(head, self.models[subject.generation_of].company_id).strip()
+            subject.stated_name = f"{nameplate} ({ordinal} generation)"
+
     def _vote_brand(self, subject: _Subject) -> bool:
         """Point the match rungs at the brand the label wears when no held
         maker holds models (ADR 0022 §7). False stops the entity here.
@@ -1049,7 +1128,9 @@ class _WikidataModelsPass:
                     "flagged_ambiguous",
                     {"candidates": sorted(self._slug_pair(m) for m in best)},
                 )
-            # 0 hits: falls through to the structure phases.
+            else:
+                # 0 hits: the generation form, else the structure phases.
+                self._generation_form(subject)
 
     def _claim_detail(self, qid: str) -> dict:
         """What a reviewer needs to tell a nameplate entity from its
@@ -1075,13 +1156,50 @@ class _WikidataModelsPass:
                 return hit[0]
         return "external_id"
 
-    def _attach_match(self, model_id: int, subject: _Subject, method: str) -> None:
+    def _attach_match(
+        self, model_id: int, subject: _Subject, method: str, extra: dict | None = None
+    ) -> None:
         self._attach_model(model_id, subject)
         self._enrich_model(model_id, subject)
         self._dismiss_flags(subject.entity.qid, f"matched:{self._slug_pair(model_id)}")
         self.stats.models_matched += 1
-        detail = {"model": self._slug_pair(model_id), **(self._brand_vote(subject, model_id) or {})}
+        detail = {
+            "model": self._slug_pair(model_id),
+            **(self._brand_vote(subject, model_id) or {}),
+            **(extra or {}),
+        }
         self._decide(subject, "3", method, "matched", detail)
+
+    def _split_eras(self, claimants: list[tuple[str, str]]) -> tuple[list, list]:
+        """(bare-title claimants, era claimants) among one model's label
+        claimants: an era is chained to another entity of the same name."""
+        bare = [c for c in claimants if self._bare_title(self.subjects[c[0]].entity)]
+        eras = [c for c in claimants if c not in bare and self._same_name_succession(c[0])]
+        return bare, eras
+
+    def _defer_eras(self, model_id: int, eras: list[tuple[str, str]], nameplate: str) -> None:
+        """Identical-label claimants explained as eras of the nameplate: no
+        row, no link, no flag. A bare label states no code, so the sitelink
+        title is the era's only key - "Ford Mustang (fifth generation)" -
+        and it adopts the linked generation wearing that name or code, else
+        waits."""
+        for qid, method in eras:
+            subject = self.subjects[qid]
+            subject.generation_of = model_id
+            if subject.entity.article:
+                title = article_title(subject.entity.article).replace("_", " ")
+                subject.stated_name = self._strip(title, self.models[model_id].company_id)
+                codes, _ambiguous = extract_chassis_codes(title, (), None)
+                subject.stated_codes = frozenset(c.casefold() for c in codes)
+            self._dismiss_flags(qid, f"era_of:{self._slug_pair(model_id)}")
+            if not self._adopt_or_wait(
+                subject,
+                rung="3",
+                method=method,
+                wait_outcome="chain_generation_waits",
+                wait_detail={"nameplate": nameplate, "succession": self._same_name_succession(qid)},
+            ):
+                self.stats.chain_generations_waiting += 1
 
     def _flag_market_name(
         self, subject: _Subject, model_id: int, method: str, co_claimants: list[str]
@@ -1109,8 +1227,11 @@ class _WikidataModelsPass:
         with label evidence outranking alias evidence (ADR 0013 §2).
 
         Label claimants: exactly one -> it attaches 1:1; several -> the
-        label-duplicate cluster flag (picking the nameplate from identical labels
-        would be a guess - the curated registry resolves it). Alias claimants
+        bare-title tie-break (ADR 0013 §2, amended): the one claimant whose
+        sitelink is the bare title is the nameplate when every other claimant
+        is chained to an entity of the same name - an era of it. Otherwise the
+        label-duplicate cluster flag (picking the nameplate from identical
+        labels would be a guess - the curated registry resolves it). Alias claimants
         never cluster: uncontested same-brand ones attach (the alias IS the
         as-filed market name - the Echo/LeCar species); contested or
         cross-badge ones flag as `market_name_or_rebadge`.
@@ -1164,6 +1285,9 @@ class _WikidataModelsPass:
                 # a returning ALIAS claimant is the same market-name/rebadge
                 # question it was before the model matched - the outcome must
                 # not flip between runs.
+                _bare, eras = self._split_eras(label_active)
+                self._defer_eras(model_id, eras, existing_qid)
+                label_active = [c for c in label_active if c not in eras]
                 if label_active:
                     detail = {
                         "model": self._slug_pair(model_id),
@@ -1182,13 +1306,31 @@ class _WikidataModelsPass:
                 qid, method = label_active[0]
                 self._attach_match(model_id, self.subjects[qid], method)
             elif len(label_active) > 1:
-                detail = {
-                    "model": self._slug_pair(model_id),
-                    "claimants": [self._claim_detail(q) for q, _ in label_active],
-                }
-                self._flag(self.subjects[label_active[0][0]], "shared_model_match", detail)
-                for qid, method in label_active:
-                    self._decide(self.subjects[qid], "3", method, "flagged_shared_match", detail)
+                bare, eras = self._split_eras(label_active)
+                if len(bare) == 1 and len(eras) == len(label_active) - 1:
+                    ((qid, method),) = bare
+                    self._attach_match(
+                        model_id,
+                        self.subjects[qid],
+                        "bare_sitelink_title",
+                        {"eras": [q for q, _ in eras]},
+                    )
+                    self._defer_eras(model_id, eras, qid)
+                else:
+                    detail = {
+                        "model": self._slug_pair(model_id),
+                        "claimants": [self._claim_detail(q) for q, _ in label_active],
+                    }
+                    self._flag(self.subjects[label_active[0][0]], "shared_model_match", detail)
+                    for qid, method in label_active:
+                        self._decide(
+                            self.subjects[qid], "3", method, "flagged_shared_match", detail
+                        )
+                    # The question lives on the first claimant's record; a
+                    # copy left on another's from an earlier run would count
+                    # the same cluster twice.
+                    for qid, _method in label_active[1:]:
+                        self._dismiss_flags(qid, "cluster_flag_moved")
             elif len(alias_active) == 1 and not self._is_cross_badge(
                 self.subjects[alias_active[0][0]].entity, model_id
             ):
@@ -1364,6 +1506,16 @@ class _WikidataModelsPass:
         self.live_generation_links.add((generation_id, model_id))
         self.stats.generation_links_asserted += 1
 
+    def _generation_display(self, entity: ModelEntity, company_id: int) -> str:
+        """The stripped label, unless that is a model's own name under the
+        company: a generation is never named like a model (ruled
+        2026-08-21), so an entity wearing the bare nameplate is named by its
+        sitelink title, the page that carries its own parenthetical."""
+        display = self._strip(entity.label, company_id)
+        if entity.article and normalize_name(display) in self.models_by_name.get(company_id, {}):
+            return self._strip(article_title(entity.article).replace("_", " "), company_id)
+        return display
+
     def _refresh_generation(self, subject: _Subject) -> None:
         qid = subject.entity.qid
         generation = self.session.get(Generation, self.generation_by_qid[qid])
@@ -1375,7 +1527,7 @@ class _WikidataModelsPass:
             # anchor that stops resolving must not rename the row either.
             display = grain[1]
         elif subject.entity.label and qid not in policy.WIKIDATA_DUPLICATE_NAMEPLATES:
-            display = self._strip(subject.entity.label, generation.company_id)
+            display = self._generation_display(subject.entity, generation.company_id)
         else:
             display = generation.name
         self._generation_facts(generation, subject, display)
@@ -1417,7 +1569,7 @@ class _WikidataModelsPass:
     def _create_generation(self, model_id: int, subject: _Subject) -> None:
         entity = subject.entity
         model = self.models[model_id]
-        display = self._strip(entity.label, model.company_id)
+        display = self._generation_display(entity, model.company_id)
         slug = slugify(display)
         reason = nonconforming_slug(slug)
         if reason is not None:
@@ -1625,6 +1777,20 @@ class _WikidataModelsPass:
                 self.mint_candidates.append((subject, *minted))
                 continue
 
+            # The generation form, once the mint question is settled: under a
+            # registry company an era sibling is the duplicates ruling's
+            # question (§7), not an adoption.
+            if subject.generation_of is not None:
+                if not self._adopt_or_wait(
+                    subject,
+                    rung="5",
+                    method="generation_form",
+                    wait_outcome="generation_candidate_waits",
+                    wait_detail={},
+                ):
+                    self.stats.generation_candidates_waiting += 1
+                continue
+
             # Rung 6: no structural evidence. Flag with candidates only when
             # a held company AND near-misses exist; otherwise wait, unflagged
             # (§3: the tabled expansion's warehouse).
@@ -1659,6 +1825,65 @@ class _WikidataModelsPass:
                     "waits_unmatched",
                     {"chained_to_held": True} if chain_evidence else None,
                 )
+
+    def _adopt_or_wait(
+        self, subject: _Subject, *, rung: str, method: str, wait_outcome: str, wait_detail: dict
+    ) -> bool:
+        """Adoption (ADR 0017 §4): among the generations linked to the model
+        from any source and carrying no Wikidata id yet, exactly one states a
+        code the entity states, or wears the entity's stated name. It gains
+        this entity's id and a link from this record; the section that
+        minted it keeps asserting its facts. Two hits flag; a generation
+        already identified stays so - a second id is Wikidata's duplicate to
+        rule on, never an attachment; none is the wait the caller names,
+        unflagged, logged with the keys. True when adopted."""
+        entity = subject.entity
+        model_id = subject.generation_of
+        taken = set(self.generation_by_qid.values())
+        hits = []
+        for generation_id in sorted(self.links_by_model.get(model_id, ())):
+            if generation_id in taken:
+                continue
+            generation = self.generation_rows[generation_id]
+            codes = {c.casefold() for c in generation.chassis_codes or ()}
+            if codes & subject.stated_codes or (
+                subject.stated_name
+                and normalize_name(generation.name or "") == normalize_name(subject.stated_name)
+            ):
+                hits.append(generation_id)
+        keys = {"model": self._slug_pair(model_id), "codes": sorted(subject.stated_codes)}
+        if subject.stated_name:
+            keys["name"] = subject.stated_name
+        if len(hits) > 1:
+            candidates = sorted(self.generation_rows[g].slug or f"#{g}" for g in hits)
+            self._flag(
+                subject,
+                "ambiguous_generation_adoption",
+                {"label": entity.label, **keys, "candidates": candidates},
+            )
+            self._decide(subject, rung, method, "flagged_ambiguous_adoption", keys)
+            return True
+        if not hits:
+            self._dismiss_flags(entity.qid, f"generation_candidate:{keys['model']}")
+            self._decide(subject, rung, method, wait_outcome, {**keys, **wait_detail})
+            return False
+        generation = self.generation_rows[hits[0]]
+        self.session.add(
+            ExternalId(
+                generation_id=generation.id, source_id=self.source.id, external_id=entity.qid
+            )
+        )
+        self.session.flush()
+        self.generation_by_qid[entity.qid] = generation.id
+        self._assert_generation_link(generation.id, model_id, subject)
+        self._generation_facts(
+            generation, subject, self._strip(entity.label, generation.company_id)
+        )
+        self.stats.generations_adopted += 1
+        detail = {**keys, "generation": generation.slug}
+        self._dismiss_flags(entity.qid, f"generation_adopted:{keys['model']}/{generation.slug}")
+        self._decide(subject, rung, method, "generation_adopted", detail)
+        return True
 
     # --- rung 6, mint (§7) -----------------------------------------------------
 

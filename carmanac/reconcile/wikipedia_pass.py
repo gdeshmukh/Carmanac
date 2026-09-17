@@ -640,6 +640,11 @@ class _WikipediaPass:
                 codes, _ambiguous = extract_chassis_codes(target_title, (), None)
                 if codes:
                     main_facts["chassis_codes"] = ("|".join(codes), codes)
+        if raw is None and "start_year" not in main_facts and section.heading_span is not None:
+            stated = section.heading_span
+            observed = f"{stated.start}–{stated.end or 'present'}"
+            facts["start_year"] = (observed, stated.start)
+            facts["end_year"] = (observed, stated.end)
 
         for fact_record, fact_map, coverage in (
             (record, facts, tuple(f for f in COVERAGE if f not in main_facts)),
@@ -681,15 +686,24 @@ class _WikipediaPass:
         return f"{self._nameplate(model)} ({word} generation)"
 
     def _reconcile_section(
-        self, section: GenerationSection, competitors: set[int]
+        self, section: GenerationSection, competitors: set[int], display: str
     ) -> int | str | None:
         """An existing generation this section describes, or the sentinel
         'distinct' when codes prove it is none of them, or None when the
-        question cannot be answered mechanically."""
+        question cannot be answered mechanically. The keys are the ones a
+        Wikidata entity adopts a section by, read the other way: the
+        `{{Main}}` target's page, the display name, the chassis codes."""
         for target in section.main_targets:
             generation_id = self.generation_by_title.get(self._norm_title(target))
             if generation_id in competitors:
                 return generation_id
+        named = [
+            g
+            for g in competitors
+            if normalize_name(self.generations[g].name or "") == normalize_name(display)
+        ]
+        if len(named) == 1:
+            return named[0]
         if section.codes:
             code_hits = {
                 generation_id
@@ -1337,22 +1351,30 @@ class _WikipediaPass:
 
         to_mint: list[GenerationSection] = []
         reconciled: dict[int, int] = {}  # ordinal -> existing generation_id
-        unresolved: list[str] = []
+        unresolved: list[GenerationSection] = []
         for section in parsed.sections:
             if section.ordinal in keyed:
                 continue
             if not competitors:
                 to_mint.append(section)
                 continue
-            answer = self._reconcile_section(section, competitors)
+            answer = self._reconcile_section(
+                section, competitors, self._display_name(model, section)
+            )
             if answer == "distinct":
                 to_mint.append(section)
             elif answer is None:
-                unresolved.append(section.heading)
+                unresolved.append(section)
             else:
                 reconciled[section.ordinal] = answer
+        if unresolved and competitors <= set(reconciled.values()):
+            # Every competitor is some section's; nothing is left for the
+            # rest to duplicate, so they are distinct by elimination.
+            to_mint.extend(unresolved)
+            unresolved = []
 
         if unresolved:
+            headings = [s.heading for s in unresolved]
             self._flag_article(
                 qid,
                 model_id,
@@ -1360,7 +1382,7 @@ class _WikipediaPass:
                 "sections_unreconciled",
                 {
                     "title": parsed.title,
-                    "unreconciled": unresolved,
+                    "unreconciled": headings,
                     # A generation with no address is still a competitor;
                     # name it by what it is rather than where it lives.
                     "existing_generations": sorted(
@@ -1372,7 +1394,7 @@ class _WikipediaPass:
             self.decisions.record(
                 record,
                 "flagged_sections",
-                detail={"reason": "unreconciled", "headings": unresolved},
+                detail={"reason": "unreconciled", "headings": headings},
             )
             return
 
