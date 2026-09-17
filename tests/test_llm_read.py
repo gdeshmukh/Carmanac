@@ -39,7 +39,9 @@ WIKITEXT = (
     "produced from 1997 to 2006.\n"
     "The 330i was sold from 2001 to 2005 as a [[sedan (car)|sedan]].\n"
     "The F30 followed in 2012 and remains in production (2012–present).\n"
+    "The E90 ran from 2005 to 2011.\n"
 )
+E90_QUOTE = "The E90 ran from 2005 to 2011"
 E46_QUOTE = "The E46 is the fourth generation of the BMW 3 Series, produced from 1997 to 2006"
 F30_QUOTE = "The F30 followed in 2012 and remains in production (2012–present)"
 CAR_QUOTE = "The 330i was sold from 2001 to 2005"
@@ -102,7 +104,7 @@ def test_verify_keeps_only_what_the_page_states():
             "codes": ["E90"],
             "start_year": 2005,
             "end_year": 2011,
-            "quote": "The E90 ran from 2005 to 2011",
+            "quote": "The E90 was sold from 2005 to 2011",
             "cars": [],
         }
     )
@@ -317,16 +319,41 @@ def test_the_pass_dates_mints_places_flags_and_withdraws(db, llm_source, spine, 
 
 
 @pytest.mark.integration
-def test_placement_pass_defers_to_a_stated_placement(db, llm_source, spine, article):
+def test_placement_pass_defers_to_a_stated_placement_and_flags_what_rests_on_a_read_span(
+    db, llm_source, spine, article
+):
     page, (c2003, _c2005, _c2012) = article["page"], article["leaves"]
-    _land_read(db, llm_source, page, _answer([c2003.id]), [c.id for c in article["leaves"]])
+    c2008 = _configuration(db, spine, 2008, "sedan")
+    answer = _answer([c2003.id])
+    answer["generations"].append(
+        {
+            "name": "E90",
+            "codes": [],
+            "start_year": 2005,
+            "end_year": 2011,
+            "quote": E90_QUOTE,
+            "cars": [],
+        }
+    )
+    _land_read(db, llm_source, page, answer, [c.id for c in article["leaves"]])
     run_llm_read_pass(db)
-    # The E46 is dated by the read and the E90 is not: the inference alone
-    # would hold this car for the undated sibling.
     stats = run_generation_placement_pass(db)
-    db.refresh(c2003)
+    db.refresh(c2003), db.refresh(c2008)
     assert c2003.generation_id == spine["e46"].id and stats.deferred == 1
-    assert stats.withdrawn == 0
+    # 2008 by the E90's span, 2012 by its end-year slack: both rest on the read.
+    assert c2008.generation_id == spine["e90"].id and stats.read_span == 2, "dated only by the read"
+    flag = db.scalars(
+        select(ReconciliationFlag).where(
+            ReconciliationFlag.configuration_id == c2008.id, ReconciliationFlag.status == "open"
+        )
+    ).one()
+    assert (flag.kind, flag.detail["reason"], flag.detail["span"]) == (
+        FLAG_KIND,
+        "placed by a span a read stated",
+        "2005–2011",
+    )
+    again = run_generation_placement_pass(db)
+    assert (again.flags_opened, again.withdrawn, again.read_span) == (0, 0, 2)
 
 
 @pytest.mark.integration

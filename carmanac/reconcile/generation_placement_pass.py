@@ -65,6 +65,7 @@ from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikipedia import SOURCE_NAME
 from carmanac.reconcile.bookkeeping import DecisionLog
 from carmanac.reconcile.engine import supersede
+from carmanac.reconcile.sources.llm_read import SOURCE_NAME as READ_SOURCE
 from carmanac.reconcile.sources.wikipedia_infobox import (
     Span,
     infobox_field,
@@ -99,6 +100,7 @@ class GenerationPlacementStats:
     overlap_flagged: int = 0
     withdrawn: int = 0
     deferred: int = 0
+    read_span: int = 0
     body_vetoed: int = 0
     flags_opened: int = 0
     flags_dismissed: int = 0
@@ -109,6 +111,7 @@ class GenerationPlacementStats:
             f"already={self.already_placed} no_candidate={self.unplaced_no_candidate} "
             f"undated_competitor={self.undated_competitor} "
             f"overlap={self.overlap_flagged} withdrawn={self.withdrawn} deferred={self.deferred} "
+            f"read_span={self.read_span} "
             f"body_vetoed={self.body_vetoed} | "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
         )
@@ -344,6 +347,27 @@ class _PlacementPass:
                 )
             )
         }
+        # A span an LLM read stated is that read's evidence, reviewed like
+        # its placements: whatever this pass places on it carries the same
+        # flag, so the review queue holds everything the read caused.
+        read_source = self.session.scalar(select(Source.id).where(Source.name == READ_SOURCE))
+        self.read_records: set[int] = (
+            set()
+            if read_source is None
+            else set(
+                self.session.scalars(select(RawRecord.id).where(RawRecord.source_id == read_source))
+            )
+        )
+        self.open_read_flags: dict[int, ReconciliationFlag] = {
+            flag.configuration_id: flag
+            for flag in self.session.scalars(
+                select(ReconciliationFlag).where(
+                    ReconciliationFlag.kind == "llm_placement_review",
+                    ReconciliationFlag.status == "open",
+                    ReconciliationFlag.source_id == self.source.id,
+                )
+            )
+        }
         # A placement another source states outright - an LLM read with its
         # quote, or a reviewer's correction - is evidence at the leaf's own
         # grain; the inference from spans defers to it rather than competing.
@@ -454,6 +478,39 @@ class _PlacementPass:
         )
         self.stats.flags_opened += 1
 
+    def _flag_read_span(
+        self, configuration: Configuration, candidate: _Candidate, detail: dict
+    ) -> None:
+        full = {
+            **detail,
+            "reason": "placed by a span a read stated",
+            "span": f"{candidate.span.start}–{candidate.span.end or 'present'}",
+        }
+        flag = self.open_read_flags.get(configuration.id)
+        if flag is not None:
+            if flag.detail != full:
+                flag.detail = full
+            return
+        flag = ReconciliationFlag(
+            kind="llm_placement_review",
+            configuration_id=configuration.id,
+            field_name="generation_id",
+            detail=full,
+            source_id=self.source.id,
+            raw_record_id=candidate.raw_record_id,
+        )
+        self.session.add(flag)
+        self.open_read_flags[configuration.id] = flag
+        self.stats.flags_opened += 1
+
+    def _dismiss_read_flag(self, configuration_id: int, resolution: str) -> None:
+        flag = self.open_read_flags.pop(configuration_id, None)
+        if flag is not None:
+            flag.status = "dismissed"
+            flag.resolved_at = func.now()
+            flag.detail = {**(flag.detail or {}), "resolution": resolution}
+            self.stats.flags_dismissed += 1
+
     def _dismiss_flag(self, configuration_id: int, resolution: str) -> None:
         flag = self.open_flags.pop(configuration_id, None)
         if flag is not None:
@@ -490,6 +547,7 @@ class _PlacementPass:
                         },
                     )
                 self.stats.deferred += 1
+                self._dismiss_read_flag(configuration.id, "placement_stated_outright")
                 self.decisions.record_key(key, "defers_to_stated_placement")
                 continue
             candidates, undated, vetoed = self._candidates(
@@ -507,6 +565,7 @@ class _PlacementPass:
                     self.stats.withdrawn += 1
                 self._assert_placement(configuration, None)
                 self._dismiss_flag(configuration.id, "waiting_on_undated_competitors")
+                self._dismiss_read_flag(configuration.id, "waiting_on_undated_competitors")
                 self.stats.undated_competitor += 1
                 self.decisions.record_key(
                     key,
@@ -530,6 +589,11 @@ class _PlacementPass:
                 detail = {"generation": self.generations[candidate.generation_id].slug}
                 if vetoed_slugs:
                     detail["body_vetoed"] = vetoed_slugs
+                if candidate.raw_record_id in self.read_records:
+                    self._flag_read_span(configuration, candidate, detail)
+                    self.stats.read_span += 1
+                else:
+                    self._dismiss_read_flag(configuration.id, "span_stated_by_the_page")
                 self.decisions.record_key(
                     key,
                     "placed_dated_overlap",
@@ -560,6 +624,7 @@ class _PlacementPass:
                     ],
                 }
                 self._flag_overlap(configuration, candidates, detail)
+                self._dismiss_read_flag(configuration.id, "candidates_overlap")
                 self.stats.overlap_flagged += 1
                 self.decisions.record_key(key, "flagged_generation_overlap", detail=detail)
                 continue
@@ -568,6 +633,7 @@ class _PlacementPass:
                 self.stats.withdrawn += 1
             self._assert_placement(configuration, None)
             self._dismiss_flag(configuration.id, "candidates_no_longer_overlap")
+            self._dismiss_read_flag(configuration.id, "no_dated_candidate")
             self.stats.unplaced_no_candidate += 1
             self.decisions.record_key(key, "waits_no_dated_generation")
 

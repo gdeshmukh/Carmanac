@@ -35,12 +35,18 @@ from carmanac.db.models import (
     ReconciliationFlag,
 )
 from carmanac.ingest.landing import get_source
-from carmanac.ingest.llm_read import SOURCE_NAME, candidate_leaves
+from carmanac.ingest.llm_read import candidate_leaves
 from carmanac.reconcile import policy
 from carmanac.reconcile.addressing import nonconforming_slug, slugify
 from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled
 from carmanac.reconcile.engine import assert_field_facts, current_records, supersede
-from carmanac.reconcile.sources.llm_read import ReadGeneration, page_text, parse_answer, verify
+from carmanac.reconcile.sources.llm_read import (
+    SOURCE_NAME,
+    ReadGeneration,
+    page_text,
+    parse_answer,
+    verify,
+)
 
 log = logging.getLogger(__name__)
 PASS_NAME = "llm_read"
@@ -145,7 +151,9 @@ class LLMReadPass:
             flag.configuration_id: flag
             for flag in session.scalars(
                 select(ReconciliationFlag).where(
-                    ReconciliationFlag.kind == FLAG_KIND, ReconciliationFlag.status == "open"
+                    ReconciliationFlag.kind == FLAG_KIND,
+                    ReconciliationFlag.status == "open",
+                    ReconciliationFlag.source_id == self.source.id,
                 )
             )
         }

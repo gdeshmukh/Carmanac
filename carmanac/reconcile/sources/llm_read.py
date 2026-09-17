@@ -20,6 +20,8 @@ import json
 import re
 from dataclasses import dataclass, field
 
+SOURCE_NAME = "LLM read"
+
 # Bumped when the normalisation or the prompt changes: a read at an older
 # version is a different question, and the script asks again.
 PROMPT_VERSION = "2"

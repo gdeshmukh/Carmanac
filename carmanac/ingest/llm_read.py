@@ -38,6 +38,7 @@ from carmanac.ingest.landing import content_hash, get_source, upsert_raw_records
 from carmanac.ingest.wikipedia.fetch import SOURCE_NAME as WIKIPEDIA_SOURCE
 from carmanac.reconcile.sources.llm_read import (
     PROMPT_VERSION,
+    SOURCE_NAME,
     Leaf,
     build_messages,
     page_text,
@@ -45,7 +46,6 @@ from carmanac.reconcile.sources.llm_read import (
     verify,
 )
 
-SOURCE_NAME = "LLM read"
 log = logging.getLogger(__name__)
 
 
