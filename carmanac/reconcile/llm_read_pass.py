@@ -35,7 +35,7 @@ from carmanac.db.models import (
     ReconciliationFlag,
 )
 from carmanac.ingest.landing import get_source
-from carmanac.ingest.llm_read import SOURCE_NAME
+from carmanac.ingest.llm_read import SOURCE_NAME, candidate_leaves
 from carmanac.reconcile import policy
 from carmanac.reconcile.addressing import nonconforming_slug, slugify
 from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled
@@ -207,15 +207,8 @@ class LLMReadPass:
             self.decisions.record(record, "read_unrouted")
             return
         model = self.models[model_id]
-        leaf_years = {
-            configuration_id: year
-            for configuration_id, year in self.session.execute(
-                select(Configuration.id, CataloguePeriod.start_year)
-                .join(CataloguePeriod, Configuration.catalogue_period_id == CataloguePeriod.id)
-                .where(CataloguePeriod.model_id == model_id)
-            )
-        }
-        offered = {i: leaf_years[i] for i in payload.get("leaf_ids") or [] if i in leaf_years}
+        leaves = {leaf.id: leaf for leaf in candidate_leaves(self.session, model_id)}
+        offered = {i: leaves[i] for i in payload.get("leaf_ids") or [] if i in leaves}
         verified = verify(
             parse_answer(payload.get("answer", "")),
             page_text(page.payload.get("wikitext", "")),
@@ -248,7 +241,7 @@ class LLMReadPass:
             )
             placed += outcome == "placed"
             contradicted += outcome == "contradicted"
-        for configuration_id in sorted(leaf_years):
+        for configuration_id in sorted(leaves):
             if configuration_id not in stated and configuration_id not in self.corrected:
                 self._withdraw(configuration_id, record)
         self.decisions.record(

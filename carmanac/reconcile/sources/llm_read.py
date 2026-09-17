@@ -6,10 +6,12 @@ generations already held for the nameplate, and the candidate
 configurations with their ids, and answers with the generations on the
 page, the cars in each, and the leaves per car, every item carrying a
 quote. `verify` keeps an item only when its quote is a verbatim substring
-of that text and itself states the item's codes, years and name, and keeps
-a leaf only when it was offered and its model year sits inside the years
-its car states. The script that asks and the pass that lands run this same
-gate over the same text, so nothing the model made up can reach a row.
+of that text and itself states the item's codes, years and name, keeps a
+car only when it is quoted from inside its generation's own stretch of the
+page, and keeps a leaf only when it was offered and its model year sits
+inside the years its car states. The script that asks and the pass that
+lands run this same gate over the same text, so nothing the model made up
+can reach a row.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from dataclasses import dataclass, field
 
 # Bumped when the normalisation or the prompt changes: a read at an older
 # version is a different question, and the script asks again.
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 
 _STRIP = (
     re.compile(r"<!--.*?-->", re.S),
@@ -41,17 +43,19 @@ SYSTEM = (
     "- You classify what the article states. Never add, infer or complete anything the "
     "article does not say.\n"
     "- Every quote is copied verbatim from the article text, unchanged, at most 300 "
-    "characters, and must itself contain the codes, the years and the name it supports.\n"
+    "characters.\n"
     "- List a generation only where the article presents a generation, series or era of "
     "this nameplate. Trims, engines, body styles and special editions are cars within a "
     "generation, never generations.\n"
-    "- Name a generation by its chassis or platform code when the article gives one. When "
-    "it is one of the known generations, use that generation's name.\n"
+    "- Quote a generation from the heading or the sentence that opens its own section of "
+    "the article; the quote must contain its codes and its years. Name a generation by its "
+    "chassis or platform code when the article gives one, and by a known generation's name "
+    "when it is that one.\n"
     "- end_year is null only where the quote says the generation is still in production. "
     "Leave a generation out if the article gives no end and does not say it continues.\n"
     "- For each generation, list the cars (models, badges, trims, body styles) the article "
-    "says belong to it, each with its own quote and with years where the article gives "
-    "them.\n"
+    "says belong to it. Quote each car from inside that generation's section, with the "
+    "car's name in the quote. Give a car's years only where the article states them.\n"
     "- For each car, choose from the candidate configurations only: the ids whose line is "
     'that car ("exact"), or the nearest lines when none is exact ("closest"). Never choose '
     "a configuration whose model year falls outside the car's years. Omit a car with no "
@@ -163,14 +167,22 @@ def _year(value: object) -> int | None:
     return value if isinstance(value, int) and 1885 <= value <= 2100 else None
 
 
-def verify(answer: object, text: str, offered: dict[int, int]) -> Verified:
-    """Keep what the page supports. `offered` maps each candidate
-    configuration id to its model year; nothing else can be chosen."""
+def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
+    """Keep what the page supports. `offered` holds the candidate
+    configurations by id; nothing else can be chosen. A car's quote must sit
+    in its generation's own stretch of the page - from that generation's
+    quote to the next one's - so a mention elsewhere places nothing."""
     out = Verified()
     if not isinstance(answer, dict) or not isinstance(answer.get("generations"), list):
         out.dropped.append({"reason": "malformed answer"})
         return out
     page = _squash(text)
+    starts = sorted(
+        pos
+        for g in answer["generations"]
+        if isinstance(g, dict) and isinstance(g.get("quote"), str)
+        if (pos := page.find(_squash(g["quote"]))) >= 0
+    )
 
     def quoted(quote: object) -> bool:
         return isinstance(quote, str) and 0 < len(quote) <= 400 and _squash(quote) in page
@@ -205,6 +217,8 @@ def verify(answer: object, text: str, offered: dict[int, int]) -> Verified:
         if end is not None and (end < start or not states(quote, end)):
             out.dropped.append({"generation": name, "reason": "quote does not state the end"})
             continue
+        section_start = page.find(_squash(quote))
+        section_end = next((pos for pos in starts if pos > section_start), len(page))
         cars: list[Car] = []
         for car in g.get("cars") or []:
             if not isinstance(car, dict):
@@ -220,12 +234,14 @@ def verify(answer: object, text: str, offered: dict[int, int]) -> Verified:
                     {"generation": name, "car": car_name, "reason": "car not quoted"}
                 )
                 continue
-            if not states(car_quote, *(y for y in (c_start, c_end) if y is not None)):
+            found = page.find(_squash(car_quote), section_start)
+            if found < 0 or found >= section_end:
                 out.dropped.append(
-                    {"generation": name, "car": car_name, "reason": "years not in quote"}
+                    {"generation": name, "car": car_name, "reason": "quoted outside the section"}
                 )
                 continue
-            low, high = c_start or start, c_end or end
+            # A car's years only narrow the generation's span; they never widen it.
+            low, high = max(c_start or start, start), min(c_end or end or 2100, end or 2100)
             leaves: list[tuple[int, str]] = []
             for leaf in car.get("leaves") or []:
                 if not isinstance(leaf, dict):
@@ -234,11 +250,13 @@ def verify(answer: object, text: str, offered: dict[int, int]) -> Verified:
                 if leaf_id not in offered or match not in ("exact", "closest"):
                     out.dropped.append({"car": car_name, "leaf": leaf_id, "reason": "not offered"})
                     continue
-                if not (low <= offered[leaf_id] <= (high or 2100)):
+                if not (low <= offered[leaf_id].year <= high):
                     out.dropped.append(
                         {"car": car_name, "leaf": leaf_id, "reason": "outside the car's years"}
                     )
                     continue
+                if (offered[leaf_id].trim or "").casefold().strip() != car_name.casefold().strip():
+                    match = "closest"  # "exact" is the trim's word, not the model's
                 claims[leaf_id] = claims.get(leaf_id, 0) + 1
                 leaves.append((leaf_id, match))
             cars.append(Car(car_name.strip(), c_start, c_end, car_quote, tuple(leaves)))

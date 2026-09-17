@@ -116,7 +116,7 @@ def test_verify_keeps_only_what_the_page_states():
             "cars": [],
         }
     )
-    out = verify(answer, text, {1: 2003, 2: 2005, 3: 2006, 4: 2012})
+    out = verify(answer, text, _offered({1: 2003, 2: 2005, 3: 2006, 4: 2012}, trim="330i"))
     assert [g.name for g in out.generations] == ["E46", "F30"]
     (car,) = out.generations[0].cars
     assert car.leaves == ((1, "exact"), (2, "exact")), "2006 is outside 2001–2005; 9 not offered"
@@ -134,10 +134,29 @@ def test_verify_refuses_an_open_end_the_quote_does_not_state_and_a_leaf_claimed_
     text = page_text(WIKITEXT)
     answer = _answer([1], [1])
     answer["generations"][0]["end_year"] = None
-    out = verify(answer, text, {1: 2003})
+    out = verify(answer, text, _offered({1: 2003}))
     assert [g.name for g in out.generations] == ["F30"]
     assert out.generations[0].cars[0].leaves == (), "1 was claimed by both cars"
     assert verify("not json", text, {}).dropped == [{"reason": "malformed answer"}]
+
+
+def test_verify_wants_the_car_quoted_inside_its_generation_and_names_the_match_honestly():
+    text = page_text(WIKITEXT)
+    answer = _answer([1], [2])
+    # The F30's car quotes a sentence that sits in the E46's stretch of the page.
+    answer["generations"][1]["cars"][0].update(name="330i", quote=CAR_QUOTE)
+    out = verify(answer, text, _offered({1: 2003, 2: 2012}, trim="sedan"))
+    assert out.generations[1].cars == ()
+    assert {
+        "generation": "F30",
+        "car": "330i",
+        "reason": "quoted outside the section",
+    } in out.dropped
+    assert out.generations[0].cars[0].leaves == ((1, "closest"),), "the trim is not the car's name"
+
+
+def _offered(years: dict[int, int], trim: str | None = None) -> dict[int, Leaf]:
+    return {i: Leaf(i, year, trim, None, None, None, None, None) for i, year in years.items()}
 
 
 def test_messages_carry_the_held_generations_and_the_leaf_lines():
@@ -178,7 +197,7 @@ def _land_read(db, source, page, answer: dict, leaf_ids: list[int], llm="test") 
         "title": "BMW 330i",
         "page_record_id": page.id,
         "revid": 1,
-        "prompt_version": "1",
+        "prompt_version": "2",
         "llm": llm,
         "leaf_ids": leaf_ids,
         "answer": json.dumps(answer),
@@ -263,7 +282,7 @@ def test_the_pass_dates_mints_places_flags_and_withdraws(db, llm_source, spine, 
         f.configuration_id: f.detail
         for f in db.scalars(select(ReconciliationFlag).where(ReconciliationFlag.kind == FLAG_KIND))
     }
-    assert flags[c2003.id] == {"generation": "e46", "match": "exact", "quote": CAR_QUOTE}
+    assert flags[c2003.id] == {"generation": "e46", "match": "closest", "quote": CAR_QUOTE}
     assert flags[c2012.id]["match"] == "closest"
 
     again = run_llm_read_pass(db)

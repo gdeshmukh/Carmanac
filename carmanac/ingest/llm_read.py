@@ -194,7 +194,7 @@ def read_model(
         ],
     )
     session.commit()
-    verified = verify(parse_answer(answer), text, {leaf.id: leaf.year for leaf in leaves})
+    verified = verify(parse_answer(answer), text, {leaf.id: leaf for leaf in leaves})
     for item in verified.dropped:
         log.info("dropped: %s", item)
     return ReadResult(True, len(verified.generations), verified.leaves, len(verified.dropped))
