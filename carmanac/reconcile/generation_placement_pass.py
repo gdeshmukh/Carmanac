@@ -98,6 +98,7 @@ class GenerationPlacementStats:
     undated_competitor: int = 0
     overlap_flagged: int = 0
     withdrawn: int = 0
+    deferred: int = 0
     body_vetoed: int = 0
     flags_opened: int = 0
     flags_dismissed: int = 0
@@ -107,7 +108,7 @@ class GenerationPlacementStats:
             f"configurations={self.configurations} placed={self.placed} "
             f"already={self.already_placed} no_candidate={self.unplaced_no_candidate} "
             f"undated_competitor={self.undated_competitor} "
-            f"overlap={self.overlap_flagged} withdrawn={self.withdrawn} "
+            f"overlap={self.overlap_flagged} withdrawn={self.withdrawn} deferred={self.deferred} "
             f"body_vetoed={self.body_vetoed} | "
             f"flags={self.flags_opened} (dismissed={self.flags_dismissed})"
         )
@@ -343,6 +344,20 @@ class _PlacementPass:
                 )
             )
         }
+        # A placement another source states outright - an LLM read with its
+        # quote, or a reviewer's correction - is evidence at the leaf's own
+        # grain; the inference from spans defers to it rather than competing.
+        self.stated_placements: set[int] = set(
+            self.session.scalars(
+                select(FieldProvenance.configuration_id).where(
+                    FieldProvenance.configuration_id.isnot(None),
+                    FieldProvenance.field_name == "generation_id",
+                    FieldProvenance.source_id != self.source.id,
+                    FieldProvenance.superseded_by.is_(None),
+                    FieldProvenance.observed_value.isnot(None),
+                )
+            )
+        )
 
     def _candidates(
         self, configuration: Configuration, model_id: int, period: CataloguePeriod, kind: str
@@ -459,6 +474,24 @@ class _PlacementPass:
         for configuration, period in rows:
             self.stats.configurations += 1
             key = f"configuration:{configuration.id}"
+            if configuration.id in self.stated_placements:
+                live = self.live_placements.get(configuration.id)
+                if live is not None and live.observed_value is not None:
+                    # Retire this pass's own claim; the column is theirs now.
+                    self.live_placements[configuration.id] = supersede(
+                        self.session,
+                        live,
+                        {
+                            "configuration_id": configuration.id,
+                            "field_name": "generation_id",
+                            "observed_value": None,
+                            "source_id": self.source.id,
+                            "raw_record_id": None,
+                        },
+                    )
+                self.stats.deferred += 1
+                self.decisions.record_key(key, "defers_to_stated_placement")
+                continue
             candidates, undated, vetoed = self._candidates(
                 configuration, period.model_id, period, kind_by_id[period.period_kind_id]
             )
