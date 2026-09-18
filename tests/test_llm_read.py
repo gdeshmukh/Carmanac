@@ -55,6 +55,9 @@ SECTIONED = (
     "== E90 (2005–2011) ==\nThe Targas came in 2006.\n"
     "== Fifth generation (F30; 2012) ==\n{{Infobox automobile\n| production = 2012–2019\n}}\n"
     'The <span id="f30">F30</span> sedan came first.\n'
+    "=== Body ===\nThe Targa 4S was one body, the Turbo another; "
+    "the 3.0&nbsp;L engine served both.\n"
+    "== Spans ==\nGeneration V: 2012–2019 (F30)\n"
 )
 E90_QUOTE = "The E90 ran from 2005 to 2011"
 E46_QUOTE = "The E46 is the fourth generation of the BMW 3 Series, produced from 1997 to 2006"
@@ -226,22 +229,41 @@ def test_verify_bounds_a_generation_by_its_own_section_and_names_by_whole_words(
     assert {("330", "car not quoted"), (" ", "no name")} <= reasons
 
 
-def test_verify_takes_a_generation_s_years_from_a_second_quote_in_its_section():
+def test_verify_judges_a_generation_s_quotes_one_passage_at_a_time():
     text = page_text(SECTIONED)
     heading, years = "Fifth generation (F30; 2012)", "production = 2012–2019"
     f30 = _generation("F30", 2012, 2019, None, [_car("F30", "The F30 sedan ... came first", [1])])
     f30["quotes"], f30["codes"] = [heading, years], ["F30", "F31"]
-    lead = _generation("E36", 1990, 2000, None)
-    lead["quotes"] = ["E36 (1990–2000)", years]
-    out = verify({"generations": [f30, lead]}, text, _offered({1: 2014}))
+    e36 = _generation("E36", 1990, 2000, None)
+    e36["quotes"] = ["E36 (1990–2000)", years]
+    out = verify({"generations": [f30, e36]}, text, _offered({1: 2014}))
     assert [(g.name, g.codes, g.quote, [c.leaves for c in g.cars]) for g in out.generations] == [
-        ("F30", ("F30",), f"{heading} | {years}", [((1, "closest"),)])
-    ], "the heading and the infobox line date it; only the code the quotes state is kept"
-    assert out.dropped == [{"generation": "E36", "reason": "quotes span sections"}]
+        ("F30", ("F30",), f"{heading} | {years}", [((1, "closest"),)]),
+        ("E36", ("E36",), "E36 (1990–2000)", []),
+    ], "a spare quote from another section is set aside, not fatal; only stated codes stay"
+
+    # A passage that names the generation counts from anywhere on the page.
+    f30["quotes"] = [heading, "Generation V: 2012–2019 (F30)"]
+    assert [g.end_year for g in verify({"generations": [f30]}, text, {}).generations] == [2019]
     f30["quotes"] = [heading]
     assert verify({"generations": [f30]}, text, {}).dropped == [
         {"generation": "F30", "reason": "quote does not state the end"}
     ]
+
+    # A quoted heading anchors the section even when it is not the first quote.
+    f30["quotes"] = ["The Targa 4S was one body", heading, years]
+    assert [g.end_year for g in verify({"generations": [f30]}, text, {}).generations] == [2019]
+
+    # An ellipsis joins passages; it never manufactures a phrase or a name.
+    f30["quotes"] = [heading, years]
+    f30["cars"] = [
+        _car("Targa Turbo", "Targa ... Turbo", [1]),
+        _car("Targa 4", "The Targa 4S was one body", [1]),
+        _car("Turbo", "the Turbo another; the 3.0 L engine", [1]),
+    ]
+    out = verify({"generations": [f30]}, text, _offered({1: 2014}))
+    assert [(c.name, c.leaves) for c in out.generations[0].cars] == [("Turbo", ((1, "closest"),))]
+    assert {d["car"] for d in out.dropped} == {"Targa Turbo", "Targa 4"}
 
 
 def test_verify_wants_the_car_quoted_inside_its_generation_and_names_the_match_honestly():
@@ -312,7 +334,7 @@ def article(db, wikidata_source, wikipedia_source, spine):
 
 
 def _land_read(
-    db, source, page, answer: dict | str, leaf_ids: list[int], llm="test", version=PROMPT_VERSION
+    db, source, page, answer: dict | str, leaf_ids: list[int], llm=None, version=PROMPT_VERSION
 ) -> RawRecord:
     payload = {
         "qid": "Q9",
@@ -320,7 +342,7 @@ def _land_read(
         "page_record_id": page.id,
         "revid": 1,
         "prompt_version": version,
-        "llm": llm,
+        "llm": llm or settings.llm_model,
         "leaf_ids": leaf_ids,
         "answer": answer if isinstance(answer, str) else json.dumps(answer),
     }
@@ -450,9 +472,7 @@ def test_the_pass_dates_mints_places_flags_and_withdraws(db, llm_source, spine, 
     assert (again.generations_minted, again.links_asserted, again.withdrawn) == (0, 0, 0)
 
     # A newer read no longer states the F30 or its leaf.
-    _land_read(
-        db, llm_source, page, _answer([c2003.id]), [c.id for c in article["leaves"]], llm="test2"
-    )
+    _land_read(db, llm_source, page, _answer([c2003.id]), [c.id for c in article["leaves"]])
     later = run_llm_read_pass(db)
     assert (later.withdrawn, later.flags_dismissed, later.already_placed) == (1, 1, 1)
     db.refresh(c2012), db.refresh(f30)
@@ -480,12 +500,15 @@ def test_the_pass_leaves_the_world_alone_for_a_stale_or_malformed_read(
     _land_read(db, llm_source, page, _answer([c2003.id], [c2012.id]), ids)
     assert run_llm_read_pass(db).placed == 2
 
-    _land_read(db, llm_source, page, '{"generations": [', ids, llm="cut short")
+    _land_read(db, llm_source, page, '{"generations": [', ids)
     stats = run_llm_read_pass(db)
     assert (stats.skipped, stats.withdrawn, stats.flags_dismissed) == (1, 0, 0)
-    _land_read(db, llm_source, page, _answer([]), ids, llm="older question", version="1")
+    _land_read(db, llm_source, page, _answer([]), ids, version="1")
+    _land_read(db, llm_source, page, _answer([]), ids, llm="another model")
     stats = run_llm_read_pass(db)
-    assert (stats.skipped, stats.withdrawn, stats.flags_dismissed) == (1, 0, 0)
+    assert (stats.skipped, stats.withdrawn, stats.flags_dismissed) == (3, 0, 0), (
+        "a stale prompt, another model, and the cut-short answer all state nothing"
+    )
     db.refresh(c2003), db.refresh(c2012)
     assert c2003.generation_id == spine["e46"].id and c2012.generation_id is not None
 
@@ -573,7 +596,7 @@ def test_a_minted_generation_follows_the_read_that_states_it(db, llm_source, spi
     answer = _answer([c2003.id], [c2012.id])
     answer["generations"][1]["name"] = "F30 series"
     answer["generations"].append(_generation("E46 facelift", 1997, 2006, E46_QUOTE, codes=["E46"]))
-    _land_read(db, llm_source, page, answer, ids, llm="renames")
+    _land_read(db, llm_source, page, answer, ids)
     stats = run_llm_read_pass(db)
     assert (stats.generations_minted, stats.generations_retired, stats.withdrawn) == (0, 0, 0)
     again = run_llm_read_pass(db)
@@ -589,7 +612,7 @@ def test_a_minted_generation_follows_the_read_that_states_it(db, llm_source, spi
     # Dropped: its facts and its link retire, so it holds nothing up.
     answer = _answer([c2003.id])
     answer["generations"].append(_generation("E90", 2005, 2011, E90_QUOTE, codes=[]))
-    _land_read(db, llm_source, page, answer, ids, llm="drops")
+    _land_read(db, llm_source, page, answer, ids)
     stats = run_llm_read_pass(db)
     assert (stats.generations_retired, stats.links_retired, stats.withdrawn) == (1, 1, 1)
     c2008 = _configuration(db, spine, 2008, "sedan")
@@ -609,6 +632,14 @@ def test_a_minted_generation_follows_the_read_that_states_it(db, llm_source, spi
         == 0
     )
     assert run_llm_read_pass(db).links_retired == 0
+
+    # A held generation the read alone dated loses that span when a read stops stating it.
+    db.refresh(spine["e90"])
+    assert (spine["e90"].start_year, spine["e90"].end_year) == (2005, 2011)
+    _land_read(db, llm_source, page, _answer([c2003.id]), ids)
+    assert run_llm_read_pass(db).generations_retired == 1
+    db.refresh(spine["e90"])
+    assert (spine["e90"].start_year, spine["e90"].end_year) == (None, None)
 
 
 @pytest.mark.integration
@@ -631,7 +662,7 @@ def test_a_stated_placement_settles_an_overlap_and_a_resolved_flag_stays_resolve
 
     answer = _answer([c2005.id])
     answer["generations"].append(_generation("E90", 2005, 2011, E90_QUOTE, codes=[]))
-    _land_read(db, llm_source, page, answer, ids, llm="places")
+    _land_read(db, llm_source, page, answer, ids)
     run_llm_read_pass(db)
     stats = run_generation_placement_pass(db)
     db.refresh(overlap), db.refresh(c2005)

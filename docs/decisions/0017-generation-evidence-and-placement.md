@@ -418,18 +418,29 @@ configurations with their ids, and takes back the generations on the
 page, the cars in each, and the leaves per car, every item with a quote.
 The answer lands untouched, keyed by page, prompt version, model and
 candidate list, so a question is asked once; an answer the model did not
-finish never lands. The model classifies; it never authors.
+finish never lands. The model classifies; it never authors. The model is
+configuration, not code: the pass honours the newest read of a page by
+the configured model at the current prompt version, and a read by another
+model or at another version stays raw data that states nothing, so trying
+a model never moves a row until it is the configured one.
 
 The gate is deterministic and runs twice, in the script for the operator
-and in the pass before anything lands. A generation survives when its
-quotes, at most three, are verbatim passages of the text the model was
-shown, all sit in one section of the page, and between them state its
-name or a code, and its years, as whole words, a plural allowed; a code
-the quotes do not state is dropped from the generation. The common
-heading carries the codes and the year a generation began, and the
-section's infobox line carries its span, so both are quoted. An ellipsis inside a
-quote joins two passages that each verify. An open end needs a quote to
-say "present". A car survives when its quote sits inside its generation's
+and in the pass before anything lands. A generation's quotes, at most
+three, are judged one passage at a time: a passage is a verbatim run of
+the text the model was shown, found as whole words; one that is not on
+the page is set aside, and so is one outside the generation's section
+unless it names the generation itself, by its name or a code, since a
+passage that names what it dates is evidence wherever it sits; a spare
+passage that fails never sinks the generation. The passages that remain
+must between them state the generation's name or a code, its start and
+its end, each by one passage, as whole words with a plural allowed after
+a letter; a code no passage states is dropped from the generation. The
+section is the one a quoted heading names, else the one the first passage
+sits in. The common heading carries the codes and the year a generation
+began, the section's infobox line carries its span, and where the heading
+carries no code the infobox line that does is quoted too. An ellipsis
+inside a quote joins two passages that each verify on their own; the join
+never states anything. An open end needs a passage to say "present". A car survives when its quote sits inside its generation's
 own section of the page, from the heading its quote sits under to the
 next heading of that level or higher, and names the car; generations
 quoted from one section split it at their quotes. A leaf
@@ -446,11 +457,11 @@ every generation it names and projects only onto a field no other source
 asserts: an infobox keeps what it states, and an undated generation gains
 the years its page gives. Two entries that resolve to one generation are
 one statement of it. What no current read states withdraws: a placement
-supersedes to nothing, and a minted generation loses its facts and its
-links, so it holds no placement up, while it keeps its row and its key for
-a later read to find. A read at another prompt version, or one with no
-parseable answer, states nothing and changes nothing until a current read
-lands.
+supersedes to nothing, a minted generation loses its facts and its links,
+so it holds no placement up, while it keeps its row and its key for a
+later read to find, and a held generation the read alone dated loses that
+span. A read with no parseable answer states nothing and changes nothing
+until a current read lands.
 
 Review comes after landing, which amends the 2026-08-07 ruling of
 confirm-before. Every leaf the read places raises a review flag, and so

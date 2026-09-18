@@ -17,6 +17,7 @@ model made up can reach a row.
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from dataclasses import dataclass, field
@@ -25,7 +26,7 @@ SOURCE_NAME = "LLM read"
 
 # Bumped when the normalisation or the prompt changes: a read at an older
 # version is a different question, and the script asks again.
-PROMPT_VERSION = "4"
+PROMPT_VERSION = "5"
 
 _STRIP = (
     re.compile(r"<!--.*?-->", re.S),
@@ -54,11 +55,12 @@ SYSTEM = (
     "- List every generation, series or era the article gives its own section to, even "
     "when no candidate configuration fits it. Trims, engines, body styles and special "
     "editions are cars within a generation, never generations.\n"
-    "- Give a generation two quotes from its own section: its heading, which carries its "
-    "codes, and the line that states its years, such as the section's infobox production "
-    "line or the sentence that gives them. Name a generation by its chassis or platform "
-    "code when the article gives one, and by a known generation's name when it is that "
-    "one. Give only codes that appear in your quotes.\n"
+    "- Give a generation two or three quotes from its own section: its heading; the line "
+    "that states its years, such as the section's infobox production or model years line "
+    "or the sentence that gives them; and, when the heading carries no code, the infobox "
+    "line that does. Name a generation by its chassis or platform code when the article "
+    "gives one, and by a known generation's name when it is that one. Give only codes that "
+    "appear in your quotes.\n"
     "- end_year is null only where a quote says the generation is still in production.\n"
     "- For each generation, list the cars (models, badges, trims, body styles) the article "
     "says belong to it. Quote each car from inside that generation's section, with the "
@@ -132,7 +134,7 @@ class Verified:
 def page_text(wikitext: str) -> str:
     """The article as the model reads it: markup that carries no words
     removed, links reduced to their display text, whitespace settled."""
-    text = wikitext
+    text = html.unescape(wikitext)
     for pattern in _STRIP:
         text = pattern.sub("", text)
     text = _BOLD.sub("", _LINK.sub(r"\1", text))
@@ -179,11 +181,15 @@ def _year(value: object) -> int | None:
 
 def _states(quote: str, *needles: object) -> bool:
     """Every needle sits in the quote as a whole word or run of words, a
-    plural allowed: "Targas" states the Targa, "turbocharged" does not state
-    the Turbo, and "S" is stated by "911 S", not by "Sport"."""
-    return all(
-        re.search(rf"(?<!\w){re.escape(str(n).strip())}s?(?!\w)", quote, re.I) for n in needles
-    )
+    plural allowed after a letter: "Targas" states the Targa, "Targa 4S" does
+    not state the Targa 4, "turbocharged" does not state the Turbo, and "S"
+    is stated by "911 S", not by "Sport"."""
+    for n in needles:
+        needle = str(n).strip()
+        plural = "s?" if needle[-1:].isalpha() else ""
+        if not re.search(rf"(?<!\w){re.escape(needle)}{plural}(?!\w)", quote, re.I):
+            return False
+    return True
 
 
 def _passages(quote: object) -> list[str]:
@@ -209,20 +215,29 @@ def _section(headings: list[tuple[int, int]], at: int, size: int) -> tuple[int, 
 def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
     """Keep what the page supports. `offered` holds the candidate
     configurations by id; nothing else can be chosen. A generation's quotes
-    (at most three) must all sit in one section of the page, the one its
-    first quote sits in; a car's quote must sit in its generation's
-    section; generations quoted from one section split it at their quotes.
-    A mention elsewhere places nothing."""
+    (at most three) are judged one passage at a time: a passage that is not
+    on the page is set aside, and so is one outside the generation's section
+    unless it names the generation itself, by its name or a code; the rest
+    must between them state the generation. The section is the one a
+    quoted heading names, else the one the first passage sits in; a car's
+    quote must sit in it; generations quoted from one section split it at
+    their quotes. A mention elsewhere places nothing."""
     out = Verified()
     if not isinstance(answer, dict) or not isinstance(answer.get("generations"), list):
         out.malformed = True
         out.dropped.append({"reason": "malformed answer"})
         return out
     page = _squash(text)
-    headings = [(m.start(), len(m.group(1))) for m in _HEADING.finditer(page)]
+    heads = list(_HEADING.finditer(page))
+    headings = [(m.start(), len(m.group(1))) for m in heads]
 
-    def inside(passages: list[str], low: int, high: int) -> bool:
-        return bool(passages) and all(low <= page.find(p, low) < high for p in passages)
+    def occurs(passage: str, low: int = 0, high: int | None = None) -> int:
+        """Where the passage sits on the page as whole words, from `low`."""
+        found = re.compile(rf"(?<!\w){re.escape(passage)}(?!\w)").search(page, low)
+        return found.start() if found and (high is None or found.start() < high) else -1
+
+    def states(passages: list[str], needle: object) -> bool:
+        return any(_states(p, needle) for p in passages)  # one passage, never a join
 
     kept: list[tuple[dict, str, tuple[str, ...], int, int | None, str, int]] = []
     for g in answer["generations"]:
@@ -230,22 +245,28 @@ def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
             continue
         name = g.get("name")
         quotes = g["quotes"] if isinstance(g.get("quotes"), list) else [g.get("quote")]
-        passages = [p for quote in quotes[:3] for p in _passages(quote)]
         codes = tuple(c.strip() for c in g.get("codes") or [] if isinstance(c, str) and c.strip())
         start, end = _year(g.get("start_year")), _year(g.get("end_year"))
         if not isinstance(name, str) or not name.strip():
             out.dropped.append({"generation": name, "reason": "no name"})
             continue
-        if not passages or any(p not in page for p in passages):
+        found = [(p, occurs(p)) for quote in quotes[:3] for p in _passages(quote)]
+        found = [(p, pos) for p, pos in found if pos >= 0]
+        if not found:
             out.dropped.append({"generation": name, "reason": "quote not on the page"})
             continue
-        at = page.find(passages[0])
-        if not inside(passages, *_section(headings, at, len(page))):
-            out.dropped.append({"generation": name, "reason": "quotes span sections"})
-            continue
-        stated = " ".join(passages)
-        codes = tuple(c for c in codes if _states(stated, c))  # only what the quotes state
-        if start is None or not _states(stated, start) or not (codes or _states(stated, name)):
+        at = next(
+            (pos for p, pos in found if any(m.start() <= pos < m.end() for m in heads)),
+            found[0][1],
+        )
+        low, high = _section(headings, at, len(page))
+        passages = [
+            p
+            for p, _ in found
+            if occurs(p, low, high) >= 0 or _states(p, name) or any(_states(p, c) for c in codes)
+        ]
+        codes = tuple(c for c in codes if states(passages, c))  # only what the quotes state
+        if start is None or not states(passages, start) or not (codes or states(passages, name)):
             out.dropped.append(
                 {"generation": name, "reason": "quote does not state the name or codes and start"}
             )
@@ -253,14 +274,13 @@ def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
         if end is None and g.get("end_year") is not None:
             out.dropped.append({"generation": name, "reason": "end year out of range"})
             continue
-        if end is None and not _PRESENT.search(stated):
+        if end is None and not any(_PRESENT.search(p) for p in passages):
             out.dropped.append({"generation": name, "reason": "open end without 'present'"})
             continue
-        if end is not None and (end < start or not _states(stated, end)):
+        if end is not None and (end < start or not states(passages, end)):
             out.dropped.append({"generation": name, "reason": "quote does not state the end"})
             continue
-        quote = " | ".join(_squash(q) for q in quotes[:3] if isinstance(q, str))
-        kept.append((g, name.strip(), codes, start, end, quote, at))
+        kept.append((g, name.strip(), codes, start, end, " | ".join(passages), at))
 
     sections = [_section(headings, at, len(page)) for *_, at in kept]
     claims: dict[int, set[str]] = {}
@@ -283,12 +303,12 @@ def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
             if not isinstance(car_name, str) or not car_name.strip():
                 out.dropped.append({"generation": name, "car": car_name, "reason": "no name"})
                 continue
-            if not passages or not _states(" ".join(passages), car_name):
+            if not passages or not states(passages, car_name):
                 out.dropped.append(
                     {"generation": name, "car": car_name, "reason": "car not quoted"}
                 )
                 continue
-            if not inside(passages, low, high):
+            if any(occurs(p, low, high) < 0 for p in passages):
                 out.dropped.append(
                     {"generation": name, "car": car_name, "reason": "quoted outside the section"}
                 )

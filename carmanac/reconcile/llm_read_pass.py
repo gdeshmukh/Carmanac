@@ -1,7 +1,9 @@
 """The LLM read pass (ADR 0017, amended 2026-09-17): land what a read
 stated, once its quotes verify against the page it read.
 
-One read record per page is current. Its generations reconcile to the
+One read record per page is current: the newest by the configured model
+at the current prompt version; a read by another model or at another
+version lands as raw data and states nothing. Its generations reconcile to the
 model's held generations by code, then by name, then by the key an earlier
 read minted; the rest mint under the read's own key, `read:<QID>#<slug>`.
 The read's span lands in provenance for every generation it names and
@@ -12,9 +14,9 @@ A correction in `PLACEMENT_CORRECTIONS` outranks the read and raises no
 flag; a flag a person resolved stays resolved while the read states the
 same thing. What a newer read no longer states withdraws: the placement
 supersedes to nothing, a minted generation keeps its identity and loses
-its facts and its links. A read at another prompt version, or one with no
-parseable answer, states nothing and changes nothing until a current read
-lands.
+its facts and its links, and a held generation the read alone dated loses
+that span. A read with no parseable answer states nothing and changes
+nothing until a current read lands.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from carmanac.config import settings
 from carmanac.db.models import (
     CataloguePeriod,
     Company,
@@ -42,7 +45,7 @@ from carmanac.ingest.llm_read import candidate_leaves
 from carmanac.reconcile import policy
 from carmanac.reconcile.addressing import nonconforming_slug, slugify
 from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled, reviewed
-from carmanac.reconcile.engine import assert_field_facts, current_records, supersede
+from carmanac.reconcile.engine import assert_field_facts, supersede
 from carmanac.reconcile.sources.llm_read import (
     PROMPT_VERSION,
     SOURCE_NAME,
@@ -210,7 +213,12 @@ class LLMReadPass:
 
     def run(self) -> LLMReadStats:
         self._apply_corrections()
-        for record in current_records(self.session, self.source.id):
+        current, skipped = self._current()
+        for record, why in skipped:
+            self.stats.skipped += 1
+            self.decisions.record(record, why)
+            mark_reconciled(self.session, record)
+        for record in current:
             self.stats.records += 1
             self._process(record)
             mark_reconciled(self.session, record)
@@ -218,6 +226,25 @@ class LLMReadPass:
         self.decisions.flush()
         self.session.commit()
         return self.stats
+
+    def _current(self) -> tuple[list[RawRecord], list[tuple[RawRecord, str]]]:
+        """The newest read per page by the configured model at this prompt
+        version, and the records set aside with the reason. An older read
+        of a page by the same model and version is simply superseded."""
+        current: dict[str, RawRecord] = {}
+        skipped: list[tuple[RawRecord, str]] = []
+        for record in self.session.scalars(
+            select(RawRecord)
+            .where(RawRecord.source_id == self.source.id, RawRecord.external_id.like("read:%"))
+            .order_by(RawRecord.last_seen_at.desc(), RawRecord.id.desc())
+        ):
+            if record.payload.get("prompt_version") != PROMPT_VERSION:
+                skipped.append((record, "read_stale_prompt"))
+            elif record.payload.get("llm") != settings.llm_model:
+                skipped.append((record, "read_other_model"))
+            else:
+                current.setdefault(record.external_id, record)
+        return sorted(current.values(), key=lambda r: r.external_id), skipped
 
     def _process(self, record: RawRecord) -> None:
         payload = record.payload
@@ -227,10 +254,6 @@ class LLMReadPass:
         if model_id is None or page is None:
             self.stats.unrouted += 1
             self.decisions.record(record, "read_unrouted")
-            return
-        if payload.get("prompt_version") != PROMPT_VERSION:
-            self.stats.skipped += 1
-            self.decisions.record(record, "read_stale_prompt")
             return
         model = self.models[model_id]
         leaves = {leaf.id: leaf for leaf in candidate_leaves(self.session, model_id)}
@@ -286,24 +309,35 @@ class LLMReadPass:
         )
 
     def _retire_unstated(self) -> None:
-        """A generation a read minted that no current read states, however
-        it is now named, loses its facts and its links; it keeps its row and
-        its key, so a later read finds it again."""
-        for key, generation_id in sorted(self.read_keys.items()):
-            record = self.read_by_qid.get(key[len("read:") :].partition("#")[0])
-            if record is None or generation_id in self.resolved:
-                continue
-            live = self.session.scalar(
-                select(func.count())
-                .select_from(FieldProvenance)
-                .where(
-                    FieldProvenance.generation_id == generation_id,
+        """A generation no current read states, however it is now named,
+        loses what the read gave it: its read-stated facts and, if a read
+        minted it, its links; it keeps its row and its key, so a later read
+        finds it again. Only a generation whose model was read this run can
+        be unstated."""
+        qid_by_model = {model_id: qid for qid, model_id in self.model_by_qid.items()}
+        dated = set(
+            self.session.scalars(
+                select(FieldProvenance.generation_id).where(
+                    FieldProvenance.generation_id.isnot(None),
                     FieldProvenance.source_id == self.source.id,
                     FieldProvenance.superseded_by.is_(None),
                     FieldProvenance.observed_value.isnot(None),
                 )
             )
-            if live:
+        )
+        for generation_id in sorted((dated | set(self.read_keys.values())) - self.resolved):
+            record = next(
+                (
+                    self.read_by_qid[qid_by_model[model_id]]
+                    for model_id, generation_ids in self.links_by_model.items()
+                    if generation_id in generation_ids
+                    and qid_by_model.get(model_id) in self.read_by_qid
+                ),
+                None,
+            )
+            if record is None:
+                continue
+            if generation_id in dated:
                 self._facts(self.generations[generation_id], None, record)
                 self.stats.generations_retired += 1
             for link in self.session.scalars(
