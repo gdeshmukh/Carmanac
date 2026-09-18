@@ -68,6 +68,10 @@ FLAG_KINDS = (
     # parseable sections while skipping one would hide a real competitor
     # from the placement guards. Headings and the failure in `detail`.
     "section_generation_review",
+    # A leaf an LLM read placed from a quote (ADR 0017, amended 2026-09-17):
+    # landed provisionally, reviewed after. A correction in the registry
+    # outranks the read and dismisses the flag.
+    "llm_placement_review",
 )
 
 # Kinds that attach to a raw record rather than an entity (the arc is empty).

@@ -399,3 +399,80 @@ target state no production span, and only in the ordinal grammar, whose
 heading has said the word "generation" - an era heading like the Diablo's
 `Original (1990–1998)` still dates nothing this way. A lone heading year
 still never becomes a span.
+
+## Amendment (2026-09-17): the LLM read as a source
+
+Ruled 2026-09-17, from the 911 census. The nameplate article nests its
+generations under two engine-cooling headings, names them with digits
+only, carries no infobox in their sections, and states the 930's
+production as one range per engine. Each is a grammar patch that reaches
+a few dozen articles while thousands of configurations wait, and the 3
+Series badges show the other half: which badges an E46 was sold as is
+written in that generation's page, not in any heading. No rule is written
+around one company's naming. The general mechanism is a reader, built as
+a source.
+
+The read is a raw record. A script hands a model one landed page, the
+generations already held for the nameplate, and the candidate
+configurations with their ids, and takes back the generations on the
+page, the cars in each, and the leaves per car, every item with a quote.
+The answer lands untouched, keyed by page, prompt version, model and
+candidate list, so a question is asked once; an answer the model did not
+finish never lands. The model classifies; it never authors. The model is
+configuration, not code: the pass honours the newest read of a page by
+the configured model at the current prompt version, and a read by another
+model or at another version stays raw data that states nothing, so trying
+a model never moves a row until it is the configured one.
+
+The gate is deterministic and runs twice, in the script for the operator
+and in the pass before anything lands. A generation's quotes, at most
+three, are judged one passage at a time: a passage is a verbatim run of
+the text the model was shown, found as whole words; one that is not on
+the page is set aside, and so is one outside the generation's section
+unless it names the generation itself, by its name or a code, since a
+passage that names what it dates is evidence wherever it sits; a spare
+passage that fails never sinks the generation. The passages that remain
+must between them state the generation's name or a code, its start and
+its end, each by one passage, as whole words with a plural allowed after
+a letter; a code no passage states is dropped from the generation. The
+section is the one a quoted heading names, else the one the first passage
+sits in. The common heading carries the codes and the year a generation
+began, the section's infobox line carries its span, and where the heading
+carries no code the infobox line that does is quoted too. An ellipsis
+inside a quote joins two passages that each verify on their own; the join
+never states anything. An open end needs a passage to say "present". A car survives when its quote sits inside its generation's
+own section of the page, from the heading its quote sits under to the
+next heading of that level or higher, and names the car; generations
+quoted from one section split it at their quotes. A leaf
+survives when it was offered and its model year sits inside the years its
+car states, which only narrow the generation's span; a leaf the model
+calls exact whose trim is not the car's name lands as closest, and a leaf
+two generations claim is dropped from both. Anything else is dropped and
+logged, never corrected.
+
+The pass lands what survives. Generations reconcile to the model's held
+ones by code, then by name, then by the key an earlier read minted; the
+rest mint under the read's key. The read's span lands in provenance for
+every generation it names and projects only onto a field no other source
+asserts: an infobox keeps what it states, and an undated generation gains
+the years its page gives. Two entries that resolve to one generation are
+one statement of it. What no current read states withdraws: a placement
+supersedes to nothing, a minted generation loses its facts and its links,
+so it holds no placement up, while it keeps its row and its key for a
+later read to find, and a held generation the read alone dated loses that
+span. A read with no parseable answer states nothing and changes nothing
+until a current read lands.
+
+Review comes after landing, which amends the 2026-08-07 ruling of
+confirm-before. Every leaf the read places raises a review flag, and so
+does every leaf the placement pass places on a span either end of which
+the read alone states, so the queue holds everything the read caused. A
+person works the queue two ways: a flag resolved by hand stays resolved
+while the read states the same thing, and a correction in
+`PLACEMENT_CORRECTIONS`, keyed by the configuration's address, outranks
+the read, raises nothing, and is applied on every run. A placement
+another source holds is never overwritten, only flagged as contradicted;
+the placement pass defers to a placement a source states outright instead
+of competing with it, and closes its own overlap flag when it does. The
+deterministic passes remain LLM-free: the model writes a record, the gate
+and the registries decide.
