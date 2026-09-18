@@ -422,12 +422,17 @@ finish never lands. The model classifies; it never authors.
 
 The gate is deterministic and runs twice, in the script for the operator
 and in the pass before anything lands. A generation survives when its
-quote is a verbatim substring of the text the model was shown and states
-its codes and years as whole words, a plural allowed; an open end needs
-the quote to say "present". A car survives when its quote sits inside its
-generation's own section of the page, from the heading its quote sits
-under to the next heading of that level or higher, and names the car;
-generations quoted from one section split it at their quotes. A leaf
+quotes, at most three, are verbatim passages of the text the model was
+shown, all sit in one section of the page, and between them state its
+name or a code, and its years, as whole words, a plural allowed; a code
+the quotes do not state is dropped from the generation. The common
+heading carries the codes and the year a generation began, and the
+section's infobox line carries its span, so both are quoted. An ellipsis inside a
+quote joins two passages that each verify. An open end needs a quote to
+say "present". A car survives when its quote sits inside its generation's
+own section of the page, from the heading its quote sits under to the
+next heading of that level or higher, and names the car; generations
+quoted from one section split it at their quotes. A leaf
 survives when it was offered and its model year sits inside the years its
 car states, which only narrow the generation's span; a leaf the model
 calls exact whose trim is not the car's name lands as closest, and a leaf

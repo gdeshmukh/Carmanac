@@ -27,7 +27,13 @@ from carmanac.ingest.llm_read import SOURCE_NAME, ask_openrouter, read_model, se
 from carmanac.reconcile import policy
 from carmanac.reconcile.generation_placement_pass import run_generation_placement_pass
 from carmanac.reconcile.llm_read_pass import FLAG_KIND, run_llm_read_pass
-from carmanac.reconcile.sources.llm_read import Leaf, build_messages, page_text, verify
+from carmanac.reconcile.sources.llm_read import (
+    PROMPT_VERSION,
+    Leaf,
+    build_messages,
+    page_text,
+    verify,
+)
 from tests.test_generation_placement import (  # noqa: F401
     _configuration,
     _land_article,
@@ -47,6 +53,8 @@ SECTIONED = (
     "== E46 (1997–2006) ==\nThe M3 came in 2000.\nThe 330i was sold from 2001 to 2005 as a sedan.\n"
     "=== Coupé ===\nThe 328Ci coupé was sold from 1999 to 2000.\n"
     "== E90 (2005–2011) ==\nThe Targas came in 2006.\n"
+    "== Fifth generation (F30; 2012) ==\n{{Infobox automobile\n| production = 2012–2019\n}}\n"
+    'The <span id="f30">F30</span> sedan came first.\n'
 )
 E90_QUOTE = "The E90 ran from 2005 to 2011"
 E46_QUOTE = "The E46 is the fourth generation of the BMW 3 Series, produced from 1997 to 2006"
@@ -134,7 +142,7 @@ def test_verify_keeps_only_what_the_page_states():
     )
     reasons = {(d.get("generation"), d.get("leaf"), d["reason"]) for d in out.dropped}
     assert ("E90", None, "quote not on the page") in reasons
-    assert ("G20", None, "quote does not state the codes and start") in reasons
+    assert ("G20", None, "quote does not state the name or codes and start") in reasons
     assert (None, 3, "outside the car's years") in reasons
     assert (None, 9, "not offered") in reasons
 
@@ -218,6 +226,24 @@ def test_verify_bounds_a_generation_by_its_own_section_and_names_by_whole_words(
     assert {("330", "car not quoted"), (" ", "no name")} <= reasons
 
 
+def test_verify_takes_a_generation_s_years_from_a_second_quote_in_its_section():
+    text = page_text(SECTIONED)
+    heading, years = "Fifth generation (F30; 2012)", "production = 2012–2019"
+    f30 = _generation("F30", 2012, 2019, None, [_car("F30", "The F30 sedan ... came first", [1])])
+    f30["quotes"], f30["codes"] = [heading, years], ["F30", "F31"]
+    lead = _generation("E36", 1990, 2000, None)
+    lead["quotes"] = ["E36 (1990–2000)", years]
+    out = verify({"generations": [f30, lead]}, text, _offered({1: 2014}))
+    assert [(g.name, g.codes, g.quote, [c.leaves for c in g.cars]) for g in out.generations] == [
+        ("F30", ("F30",), f"{heading} | {years}", [((1, "closest"),)])
+    ], "the heading and the infobox line date it; only the code the quotes state is kept"
+    assert out.dropped == [{"generation": "E36", "reason": "quotes span sections"}]
+    f30["quotes"] = [heading]
+    assert verify({"generations": [f30]}, text, {}).dropped == [
+        {"generation": "F30", "reason": "quote does not state the end"}
+    ]
+
+
 def test_verify_wants_the_car_quoted_inside_its_generation_and_names_the_match_honestly():
     text = page_text(WIKITEXT)
     answer = _answer([1], [2])
@@ -286,7 +312,7 @@ def article(db, wikidata_source, wikipedia_source, spine):
 
 
 def _land_read(
-    db, source, page, answer: dict | str, leaf_ids: list[int], llm="test", version="2"
+    db, source, page, answer: dict | str, leaf_ids: list[int], llm="test", version=PROMPT_VERSION
 ) -> RawRecord:
     payload = {
         "qid": "Q9",
