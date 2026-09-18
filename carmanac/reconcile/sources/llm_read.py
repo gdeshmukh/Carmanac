@@ -7,11 +7,11 @@ configurations with their ids, and answers with the generations on the
 page, the cars in each, and the leaves per car, every item carrying a
 quote. `verify` keeps an item only when its quote is a verbatim substring
 of that text and itself states the item's codes, years and name, keeps a
-car only when it is quoted from inside its generation's own stretch of the
-page, and keeps a leaf only when it was offered and its model year sits
-inside the years its car states. The script that asks and the pass that
-lands run this same gate over the same text, so nothing the model made up
-can reach a row.
+car only when it is quoted from inside its generation's own section of the
+page, and keeps a leaf only when it was offered, its model year sits
+inside the years its car states, and no other generation claims it. The
+script that asks and the pass that lands run this same gate over the same
+text, so nothing the model made up can reach a row.
 """
 
 from __future__ import annotations
@@ -35,6 +35,8 @@ _LINK = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]")
 _BOLD = re.compile(r"'{2,}")
 _BLANK = re.compile(r"\n{3,}")
 _FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")
+_HEADING = re.compile(r"(?<!=)(={2,6})(?!=)[^=]+?\1(?!=)")
+_PRESENT = re.compile(r"(?<!\w)present(?!\w)", re.I)
 
 SYSTEM = (
     "You are reading one Wikipedia article about a car nameplate. Reply with JSON only, in "
@@ -117,6 +119,7 @@ class ReadGeneration:
 class Verified:
     generations: list[ReadGeneration] = field(default_factory=list)
     dropped: list[dict] = field(default_factory=list)
+    malformed: bool = False  # no answer to verify: the read states nothing
 
     @property
     def leaves(self) -> int:
@@ -154,7 +157,9 @@ def build_messages(
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
 
 
-def parse_answer(answer: str) -> object:
+def parse_answer(answer: object) -> object:
+    if not isinstance(answer, str):
+        return None
     try:
         return json.loads(_FENCE.sub("", answer))
     except ValueError:
@@ -169,30 +174,45 @@ def _year(value: object) -> int | None:
     return value if isinstance(value, int) and 1885 <= value <= 2100 else None
 
 
+def _states(quote: str, *needles: object) -> bool:
+    """Every needle sits in the quote as a whole word or run of words, a
+    plural allowed: "Targas" states the Targa, "turbocharged" does not state
+    the Turbo, and "S" is stated by "911 S", not by "Sport"."""
+    return all(
+        re.search(rf"(?<!\w){re.escape(str(n).strip())}s?(?!\w)", quote, re.I) for n in needles
+    )
+
+
+def _section(headings: list[tuple[int, int]], at: int, size: int) -> tuple[int, int]:
+    """The page's section around `at`: from the heading above it to the next
+    heading of that level or higher, so a subsection stays inside its
+    parent. The lead ends at the first heading."""
+    start = level = 0
+    for pos, depth in headings:
+        if pos <= at:
+            start, level = pos, depth
+        elif level == 0 or depth <= level:
+            return start, pos
+    return start, size
+
+
 def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
     """Keep what the page supports. `offered` holds the candidate
     configurations by id; nothing else can be chosen. A car's quote must sit
-    in its generation's own stretch of the page - from that generation's
-    quote to the next one's - so a mention elsewhere places nothing."""
+    in its generation's own section of the page; generations quoted from
+    one section split it at their quotes. A mention elsewhere places
+    nothing."""
     out = Verified()
     if not isinstance(answer, dict) or not isinstance(answer.get("generations"), list):
+        out.malformed = True
         out.dropped.append({"reason": "malformed answer"})
         return out
     page = _squash(text)
-    starts = sorted(
-        pos
-        for g in answer["generations"]
-        if isinstance(g, dict) and isinstance(g.get("quote"), str)
-        if (pos := page.find(_squash(g["quote"]))) >= 0
-    )
 
     def quoted(quote: object) -> bool:
-        return isinstance(quote, str) and 0 < len(quote) <= 400 and _squash(quote) in page
+        return isinstance(quote, str) and 0 < len(_squash(quote)) <= 400 and _squash(quote) in page
 
-    def states(quote: str, *needles: object) -> bool:
-        return all(str(n).casefold() in quote.casefold() for n in needles)
-
-    claims: dict[int, int] = {}
+    kept: list[tuple[dict, str, tuple[str, ...], int, int | None, str, int]] = []
     for g in answer["generations"]:
         if not isinstance(g, dict):
             continue
@@ -205,7 +225,7 @@ def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
         if not quoted(quote):
             out.dropped.append({"generation": name, "reason": "quote not on the page"})
             continue
-        if start is None or not states(quote, start, *codes):
+        if start is None or not _states(quote, start, *codes):
             out.dropped.append(
                 {"generation": name, "reason": "quote does not state the codes and start"}
             )
@@ -213,37 +233,48 @@ def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
         if end is None and g.get("end_year") is not None:
             out.dropped.append({"generation": name, "reason": "end year out of range"})
             continue
-        if end is None and "present" not in quote.casefold():
+        if end is None and not _PRESENT.search(quote):
             out.dropped.append({"generation": name, "reason": "open end without 'present'"})
             continue
-        if end is not None and (end < start or not states(quote, end)):
+        if end is not None and (end < start or not _states(quote, end)):
             out.dropped.append({"generation": name, "reason": "quote does not state the end"})
             continue
-        section_start = page.find(_squash(quote))
-        section_end = next((pos for pos in starts if pos > section_start), len(page))
+        kept.append((g, name.strip(), codes, start, end, quote, page.find(_squash(quote))))
+
+    headings = [(m.start(), len(m.group(1))) for m in _HEADING.finditer(page)]
+    sections = [_section(headings, at, len(page)) for *_, at in kept]
+    claims: dict[int, set[str]] = {}
+    for (g, name, codes, start, end, quote, at), (low, high) in zip(kept, sections, strict=True):
+        peers = [
+            other_at
+            for (*_, other_at), (other_low, _) in zip(kept, sections, strict=True)
+            if other_low == low and other_at != at
+        ]
+        if any(other_at < at for other_at in peers):
+            low = at
+        high = min([high, *(other_at for other_at in peers if other_at > at)])
         cars: list[Car] = []
         for car in g.get("cars") or []:
             if not isinstance(car, dict):
                 continue
             car_name, car_quote = car.get("name"), car.get("quote")
             c_start, c_end = _year(car.get("start_year")), _year(car.get("end_year"))
-            if (
-                not isinstance(car_name, str)
-                or not quoted(car_quote)
-                or not states(car_quote, car_name)
-            ):
+            if not isinstance(car_name, str) or not car_name.strip():
+                out.dropped.append({"generation": name, "car": car_name, "reason": "no name"})
+                continue
+            if not quoted(car_quote) or not _states(car_quote, car_name):
                 out.dropped.append(
                     {"generation": name, "car": car_name, "reason": "car not quoted"}
                 )
                 continue
-            found = page.find(_squash(car_quote), section_start)
-            if found < 0 or found >= section_end:
+            found = page.find(_squash(car_quote), low)
+            if found < 0 or found >= high:
                 out.dropped.append(
                     {"generation": name, "car": car_name, "reason": "quoted outside the section"}
                 )
                 continue
             # A car's years only narrow the generation's span; they never widen it.
-            low, high = max(c_start or start, start), min(c_end or end or 2100, end or 2100)
+            lo, hi = max(c_start or start, start), min(c_end or end or 2100, end or 2100)
             leaves: list[tuple[int, str]] = []
             for leaf in car.get("leaves") or []:
                 if not isinstance(leaf, dict):
@@ -252,20 +283,22 @@ def verify(answer: object, text: str, offered: dict[int, Leaf]) -> Verified:
                 if leaf_id not in offered or match not in ("exact", "closest"):
                     out.dropped.append({"car": car_name, "leaf": leaf_id, "reason": "not offered"})
                     continue
-                if not (low <= offered[leaf_id].year <= high):
+                if not (lo <= offered[leaf_id].year <= hi):
                     out.dropped.append(
                         {"car": car_name, "leaf": leaf_id, "reason": "outside the car's years"}
                     )
                     continue
+                if name in claims.get(leaf_id, ()):
+                    continue  # the same generation already has it: one statement, not two
                 if (offered[leaf_id].trim or "").casefold().strip() != car_name.casefold().strip():
                     match = "closest"  # "exact" is the trim's word, not the model's
-                claims[leaf_id] = claims.get(leaf_id, 0) + 1
+                claims.setdefault(leaf_id, set()).add(name)
                 leaves.append((leaf_id, match))
             cars.append(Car(car_name.strip(), c_start, c_end, car_quote, tuple(leaves)))
-        out.generations.append(ReadGeneration(name.strip(), codes, start, end, quote, tuple(cars)))
+        out.generations.append(ReadGeneration(name, codes, start, end, quote, tuple(cars)))
 
-    # A leaf two cars claim is a guess either way; neither keeps it.
-    twice = {leaf_id for leaf_id, n in claims.items() if n > 1}
+    # A leaf two generations claim is a guess either way; neither keeps it.
+    twice = {leaf_id for leaf_id, names in claims.items() if len(names) > 1}
     if twice:
         out.dropped.extend(
             {"leaf": leaf_id, "reason": "claimed twice"} for leaf_id in sorted(twice)
