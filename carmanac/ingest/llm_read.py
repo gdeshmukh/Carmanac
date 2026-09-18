@@ -7,7 +7,8 @@ One call per page. The answer lands untouched - raw data is never
 discarded - and the gate runs here only to tell the operator what would
 survive; the pass runs it again against the page record before anything
 is minted or placed. A page already read at this prompt version by this
-model is not asked again unless forced.
+model with these candidates is not asked again unless forced; an answer
+the model did not finish never lands.
 """
 
 from __future__ import annotations
@@ -58,7 +59,10 @@ class ReadResult:
 
     def summary(self) -> str:
         if not self.read:
-            return "already read at this prompt version by this model (--force to ask again)"
+            return (
+                "already read at this prompt version by this model with these candidates "
+                "(--force to ask again)"
+            )
         return (
             f"read landed: generations={self.generations} leaves={self.leaves} "
             f"dropped={self.dropped}"
@@ -68,9 +72,11 @@ class ReadResult:
 def ask_openrouter(messages: list[dict], llm: str) -> str:
     if not settings.openrouter_api_key:
         raise LookupError("CARMANAC_OPENROUTER_API_KEY is not set")
+    # A paid generation is never retried: a timeout may have been billed.
     with PoliteClient(
         min_interval=0,
         timeout=settings.llm_timeout_seconds,
+        max_retries=1,
         headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
     ) as client:
         body = client.request(
@@ -85,7 +91,11 @@ def ask_openrouter(messages: list[dict], llm: str) -> str:
         ).json()
     if "error" in body:
         raise IngestHTTPError(f"{llm}: {body['error']}")
-    return body["choices"][0]["message"]["content"]
+    choice = body["choices"][0]
+    content = choice["message"].get("content")
+    if choice.get("finish_reason") != "stop" or not isinstance(content, str):
+        raise IngestHTTPError(f"{llm}: answer not finished ({choice.get('finish_reason')})")
+    return content
 
 
 def candidate_leaves(session: Session, model_id: int) -> list[Leaf]:
@@ -146,12 +156,14 @@ def read_model(
     if page is None:
         raise LookupError(f"{pair} has no landed article to read")
     key = f"read:{qid}"
+    leaves = candidate_leaves(session, model.id)
     prior = session.scalars(
         select(RawRecord).where(RawRecord.source_id == source.id, RawRecord.external_id == key)
     )
     if not force and any(
         (r.payload.get("page_record_id"), r.payload.get("prompt_version"), r.payload.get("llm"))
         == (page.id, PROMPT_VERSION, llm)
+        and set(r.payload.get("leaf_ids") or []) == {leaf.id for leaf in leaves}
         for r in prior
     ):
         return ReadResult(read=False)
@@ -168,7 +180,6 @@ def read_model(
             .order_by(Generation.start_year.nulls_last(), Generation.id)
         )
     ]
-    leaves = candidate_leaves(session, model.id)
     text = page_text(page.payload.get("wikitext", ""))
     answer = ask(build_messages(page.payload["title"], text, held, leaves), llm)
     payload = {
