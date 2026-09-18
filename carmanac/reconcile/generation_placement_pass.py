@@ -63,7 +63,7 @@ from carmanac.db.models import (
 )
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.wikipedia import SOURCE_NAME
-from carmanac.reconcile.bookkeeping import DecisionLog
+from carmanac.reconcile.bookkeeping import DecisionLog, reviewed
 from carmanac.reconcile.engine import supersede
 from carmanac.reconcile.sources.llm_read import SOURCE_NAME as READ_SOURCE
 from carmanac.reconcile.sources.wikipedia_infobox import (
@@ -130,6 +130,7 @@ class _PlacementPass:
         self.session = session
         self.stats = GenerationPlacementStats()
         self.source = get_source(session, SOURCE_NAME)
+        self.read_source = session.scalar(select(Source.id).where(Source.name == READ_SOURCE))
         self.decisions = DecisionLog(session, self.source.id, PASS_NAME)
 
         self.generations: dict[int, Generation] = {
@@ -304,23 +305,37 @@ class _PlacementPass:
     def _load_span_provenance(self) -> None:
         """Per generation: the raw record behind its live `start_year`
         assertion - what a production-span placement cites as its decider.
-        The infobox source outranks (ADR §4), so prefer its row."""
+        The infobox source outranks (ADR §4), so prefer its row; the LLM read
+        never projects over another source, so its row comes last. A
+        generation is read-dated when either end of its span is the read's
+        alone: a placement on it is the read's to review."""
         self.span_records: dict[int, int | None] = {}
         rows = self.session.execute(
             select(
                 FieldProvenance.generation_id,
                 FieldProvenance.source_id,
                 FieldProvenance.raw_record_id,
+                FieldProvenance.field_name,
             ).where(
                 FieldProvenance.generation_id.isnot(None),
-                FieldProvenance.field_name == "start_year",
+                FieldProvenance.field_name.in_(("start_year", "end_year")),
                 FieldProvenance.superseded_by.is_(None),
                 FieldProvenance.observed_value.isnot(None),
             )
         ).all()
-        for generation_id, source_id, raw_record_id in rows:
-            if source_id == self.source.id or generation_id not in self.span_records:
-                self.span_records[generation_id] = raw_record_id
+        rank = {self.source.id: 0, self.read_source: 2}
+        sources: dict[tuple[int, str], set[int]] = {}
+        for generation_id, source_id, raw_record_id, field_name in sorted(
+            rows, key=lambda row: (rank.get(row[1], 1), row[2] or 0)
+        ):
+            if field_name == "start_year":
+                self.span_records.setdefault(generation_id, raw_record_id)
+            sources.setdefault((generation_id, field_name), set()).add(source_id)
+        self.read_dated: set[int] = {
+            generation_id
+            for (generation_id, _), asserted in sources.items()
+            if asserted == {self.read_source}
+        }
 
     def _load_open_flags(self) -> None:
         self.open_flags: dict[int, ReconciliationFlag] = {
@@ -349,25 +364,19 @@ class _PlacementPass:
         }
         # A span an LLM read stated is that read's evidence, reviewed like
         # its placements: whatever this pass places on it carries the same
-        # flag, so the review queue holds everything the read caused.
-        read_source = self.session.scalar(select(Source.id).where(Source.name == READ_SOURCE))
-        self.read_records: set[int] = (
-            set()
-            if read_source is None
-            else set(
-                self.session.scalars(select(RawRecord.id).where(RawRecord.source_id == read_source))
+        # flag, so the review queue holds everything the read caused. The
+        # newest such flag per leaf, whatever its status: a resolved one is a
+        # person's word on that statement.
+        self.read_flags: dict[int, ReconciliationFlag] = {}
+        for flag in self.session.scalars(
+            select(ReconciliationFlag)
+            .where(
+                ReconciliationFlag.kind == "llm_placement_review",
+                ReconciliationFlag.source_id == self.source.id,
             )
-        )
-        self.open_read_flags: dict[int, ReconciliationFlag] = {
-            flag.configuration_id: flag
-            for flag in self.session.scalars(
-                select(ReconciliationFlag).where(
-                    ReconciliationFlag.kind == "llm_placement_review",
-                    ReconciliationFlag.status == "open",
-                    ReconciliationFlag.source_id == self.source.id,
-                )
-            )
-        }
+            .order_by(ReconciliationFlag.id)
+        ):
+            self.read_flags[flag.configuration_id] = flag
         # A placement another source states outright - an LLM read with its
         # quote, or a reviewer's correction - is evidence at the leaf's own
         # grain; the inference from spans defers to it rather than competing.
@@ -486,10 +495,12 @@ class _PlacementPass:
             "reason": "placed by a span a read stated",
             "span": f"{candidate.span.start}–{candidate.span.end or 'present'}",
         }
-        flag = self.open_read_flags.get(configuration.id)
-        if flag is not None:
+        flag = self.read_flags.get(configuration.id)
+        if flag is not None and flag.status == "open":
             if flag.detail != full:
                 flag.detail = full
+            return
+        if flag is not None and flag.status == "resolved" and reviewed(flag, full):
             return
         flag = ReconciliationFlag(
             kind="llm_placement_review",
@@ -500,12 +511,12 @@ class _PlacementPass:
             raw_record_id=candidate.raw_record_id,
         )
         self.session.add(flag)
-        self.open_read_flags[configuration.id] = flag
+        self.read_flags[configuration.id] = flag
         self.stats.flags_opened += 1
 
     def _dismiss_read_flag(self, configuration_id: int, resolution: str) -> None:
-        flag = self.open_read_flags.pop(configuration_id, None)
-        if flag is not None:
+        flag = self.read_flags.get(configuration_id)
+        if flag is not None and flag.status == "open":
             flag.status = "dismissed"
             flag.resolved_at = func.now()
             flag.detail = {**(flag.detail or {}), "resolution": resolution}
@@ -547,6 +558,7 @@ class _PlacementPass:
                         },
                     )
                 self.stats.deferred += 1
+                self._dismiss_flag(configuration.id, "placement_stated_outright")
                 self._dismiss_read_flag(configuration.id, "placement_stated_outright")
                 self.decisions.record_key(key, "defers_to_stated_placement")
                 continue
@@ -589,11 +601,11 @@ class _PlacementPass:
                 detail = {"generation": self.generations[candidate.generation_id].slug}
                 if vetoed_slugs:
                     detail["body_vetoed"] = vetoed_slugs
-                if candidate.raw_record_id in self.read_records:
+                if candidate.generation_id in self.read_dated:
                     self._flag_read_span(configuration, candidate, detail)
                     self.stats.read_span += 1
                 else:
-                    self._dismiss_read_flag(configuration.id, "span_stated_by_the_page")
+                    self._dismiss_read_flag(configuration.id, "span_another_source_states")
                 self.decisions.record_key(
                     key,
                     "placed_dated_overlap",

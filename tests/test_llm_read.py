@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from carmanac.db.models import (
     ExternalId,
@@ -21,8 +21,9 @@ from carmanac.db.models import (
     ReconciliationFlag,
     Source,
 )
+from carmanac.ingest.http import IngestHTTPError
 from carmanac.ingest.landing import content_hash
-from carmanac.ingest.llm_read import SOURCE_NAME, read_model
+from carmanac.ingest.llm_read import SOURCE_NAME, ask_openrouter, read_model, settings
 from carmanac.reconcile import policy
 from carmanac.reconcile.generation_placement_pass import run_generation_placement_pass
 from carmanac.reconcile.llm_read_pass import FLAG_KIND, run_llm_read_pass
@@ -39,7 +40,13 @@ WIKITEXT = (
     "produced from 1997 to 2006.\n"
     "The 330i was sold from 2001 to 2005 as a [[sedan (car)|sedan]].\n"
     "The F30 followed in 2012 and remains in production (2012–present).\n"
-    "The E90 ran from 2005 to 2011.\n"
+    "The E90 ran from 2005 to 2011 and represents the fifth generation.\n"
+)
+SECTIONED = (
+    "The 3 Series is a car.\n== E36 (1990–2000) ==\nThe 325i was sold from 1991 to 1999.\n"
+    "== E46 (1997–2006) ==\nThe M3 came in 2000.\nThe 330i was sold from 2001 to 2005 as a sedan.\n"
+    "=== Coupé ===\nThe 328Ci coupé was sold from 1999 to 2000.\n"
+    "== E90 (2005–2011) ==\nThe Targas came in 2006.\n"
 )
 E90_QUOTE = "The E90 ran from 2005 to 2011"
 E46_QUOTE = "The E46 is the fourth generation of the BMW 3 Series, produced from 1997 to 2006"
@@ -132,14 +139,83 @@ def test_verify_keeps_only_what_the_page_states():
     assert (None, 9, "not offered") in reasons
 
 
-def test_verify_refuses_an_open_end_the_quote_does_not_state_and_a_leaf_claimed_twice():
+def test_verify_refuses_an_open_end_the_quote_does_not_state_and_a_leaf_two_generations_claim():
     text = page_text(WIKITEXT)
-    answer = _answer([1], [1])
+    answer = _answer([1])
     answer["generations"][0]["end_year"] = None
-    out = verify(answer, text, _offered({1: 2003}))
-    assert [g.name for g in out.generations] == ["F30"]
-    assert out.generations[0].cars[0].leaves == (), "1 was claimed by both cars"
-    assert verify("not json", text, {}).dropped == [{"reason": "malformed answer"}]
+    assert verify(answer, text, _offered({1: 2003})).dropped == [
+        {"generation": "E46", "reason": "open end without 'present'"}
+    ]
+    answer["generations"] = [
+        _generation("E90", 2005, None, E90_QUOTE + " and represents the fifth")
+    ]
+    assert verify(answer, text, {}).dropped == [
+        {"generation": "E90", "reason": "open end without 'present'"}
+    ]
+
+    answer = _answer([1, 2])
+    answer["generations"][0]["cars"].append(_car("sedan", CAR_QUOTE + " as a sedan", [1]))
+    answer["generations"].append(
+        _generation("E90", 2005, 2011, E90_QUOTE, [_car("E90", E90_QUOTE, [2])])
+    )
+    out = verify(answer, text, _offered({1: 2003, 2: 2005}, trim="330i"))
+    e46, e90 = out.generations
+    assert [(c.name, c.leaves) for c in e46.cars] == [("330i", ((1, "exact"),)), ("sedan", ())], (
+        "one generation claiming a leaf twice keeps it once"
+    )
+    assert e90.cars[0].leaves == () and {"leaf": 2, "reason": "claimed twice"} in out.dropped
+
+    malformed = verify("not json", text, {})
+    assert malformed.malformed and malformed.dropped == [{"reason": "malformed answer"}]
+
+
+def test_verify_bounds_a_generation_by_its_own_section_and_names_by_whole_words():
+    text = page_text(SECTIONED)
+    # The read skips the E46: its section must not fall to the E36 by default.
+    answer = {
+        "generations": [
+            _generation("E36", 1990, 2000, "E36 (1990–2000)", [_car("330i", CAR_QUOTE, [1])]),
+            _generation(
+                "E90", 2005, 2011, "E90 (2005–2011)", [_car("Targa", "The Targas came", [3])]
+            ),
+        ]
+    }
+    out = verify(answer, text, _offered({1: 2003, 3: 2006}))
+    assert [(g.name, [c.leaves for c in g.cars]) for g in out.generations] == [
+        ("E36", []),
+        ("E90", [((3, "closest"),)]),
+    ], "the plural states the Targa"
+    assert {
+        "generation": "E36",
+        "car": "330i",
+        "reason": "quoted outside the section",
+    } in out.dropped
+
+    answer = {
+        "generations": [
+            _generation("M3", 2001, None, "The M3 came in 2000", codes=[]),
+            _generation(
+                "E46",
+                1997,
+                2006,
+                "E46 (1997–2006)",
+                [
+                    _car("328Ci", "The 328Ci coupé was sold from 1999 to 2000", [2]),
+                    _car("330", CAR_QUOTE, [1]),
+                    _car(" ", CAR_QUOTE, [1]),
+                    _car("330i", CAR_QUOTE, [1]),
+                ],
+            ),
+        ]
+    }
+    out = verify(answer, text, _offered({1: 2003, 2: 2000}, trim="330i"))
+    (e46,) = out.generations
+    assert [(c.name, c.leaves) for c in e46.cars] == [
+        ("328Ci", ((2, "closest"),)),
+        ("330i", ((1, "exact"),)),
+    ], "a subsection stays inside its parent; the dropped M3 entry cuts nothing"
+    reasons = {(d.get("car"), d["reason"]) for d in out.dropped}
+    assert {("330", "car not quoted"), (" ", "no name")} <= reasons
 
 
 def test_verify_wants_the_car_quoted_inside_its_generation_and_names_the_match_honestly():
@@ -159,6 +235,22 @@ def test_verify_wants_the_car_quoted_inside_its_generation_and_names_the_match_h
 
 def _offered(years: dict[int, int], trim: str | None = None) -> dict[int, Leaf]:
     return {i: Leaf(i, year, trim, None, None, None, None, None) for i, year in years.items()}
+
+
+def _generation(name, start, end, quote, cars=(), codes=None) -> dict:
+    codes = [name] if codes is None else codes
+    return {
+        "name": name,
+        "codes": codes,
+        "start_year": start,
+        "end_year": end,
+        "quote": quote,
+        "cars": list(cars),
+    }
+
+
+def _car(name, quote, leaves: list[int]) -> dict:
+    return {"name": name, "quote": quote, "leaves": [{"id": i, "match": "exact"} for i in leaves]}
 
 
 def test_messages_carry_the_held_generations_and_the_leaf_lines():
@@ -193,16 +285,18 @@ def article(db, wikidata_source, wikipedia_source, spine):
     return {"page": page, "leaves": leaves}
 
 
-def _land_read(db, source, page, answer: dict, leaf_ids: list[int], llm="test") -> RawRecord:
+def _land_read(
+    db, source, page, answer: dict | str, leaf_ids: list[int], llm="test", version="2"
+) -> RawRecord:
     payload = {
         "qid": "Q9",
         "title": "BMW 330i",
         "page_record_id": page.id,
         "revid": 1,
-        "prompt_version": "2",
+        "prompt_version": version,
         "llm": llm,
         "leaf_ids": leaf_ids,
-        "answer": json.dumps(answer),
+        "answer": answer if isinstance(answer, str) else json.dumps(answer),
     }
     record = RawRecord(
         source_id=source.id,
@@ -216,13 +310,16 @@ def _land_read(db, source, page, answer: dict, leaf_ids: list[int], llm="test") 
 
 
 @pytest.mark.integration
-def test_the_script_asks_once_per_page_and_lands_the_answer_untouched(db, llm_source, article):
+def test_the_script_asks_once_per_question_and_lands_the_answer_untouched(
+    db, llm_source, spine, wikipedia_source, article
+):
     asked: list[list[dict]] = []
     ids = [leaf.id for leaf in article["leaves"]]
+    raw = "```json\n" + json.dumps(_answer(ids[:1], ids[2:]), indent=1) + "\n```"
 
     def fake(messages, llm):
         asked.append(messages)
-        return json.dumps(_answer(ids[:1], ids[2:]))
+        return raw
 
     result = read_model(db, "bmw/330i", llm="test", ask=fake)
     assert (result.read, result.generations, result.leaves, result.dropped) == (True, 2, 2, 0)
@@ -231,11 +328,41 @@ def test_the_script_asks_once_per_page_and_lands_the_answer_untouched(db, llm_so
     )
     record = db.scalars(select(RawRecord).where(RawRecord.source_id == llm_source.id)).one()
     assert record.external_id == "read:Q9" and record.payload["leaf_ids"] == ids
-    assert json.loads(record.payload["answer"]) == _answer(ids[:1], ids[2:])
+    assert record.payload["answer"] == raw, "fences and all"
 
     assert read_model(db, "bmw/330i", llm="test", ask=fake).read is False and len(asked) == 1
     assert read_model(db, "bmw/330i", llm="test", ask=fake, force=True).read and len(asked) == 2
     assert read_model(db, "bmw/330i", llm="other", ask=fake).read and len(asked) == 3
+    _configuration(db, spine, 2008, "sedan")
+    assert read_model(db, "bmw/330i", llm="test", ask=fake).read and len(asked) == 4, (
+        "a new candidate is a new question"
+    )
+    _land_article(db, wikipedia_source, "Q9", "BMW 330i", WIKITEXT + "A later revision.\n")
+    assert read_model(db, "bmw/330i", llm="test", ask=fake).read and len(asked) == 5, (
+        "so is a new revision of the page"
+    )
+
+
+def test_the_script_refuses_an_answer_the_model_did_not_finish(monkeypatch):
+    monkeypatch.setattr(settings, "openrouter_api_key", "test")
+    for choice in (
+        {"finish_reason": "length", "message": {"content": '{"generations": ['}},
+        {"finish_reason": "stop", "message": {"content": None, "refusal": "no"}},
+    ):
+        monkeypatch.setattr(
+            "carmanac.ingest.http.PoliteClient.request",
+            lambda self, method, url, body=choice, **kwargs: _Response({"choices": [body]}),
+        )
+        with pytest.raises(IngestHTTPError):
+            ask_openrouter([], "test")
+
+
+class _Response:
+    def __init__(self, body: dict):
+        self.body = body
+
+    def json(self) -> dict:
+        return self.body
 
 
 @pytest.mark.integration
@@ -319,8 +446,27 @@ def test_the_pass_dates_mints_places_flags_and_withdraws(db, llm_source, spine, 
 
 
 @pytest.mark.integration
-def test_placement_pass_defers_to_a_stated_placement_and_flags_what_rests_on_a_read_span(
+def test_the_pass_leaves_the_world_alone_for_a_stale_or_malformed_read(
     db, llm_source, spine, article
+):
+    page, (c2003, _c2005, c2012) = article["page"], article["leaves"]
+    ids = [c.id for c in article["leaves"]]
+    _land_read(db, llm_source, page, _answer([c2003.id], [c2012.id]), ids)
+    assert run_llm_read_pass(db).placed == 2
+
+    _land_read(db, llm_source, page, '{"generations": [', ids, llm="cut short")
+    stats = run_llm_read_pass(db)
+    assert (stats.skipped, stats.withdrawn, stats.flags_dismissed) == (1, 0, 0)
+    _land_read(db, llm_source, page, _answer([]), ids, llm="older question", version="1")
+    stats = run_llm_read_pass(db)
+    assert (stats.skipped, stats.withdrawn, stats.flags_dismissed) == (1, 0, 0)
+    db.refresh(c2003), db.refresh(c2012)
+    assert c2003.generation_id == spine["e46"].id and c2012.generation_id is not None
+
+
+@pytest.mark.integration
+def test_placement_pass_defers_to_a_stated_placement_and_flags_what_rests_on_a_read_span(
+    db, llm_source, spine, article, wikidata_source
 ):
     page, (c2003, _c2005, _c2012) = article["page"], article["leaves"]
     c2008 = _configuration(db, spine, 2008, "sedan")
@@ -354,6 +500,134 @@ def test_placement_pass_defers_to_a_stated_placement_and_flags_what_rests_on_a_r
     )
     again = run_generation_placement_pass(db)
     assert (again.flags_opened, again.withdrawn, again.read_span) == (0, 0, 2)
+
+    # A person accepts the 2008 placement: the flag stays resolved while the
+    # span is the same; and once another source dates the E90, the flag is
+    # the placement pass's no longer.
+    flag.status = "resolved"
+    db.commit()
+    assert run_generation_placement_pass(db).flags_opened == 0
+    for field, value in (("start_year", "2005"), ("end_year", "2011")):
+        db.add(
+            FieldProvenance(
+                generation_id=spine["e90"].id,
+                field_name=field,
+                observed_value=value,
+                source_id=wikidata_source.id,
+            )
+        )
+    db.commit()
+    stats = run_generation_placement_pass(db)
+    assert (stats.read_span, stats.flags_dismissed, stats.flags_opened) == (0, 1, 0)
+    open_kinds = {
+        f.kind
+        for f in db.scalars(
+            select(ReconciliationFlag).where(
+                ReconciliationFlag.configuration_id == c2008.id,
+                ReconciliationFlag.status == "open",
+            )
+        )
+    }
+    assert open_kinds == set() and c2008.generation_id == spine["e90"].id
+
+
+@pytest.mark.integration
+def test_a_minted_generation_follows_the_read_that_states_it(db, llm_source, spine, article):
+    page, (c2003, _c2005, c2012) = article["page"], article["leaves"]
+    ids = [c.id for c in article["leaves"]]
+    _land_read(db, llm_source, page, _answer([c2003.id], [c2012.id]), ids)
+    run_llm_read_pass(db)
+    f30 = db.scalar(
+        select(Generation)
+        .join(ExternalId, ExternalId.generation_id == Generation.id)
+        .where(ExternalId.external_id == "read:Q9#f30")
+    )
+
+    # Renamed but matched by code, and the E46 stated twice: one row each.
+    answer = _answer([c2003.id], [c2012.id])
+    answer["generations"][1]["name"] = "F30 series"
+    answer["generations"].append(_generation("E46 facelift", 1997, 2006, E46_QUOTE, codes=["E46"]))
+    _land_read(db, llm_source, page, answer, ids, llm="renames")
+    stats = run_llm_read_pass(db)
+    assert (stats.generations_minted, stats.generations_retired, stats.withdrawn) == (0, 0, 0)
+    again = run_llm_read_pass(db)
+    assert (again.assertions_inserted, again.assertions_superseded, again.flags_opened) == (
+        0,
+        0,
+        0,
+    )
+    db.refresh(f30), db.refresh(c2012)
+    assert (f30.start_year, f30.chassis_codes, c2012.generation_id) == (2012, ["F30"], f30.id)
+    assert db.scalar(select(func.count()).select_from(Generation)) == 3, "E46, E90, F30"
+
+    # Dropped: its facts and its link retire, so it holds nothing up.
+    answer = _answer([c2003.id])
+    answer["generations"].append(_generation("E90", 2005, 2011, E90_QUOTE, codes=[]))
+    _land_read(db, llm_source, page, answer, ids, llm="drops")
+    stats = run_llm_read_pass(db)
+    assert (stats.generations_retired, stats.links_retired, stats.withdrawn) == (1, 1, 1)
+    c2008 = _configuration(db, spine, 2008, "sedan")
+    placement = run_generation_placement_pass(db)
+    db.refresh(c2008), db.refresh(f30)
+    assert c2008.generation_id == spine["e90"].id and placement.undated_competitor == 0
+    assert (f30.start_year, f30.chassis_codes) == (None, None)
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(GenerationModelLink)
+            .where(
+                GenerationModelLink.generation_id == f30.id,
+                GenerationModelLink.superseded_by.is_(None),
+            )
+        )
+        == 0
+    )
+    assert run_llm_read_pass(db).links_retired == 0
+
+
+@pytest.mark.integration
+def test_a_stated_placement_settles_an_overlap_and_a_resolved_flag_stays_resolved(
+    db, llm_source, spine, article
+):
+    page, (_c2003, c2005, _c2012) = article["page"], article["leaves"]
+    ids = [c.id for c in article["leaves"]]
+    answer = _answer([])
+    answer["generations"].append(_generation("E90", 2005, 2011, E90_QUOTE, codes=[]))
+    _land_read(db, llm_source, page, answer, ids)
+    run_llm_read_pass(db), run_generation_placement_pass(db)
+    overlap = db.scalars(
+        select(ReconciliationFlag).where(
+            ReconciliationFlag.configuration_id == c2005.id,
+            ReconciliationFlag.kind == "generation_overlap",
+            ReconciliationFlag.status == "open",
+        )
+    ).one()
+
+    answer = _answer([c2005.id])
+    answer["generations"].append(_generation("E90", 2005, 2011, E90_QUOTE, codes=[]))
+    _land_read(db, llm_source, page, answer, ids, llm="places")
+    run_llm_read_pass(db)
+    stats = run_generation_placement_pass(db)
+    db.refresh(overlap), db.refresh(c2005)
+    assert overlap.status == "dismissed" and stats.deferred == 1
+    assert c2005.generation_id == spine["e46"].id
+
+    review = db.scalars(
+        select(ReconciliationFlag).where(
+            ReconciliationFlag.configuration_id == c2005.id, ReconciliationFlag.status == "open"
+        )
+    ).one()
+    review.status = "resolved"
+    db.commit()
+    assert run_llm_read_pass(db).flags_opened == 0, "a person's word holds"
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(ReconciliationFlag)
+            .where(ReconciliationFlag.configuration_id == c2005.id)
+        )
+        == 2
+    )
 
 
 @pytest.mark.integration
