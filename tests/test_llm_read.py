@@ -24,7 +24,7 @@ from carmanac.db.models import (
 from carmanac.ingest.http import IngestHTTPError
 from carmanac.ingest.landing import content_hash
 from carmanac.ingest.llm_read import SOURCE_NAME, ask_openrouter, read_model, settings
-from carmanac.reconcile import policy
+from carmanac.reconcile import llm_read_pass
 from carmanac.reconcile.generation_placement_pass import run_generation_placement_pass
 from carmanac.reconcile.llm_read_pass import FLAG_KIND, run_llm_read_pass
 from carmanac.reconcile.sources.llm_read import (
@@ -514,73 +514,6 @@ def test_the_pass_leaves_the_world_alone_for_a_stale_or_malformed_read(
 
 
 @pytest.mark.integration
-def test_placement_pass_defers_to_a_stated_placement_and_flags_what_rests_on_a_read_span(
-    db, llm_source, spine, article, wikidata_source
-):
-    page, (c2003, _c2005, _c2012) = article["page"], article["leaves"]
-    c2008 = _configuration(db, spine, 2008, "sedan")
-    answer = _answer([c2003.id])
-    answer["generations"].append(
-        {
-            "name": "E90",
-            "codes": [],
-            "start_year": 2005,
-            "end_year": 2011,
-            "quote": E90_QUOTE,
-            "cars": [],
-        }
-    )
-    _land_read(db, llm_source, page, answer, [c.id for c in article["leaves"]])
-    run_llm_read_pass(db)
-    stats = run_generation_placement_pass(db)
-    db.refresh(c2003), db.refresh(c2008)
-    assert c2003.generation_id == spine["e46"].id and stats.deferred == 1
-    # 2008 by the E90's span, 2012 by its end-year slack: both rest on the read.
-    assert c2008.generation_id == spine["e90"].id and stats.read_span == 2, "dated only by the read"
-    flag = db.scalars(
-        select(ReconciliationFlag).where(
-            ReconciliationFlag.configuration_id == c2008.id, ReconciliationFlag.status == "open"
-        )
-    ).one()
-    assert (flag.kind, flag.detail["reason"], flag.detail["span"]) == (
-        FLAG_KIND,
-        "placed by a span a read stated",
-        "2005–2011",
-    )
-    again = run_generation_placement_pass(db)
-    assert (again.flags_opened, again.withdrawn, again.read_span) == (0, 0, 2)
-
-    # A person accepts the 2008 placement: the flag stays resolved while the
-    # span is the same; and once another source dates the E90, the flag is
-    # the placement pass's no longer.
-    flag.status = "resolved"
-    db.commit()
-    assert run_generation_placement_pass(db).flags_opened == 0
-    for field, value in (("start_year", "2005"), ("end_year", "2011")):
-        db.add(
-            FieldProvenance(
-                generation_id=spine["e90"].id,
-                field_name=field,
-                observed_value=value,
-                source_id=wikidata_source.id,
-            )
-        )
-    db.commit()
-    stats = run_generation_placement_pass(db)
-    assert (stats.read_span, stats.flags_dismissed, stats.flags_opened) == (0, 1, 0)
-    open_kinds = {
-        f.kind
-        for f in db.scalars(
-            select(ReconciliationFlag).where(
-                ReconciliationFlag.configuration_id == c2008.id,
-                ReconciliationFlag.status == "open",
-            )
-        )
-    }
-    assert open_kinds == set() and c2008.generation_id == spine["e90"].id
-
-
-@pytest.mark.integration
 def test_a_minted_generation_follows_the_read_that_states_it(db, llm_source, spine, article):
     page, (c2003, _c2005, c2012) = article["page"], article["leaves"]
     ids = [c.id for c in article["leaves"]]
@@ -643,32 +576,10 @@ def test_a_minted_generation_follows_the_read_that_states_it(db, llm_source, spi
 
 
 @pytest.mark.integration
-def test_a_stated_placement_settles_an_overlap_and_a_resolved_flag_stays_resolved(
-    db, llm_source, spine, article
-):
+def test_a_review_flag_resolved_by_hand_stays_resolved(db, llm_source, spine, article):
     page, (_c2003, c2005, _c2012) = article["page"], article["leaves"]
-    ids = [c.id for c in article["leaves"]]
-    answer = _answer([])
-    answer["generations"].append(_generation("E90", 2005, 2011, E90_QUOTE, codes=[]))
-    _land_read(db, llm_source, page, answer, ids)
-    run_llm_read_pass(db), run_generation_placement_pass(db)
-    overlap = db.scalars(
-        select(ReconciliationFlag).where(
-            ReconciliationFlag.configuration_id == c2005.id,
-            ReconciliationFlag.kind == "generation_overlap",
-            ReconciliationFlag.status == "open",
-        )
-    ).one()
-
-    answer = _answer([c2005.id])
-    answer["generations"].append(_generation("E90", 2005, 2011, E90_QUOTE, codes=[]))
-    _land_read(db, llm_source, page, answer, ids)
+    _land_read(db, llm_source, page, _answer([c2005.id]), [c.id for c in article["leaves"]])
     run_llm_read_pass(db)
-    stats = run_generation_placement_pass(db)
-    db.refresh(overlap), db.refresh(c2005)
-    assert overlap.status == "dismissed" and stats.deferred == 1
-    assert c2005.generation_id == spine["e46"].id
-
     review = db.scalars(
         select(ReconciliationFlag).where(
             ReconciliationFlag.configuration_id == c2005.id, ReconciliationFlag.status == "open"
@@ -683,7 +594,7 @@ def test_a_stated_placement_settles_an_overlap_and_a_resolved_flag_stays_resolve
             .select_from(ReconciliationFlag)
             .where(ReconciliationFlag.configuration_id == c2005.id)
         )
-        == 2
+        == 1
     )
 
 
@@ -695,7 +606,7 @@ def test_a_correction_outranks_the_read_and_a_held_placement_is_only_contradicte
     _land_read(
         db, llm_source, page, _answer([c2003.id, c2005.id]), [c.id for c in article["leaves"]]
     )
-    monkeypatch.setattr(policy, "PLACEMENT_CORRECTIONS", {"bmw/330i/2005/sedan": "e90"})
+    monkeypatch.setattr(llm_read_pass, "PLACEMENT_CORRECTIONS", {"bmw/330i/2005/sedan": "e90"})
     # Another source already placed the 2003 car on the E90.
     c2003.generation_id = spine["e90"].id
     db.add(

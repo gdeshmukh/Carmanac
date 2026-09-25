@@ -476,3 +476,27 @@ the placement pass defers to a placement a source states outright instead
 of competing with it, and closes its own overlap flag when it does. The
 deterministic passes remain LLM-free: the model writes a record, the gate
 and the registries decide.
+
+## Amendment (2026-09-25): the read set aside; the grammar grows instead
+
+Ruled 2026-09-25, from the comparison of 2026-09-18. On eight nameplates
+the grammar already handles, the read matched the grammar's generations
+and years wherever the page states them, and it was right on the four
+leaves where the two disagreed; but five of those eight nameplates are
+dated from generation pages the read never sees, the cheap model reads
+unreliably, and on the 911 it minted five generations the grammar had
+not. That is a few generations for a paid, six-minute call per page. The
+catalogue's gaps are page shapes, and a grammar rule per shape is free,
+deterministic and testable, so the grammar stays the minting path and
+grows a rule at a time, each general to a shape and never to one
+company's naming.
+
+The read remains a source that a person invokes by hand, and nothing in
+the deterministic passes knows it is there. The placement pass no longer
+defers to a placement another source states outright and no longer flags
+a placement on a span the read alone stated; those two rules of the
+2026-09-17 amendment are withdrawn, and the rest of that amendment
+describes the read pass as it still behaves when run. `PLACEMENT_CORRECTIONS`
+and the resolved-flag rule live with the read pass. The live database was
+restored to its state before the read; the read's records and flags are
+gone, and its migration stays applied.

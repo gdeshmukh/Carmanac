@@ -42,9 +42,8 @@ from carmanac.db.models import (
 )
 from carmanac.ingest.landing import get_source
 from carmanac.ingest.llm_read import candidate_leaves
-from carmanac.reconcile import policy
 from carmanac.reconcile.addressing import nonconforming_slug, slugify
-from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled, reviewed
+from carmanac.reconcile.bookkeeping import DecisionLog, mark_reconciled
 from carmanac.reconcile.engine import assert_field_facts, supersede
 from carmanac.reconcile.sources.llm_read import (
     PROMPT_VERSION,
@@ -58,6 +57,20 @@ from carmanac.reconcile.sources.llm_read import (
 log = logging.getLogger(__name__)
 PASS_NAME = "llm_read"
 COVERAGE = ("start_year", "end_year", "chassis_codes")
+
+# Corrections to what a read placed, the reviewer's word over the model's.
+# Configuration address -> generation slug under the same company, or None
+# for "no generation". Applied on every run and never flagged, since a
+# person decided it.
+PLACEMENT_CORRECTIONS: dict[str, str | None] = {}
+
+
+def reviewed(flag: ReconciliationFlag, detail: dict) -> bool:
+    """Whether a resolved flag was about this very statement: a person's
+    resolution holds while the pass says the same thing, and not longer."""
+    return all((flag.detail or {}).get(key) == value for key, value in detail.items())
+
+
 FLAG_KIND = "llm_placement_review"
 
 
@@ -178,7 +191,7 @@ class LLMReadPass:
     # --- what a person ruled ----------------------------------------------------
 
     def _apply_corrections(self) -> None:
-        for address, slug in sorted(policy.PLACEMENT_CORRECTIONS.items()):
+        for address, slug in sorted(PLACEMENT_CORRECTIONS.items()):
             company_slug, model_slug, year, configuration_slug = address.split("/")
             configuration = self.session.scalar(
                 select(Configuration)

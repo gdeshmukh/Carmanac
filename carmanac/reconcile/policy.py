@@ -1159,9 +1159,3 @@ FIELD_AFFINITY: dict[str, str] = {
     "country_id": "Wikidata",
     "website": "Wikidata",
 }
-
-# Corrections to what an LLM read placed (ADR 0017, amended 2026-09-17), the
-# reviewer's word over the model's. Configuration address -> generation slug
-# under the same company, or None for "no generation". Applied by the read
-# pass on every run and never flagged, since a person decided it.
-PLACEMENT_CORRECTIONS: dict[str, str | None] = {}

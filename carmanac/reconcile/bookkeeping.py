@@ -18,7 +18,7 @@ from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from carmanac.db.models import MatchDecision, RawRecord, ReconciledRecord, ReconciliationFlag
+from carmanac.db.models import MatchDecision, RawRecord, ReconciledRecord
 from carmanac.reconcile import policy
 
 # Rows per INSERT. Postgres caps a statement at 65535 bind parameters and a
@@ -184,9 +184,3 @@ def trigram_candidates(
         | ({"company_id": company_id} if company_id is not None else {}),
     ).all()
     return [{"name": r.name, "slug": r.slug, "similarity": float(r.sim)} for r in rows]
-
-
-def reviewed(flag: ReconciliationFlag, detail: dict) -> bool:
-    """Whether a resolved flag was about this very statement: a person's
-    resolution holds while the pass says the same thing, and not longer."""
-    return all((flag.detail or {}).get(key) == value for key, value in detail.items())
