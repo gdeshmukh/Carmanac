@@ -22,20 +22,30 @@ Phase 1: **the first cars have identity, and their years + variants are landing.
 
 ## In Flight
 
-**Branch `feat/label-clusters-and-codes` — mid-flight (2026-09-11).** The M3 as the placement case study: the identical-label cluster tie-break and the generation form, both censused before adoption (ADR 0013 amended, ADR 0017 amended). 11 of the 51 clusters resolve, the M3 attaches, its article lands, its sections mint E30 through G80/G81, and **all 64 of its configurations place**. Generations 1,702 → 1,761, placed configurations 7,521 → 8,024, clusters 51 → 39, near-miss flags 1,535 → 1,455. The M5 is the regression fixture and does not move at any checkpoint; its shape is now a test. The model page leads with generations and states its axes. Every pass re-runs to an exact no-op; reconciler v23; 308 tests. Ruled 2026-09-11: the LLM article read is tabled; the colon lead-in and a heading's stated range are accepted and built (ADR 0017 amended, tests green). The heading rules ran live 2026-09-17 against the snapshot taken before them: no existing placement withdrawn or moved, no existing span changed, 61 generations dated, 121 configurations placed. Pushed as PR #48. **Until it merges, the live database is ahead of `main`:** the passes tombstone a fact its article no longer supports, so running `main`'s passes on this database would withdraw the 61 spans and the 121 placements (the branch's next run restores them). At merge time: run every pass from `main`, diff placements and generations against the 2026-09-17 baseline in the scratch directory (no-op expected), then refresh the Drive snapshot, which was taken before the heading rules ran.
+**Branch `feat/testing-llm-parsing` — mid-flight (2026-09-17).** The LLM read as a source (ADR 0017 amended, reconciler v24): `python -m carmanac.ingest.llm_read porsche/911` asks the model behind `CARMANAC_OPENROUTER_API_KEY` (`CARMANAC_LLM_MODEL`, default a DeepSeek flash model) to read one landed page and lands the answer as a raw record; the read pass verifies every quote against the page, mints, dates and places, and flags every leaf for review; the placement pass defers to a stated placement and flags what rests on a read's span; `PLACEMENT_CORRECTIONS` outranks the read, and a flag resolved by hand stays resolved. Reviewed 2026-09-17 (see the session log): the gate names by whole words and bounds a generation by its own section, the script refuses an unfinished answer, the pass retires by row and dates a generation once. Compared against the grammar 2026-09-18 (session log): the gate now takes a generation's years from its section's infobox line and judges each quoted passage on its own (prompt version 5), the pass honours only the configured model's read, and the model that reads reliably is the pro one (`CARMANAC_LLM_MODEL` in the local env; the code default is unchanged). Live on the 911 with it: 10 generations verified from the page, the classic 911's own subsections among them, 284 of 370 placed, 52 review flags open; three rounds of the passes, the third a no-op. Owed: the rulings below on the read's shape (mint and date only, or leaves too), on reading generation pages, and on the default model; the review surface; the 3 Series badge read once the line's pages land.
 
 **The JLR brand-artifact merges are APPLIED** (2026-07-31, `ceec0f2` + `a914a1d`): Range Rover, Discovery, and Defender ruled Land Rover model lines, not brands — the filings agree (vPIC files all three under Make=LAND ROVER; EPA's 396 rows say make=Land Rover). Three `IDENTITY_MERGES` entries → Q35907, collapsed live (companies 7,204 → 7,201; standing rule: the merge script's dry-run list gets reviewed before every `--execute`), all passes converged, 131 tests green. The merge exposed and fixed two guard defects (see session log); the queue's one false cross-badge alarm is dissolved — **9 cross-badge flags remain, all real rebadges**. Ruled held as-is: Century (real 2025 Toyota spin-off), Scion (an additional-information plan exists), Ioniq (real short-lived division; empty catalogue is honest). Noted for the parked namesake/duplicate work: a second live "Audi" artifact (`audi-q136087723`, wins label-brand attribution for "Audi A4 B8" over Audi AG, saved by the same-family prefix rule) and the Jaguar Cars / Jaguar pair. **ADR 0014 ACCEPTED and IMPLEMENTED (branch `feat/adr-0014-year-pass-epa`, 2026-07-31; single PR carries the whole arc per the new one-branch rule)** — the year pass and the EPA attach, under the fundamentals-review doctrine: **the hierarchy is a goal per car**. The deliberation's AMG GT finding moved generation placement to the configuration (one 2019 model year holds C190 coupes beside X290 4-doors), so periods are pure time under models and `configurations.generation_id` is nullable, evidence-gated, NULL everywhere in v1. Live: **18,751 catalogue periods** (all 1,735 models have their year spine) and **23,523 configurations** from 42,920/49,995 EPA rows attached (exact 13,887 / baseModel 25,150 / word-boundary trim-parse 3,883), 13,565 1:1 `vehicle:` external ids, 121,496 configuration field assertions with provenance. Residue honest and queued: 495 unbridged-make rows + 6,580 no-model-match rows behind 802 distinct-string flags with candidates; `EPA_MAKE_MATCHES` registry starts empty, grown by resolving them. Both passes settle to exact no-ops; all six passes converge; 140 tests green; reconciler v11. (PR #28 merged 2026-07-31; ADR 0015 followed as PR #29, merged 2026-08-03 — reconciler v12.) Flag queues (wd-model + the new EPA queues): the next batch is deliberately deferred (2026-07-31). Parked: the namesake/ambiguous duplicate groups (cross-source checks first — his ruling), the Mazda chinesische-Automarke duplicate, TVR's plant duplicate (needs a deny decision), barely-cars (much later).
 
 ## Next (immediate)
 
-**Next branch (ruled 2026-09-17): the LLM read as a source** — the script, the raw record, the
-verifying pass, the review flag and the correction registry, with the line-article fetch widening;
-design in the 2026-09-17 session log. First questions: the 911's generations and the trims of its
-parallel 930, and the 3 Series badge membership once the E46 and its siblings land.
-
 1. **The queues ADR 0017 §4 opened** (implemented 2026-08-07, branch `feat/section-generations`): the `section_generation_review` articles (sections that neither reconcile to existing generations nor prove distinct — each resolution teaches the reconciliation ladder; **the 911 is now the marquee case**: 993/996 unlinked and 930 undated hold all 370 of its configurations honestly), 24 redirected nameplate articles (sitelink subjects moved), the section `implausible_value` production parses (incl. Prius XW10/XW20 per-sub-code lists and `celica-coupe-t200`, whose dating unlocks the whole Celica run). The `waits_undated_competitor` pool resolves mechanically as spans land. Alongside: the line-membership turn (453 line-case entities now representable), the Wikidata-adoption pass for when a section-born generation later grows its own entity (correspondence recorded per fetched Main target in the decision log since ADR 0018).
 2. ~~**The EPA refresh attach**~~ — **DONE** (2026-08-13, see session log): +215 rows attached (43,135/50,242), +214 configurations (all addressed, five MY2027 periods), 11 column supersessions, +30 placements; every pass re-ran to an exact no-op. The E350 casefold wart did **not** recur — the refresh's new E350 rows are real 2027 cars. Residue into the queues: 15 new `no_model_match` strings (+32 rows, vehicle match_review now 817).
 3. The flag queues, when the batch opens: wd-model (17 label-duplicate clusters via the curated model registry; 52 market/rebadge, 9 real cross-badges → negative pairs + future `vehicle_derivations` facts; 536 near-miss) + the EPA queues (~10 `unbridged_make` strings → `EPA_MAKE_MATCHES` entries; 802 `no_model_match` strings with candidates) + the `generation_overlap` residue (post-veto and post-demotion: boundary years — the 2006 MX-5 between NB and NC, the 911's 964/997/991/992 span overlaps — and rows with no body signal). The LLM read (ruled 2026-09-17, above) is the pre-screen for these queues too: it lands with evidence and a review flag, corrections land in registries as usual, and the deterministic passes stay LLM-free.
+4. **What the read retires (raised 2026-09-17, unruled).** The direction is that the LLM read
+   replaces the generation minting the Wikipedia grammar does over nameplate pages, because the
+   code should be as simple as possible. Sized: the grammar is about 2,900 lines (the Wikipedia
+   pass, the section, era, table and infobox parsers) against the read's 1,100, and it holds 1,418
+   of the 1,763 live generations (section-born) and 8,181 of the 8,318 placements; the read holds
+   137 on one nameplate. Retiring the grammar means reading every landed nameplate article first
+   (959 articles at about two and a half minutes and one paid call each), then retiring the
+   section grammar and its tests, with the section keys adopted by the read's keys so no
+   generation changes identity. Infobox spans and the placement inference are not generation
+   minting and would stay. The 2026-09-18 comparison adds three rulings: whether the read
+   mints and dates only (no cars, no leaves, one flag per read-dated generation, placement by
+   the inference, a small per-section classifier for overlap flags alone), whether it reads the
+   generation pages the grammar dates from, and which model is the default (the pro model reads
+   reliably at six minutes a page; the flash model does not). Needs a ruling on order: read the
+   corpus first, then delete.
 5. ~~**The address system**~~ — **DONE** (ADR 0019, PR #37, merged 2026-08-11). Addresses are projections: the address recompute (`python -m carmanac.reconcile.addressing`) re-derives them last in the fill sequence and converges to a no-op. Applied live. What the branch leaves owed, each recorded in the ADR: `/bmw/x5/2002/fwd` and `xDrive`-as-a-drivetrain both want vPIC's Body Class and option data (a source question, not a grammar one); the E350 casefold duplicate wants trim-case folding in the configuration natural key (entity resolution, and it recurs on every EPA landing); non-model-year period segments have no grammar because no such period exists yet; `models`/`model_lines` are not re-derived by the projection, and the vPIC models pass is now the one place a naming clash still withholds a row. Serving — 301s, disambiguation pages, freezing addresses at publication — belongs to the read surface.
 6. **Thin read surface (F2) — in flight**: the three read views merged (PR #39; `v_configuration_full` + the coverage shapes), and the FastAPI read layer + the first entity pages ride branch `feat/entity-pages` (2026-08-13 — the ADR 0019 route map clickable end to end; server-rendered HTML is flagged scaffolding, the charter frontend stack unchanged). PR #42 adds the deliberately narrow homepage slice: companies only, ordered by configuration count, with the current sourced company logo normalized into one transparent display box and no model inventory or broad visual redesign. Still owed: a **reviewer surface** — a queue browser rendering `reconciliation_flags` with candidates and car context. v1 reviewer surface is read-and-propose (verdict export → registry entries stay code-reviewed, per the resolutions-are-registries doctrine); direct-write review needs its own decision.
 7. The matcher-evaluation methodology ADR (owed from the cleanup arc — before any precision number is quoted against the Tier-2/3 gate; now also owed the veto-overturn label shape from §4), the `confidence_score` write-or-drop decision. The "barely cars" pass — delayed until much later (ruled 2026-07-30), with the parked no-match pool.
@@ -107,6 +117,50 @@ End-of-session notes, newest at top. Last few entries only — older ones live
 in [docs/progress-archive/](docs/progress-archive/2026-06--07.md), along with
 the completed F1-F9 fix queue and the 2026-07 review findings.
 
+### 2026-09-18 (the read against the grammar)
+
+- **The test ruled 2026-09-18: read nameplates the grammar already handles, minting left to the
+  model, the page alone, and score every leaf against the grammar.** Eight nameplates (M3,
+  C-Class, Legacy, Civic, Mustang, Corvette, 4Runner, Maxima), 815 configurations, 714 placed by
+  the grammar. The read at prompt version 2 agreed on one leaf. The loss was the gate, not the
+  pages: the common heading carries the codes and the year a generation began while its span
+  sits in the section's infobox line, so no one quote states both; models shorten quotes with an
+  ellipsis; a code often sits in the infobox's code line, not the heading; and HTML entities hid
+  verbatim text. Through prompt version 5 a generation gives two or three quotes judged one
+  passage at a time, a passage that names the generation counts from anywhere on the page, and a
+  spare quote that fails sinks nothing. Under that gate the pro model keeps every generation of
+  the M3 and the 4Runner with the grammar's years to the year.
+- **What the read cannot do from the nameplate page.** The Mustang and Civic sections state no
+  end year at all, and the grammar dates them, the Legacy, the Corvette and the C-Class from the
+  landed generation pages. A read that is to replace the grammar must read those pages too.
+- **Agreement is not truth.** The four leaves where the read and the grammar disagreed are the
+  2015 C-Class coupés: the page says the W204 coupé ran to 2015, the grammar's span inference
+  has them on the W205, and the read was right.
+- **Models.** The flash model is noisy on leaves between identical runs (drops from 5 to 189)
+  and collapses on some prompts; the pro model keeps 6 of 6 generations on both test pages with
+  54 and 81 leaves at about six and a half minutes a page; Haiku keeps 6 of 6 and 5 of 6 in
+  twelve seconds but dates from model-year lines, a year off production. A weaker later read
+  withdrew 103 placements the pro read had made, because the pass took the newest read whatever
+  model wrote it; now the current read is the newest by the configured model at the current
+  prompt version, and any other read stays raw data that states nothing.
+- **The classifier framing, prototyped in scratch.** One small call per generation section
+  with the candidates in its years: 87 agree, 1 disagree, but the precision is the year prefilter's
+  (only 11 leaves had a real choice, 10 agreed) and recall is 14 percent. Not a replacement.
+- **Three refuters, three agents, read the comparison and the code.** Confirmed and fixed: an
+  ellipsis could manufacture a phrase the page never contains, a spare quote sank a generation
+  whose heading sufficed (how the 911 lost its 996), a plural after a digit let "Targa 4S" state
+  the Targa 4, a passage matched inside a longer word, and the pass retired a read's span only
+  from generations the read had minted. Recorded for ruling under Next 4: the read mints and
+  dates only, placement stays with the inference, one flag per read-dated generation, a small
+  classifier for overlap flags alone.
+- **Live 911, pro model, prompt version 5.** Ten generations verified from the page, the classic
+  911's own subsections among them (the 2.7, the SC, the Carrera 3.2 beside the 930), so the 1984
+  SC and the 1988 Carrera no longer sit on the 930: the Carreras land on the Carrera 3.2 by quote
+  and the SC waits on an honest overlap. 284 of 370 placed, 52 review flags open. Three rounds
+  of the passes, the third a no-op. 323 tests.
+- **Agents.** The 31-agent review of 2026-09-17 broke the five-agent rule; the comparison used
+  none and the refutation three.
+
 ### 2026-09-17 (the 911 census, and the LLM read as a source)
 
 - **The 911, 370 configurations and none placed, is the next case study.** Five causes stack, and
@@ -139,12 +193,42 @@ the completed F1-F9 fix queue and the 2026-07 review findings.
   Landing every held line's article and its generation pages, sitelink-inherited, is the fetch
   widening the read needs. The corpus is about 12 million tokens: 959 nameplate articles and
   206 generation pages.
+- **Built the same day, branch `feat/testing-llm-parsing`.** The script, the gate, the pass, the
+  placement deferral and the correction registry (ADR 0017 amended, reconciler v24). The
+  first read of the 911 at prompt version 1 named six generations from their headings and 57 cars,
+  and the gate kept three leaves: it wanted a car's years inside the car's quote, and the article
+  states years in the generation's heading, not beside every trim. Version 2 quotes each car from
+  inside its generation's section instead: seven generations, 141 leaves, 46 drops (cars quoted
+  by paraphrase, leaves outside their car's years, two leaves claimed twice). The 930 is dated
+  from its heading, the 993 and the 996 mint, and the undated hold on the 911 lifts: the
+  inference places 153 more, 12 of them on read-stated spans and flagged as the read's own are.
+  The first known wrong rows are in that queue: the 1984 SC and the 1988 Carrera sit on the 930
+  beside the Turbo, right by the years and wrong by the car, because the classic 911 is no
+  section of its article. A read takes about two and a half minutes and lands as one raw record.
+- **Reviewed the same evening, adversarially.** Two review dimensions ran as independent readers
+  and every finding was reproduced or refuted against the code, the third dimension by one more
+  reader after the fan-out hit the session limit. Confirmed and fixed: the gate's "present" and
+  name checks were bare substrings ("represents" opened an end, "turbocharged" named the Turbo,
+  a blank name passed), a generation's stretch ran to the next listed generation's quote so an
+  omitted section fell to its neighbour, a dropped entry still cut a kept one, and a leaf two
+  cars of one generation named was dropped; the script landed a truncated or null answer and
+  retried a paid call; the pass retired a minted generation by the read's new name rather than
+  the row it matched (a rename by code minted a duplicate), dated a generation twice when two
+  entries resolved to it, kept a dropped generation's link as an undated competitor, and
+  reopened a flag a person had resolved; the placement pass left an overlap flag open on a
+  leaf it deferred, and judged "read-dated" by physical row order. Refuted: a car's years are
+  a narrowing hint by design, not a gate. Left: a malformed registry key aborts the pass, which
+  is what a code error should do. Live effect on the 911: the read gives up four Turbo leaves
+  the model had quoted by paraphrase, the inference places them back on their spans with the
+  read's flag, and 29 overlap flags close on leaves the read had placed; 294 of 370 unchanged,
+  151 flags open. 322 tests.
 - **Housekeeping.** The Drive snapshot was refreshed (2026-09-17, 32 MB, at the current migration
   head; pulling and restoring it takes under a minute). rclone's shared Google Drive client id
   retires during 2026 and needs replacing.
 
 ### 2026-09-11 (the M3 places: the bare title, the stated code, and where the grammar runs out)
 
+- **Merged as PR #48** (2026-09-17, reconciler v23, 308 tests); the post-merge run from `main` was a no-op against the branch's baseline.
 - **Two mechanisms, both censused first.** Three entities wore the label "BMW M3", so nobody
   attached and the model had no Wikidata id, no reachable article, no generations, and 64
   waiting configurations. The **bare sitelink title** names the nameplate when every other

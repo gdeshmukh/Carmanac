@@ -41,5 +41,11 @@ class Settings(BaseSettings):
     request_min_interval_seconds: float = 1.0
     request_timeout_seconds: float = 120.0
 
+    # --- the LLM read (ADR 0017, amended 2026-09-17) -------------------------
+    openrouter_endpoint: str = "https://openrouter.ai/api/v1/chat/completions"
+    openrouter_api_key: str = ""  # `.env` or the environment, never the repo
+    llm_model: str = "deepseek/deepseek-v4-flash"
+    llm_timeout_seconds: float = 300.0
+
 
 settings = Settings()
